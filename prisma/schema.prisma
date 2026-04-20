@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Student {
+  id         String    @id @default(cuid())
+  name       String    @unique
+  subject    String
+  ratePerMin Float
+  currency   String    @default("CHF")
+  email      String?
+  active     Boolean   @default(true)
+  sessions   Session[]
+  invoices   Invoice[]
+  createdAt  DateTime  @default(now())
+}
+
+model Session {
+  id          String   @id @default(cuid())
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id])
+  date        DateTime
+  durationMin Int
+  amountCHF   Float
+  calEventId  String?  @unique
+  month       Int
+  year        Int
+  notes       String?
+  createdAt   DateTime @default(now())
+}
+
+model Invoice {
+  id            String    @id @default(cuid())
+  studentId     String
+  student       Student   @relation(fields: [studentId], references: [id])
+  month         Int
+  year          Int
+  totalCHF      Float
+  sessionIds    String
+  invoiceNumber String    @default("")
+  sentAt        DateTime?
+  pdfPath       String?
+  createdAt     DateTime  @default(now())
+
+  @@unique([studentId, month, year])
+}
