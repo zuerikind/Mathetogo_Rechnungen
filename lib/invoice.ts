@@ -1,5 +1,6 @@
 import { Session, Student } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getTutorProfile, TutorProfileData } from "@/lib/tutor-profile";
 
 export type InvoiceSession = Pick<
   Session,
@@ -8,6 +9,7 @@ export type InvoiceSession = Pick<
 
 export type InvoicePayload = {
   student: Pick<Student, "id" | "name" | "email" | "subject" | "currency">;
+  tutor: TutorProfileData;
   sessions: InvoiceSession[];
   year: number;
   month: number;
@@ -55,7 +57,7 @@ export async function getInvoicePayload(
   year: number,
   month: number
 ): Promise<InvoicePayload> {
-  const [student, sessions, existingInvoice] = await Promise.all([
+  const [student, sessions, existingInvoice, tutor] = await Promise.all([
     prisma.student.findUnique({
       where: { id: studentId },
       select: {
@@ -82,6 +84,7 @@ export async function getInvoicePayload(
       where: { studentId_month_year: { studentId, month, year } },
       select: { invoiceNumber: true },
     }),
+    getTutorProfile(),
   ]);
 
   if (!student) {
@@ -96,6 +99,7 @@ export async function getInvoicePayload(
 
   return {
     student,
+    tutor,
     sessions,
     year,
     month,

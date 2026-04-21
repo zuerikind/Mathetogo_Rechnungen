@@ -47,7 +47,7 @@ export function SessionTable({ sessions, studentFilter: externalStudentFilter }:
         <select
           value={monthFilter}
           onChange={(e) => { setMonthFilter(e.target.value === "all" ? "all" : Number(e.target.value)); setPage(1); }}
-          className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F6E56]"
+          className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#4A7FC1]"
         >
           <option value="all">Alle Monate</option>
           {monthOptions.map((m) => (
@@ -60,7 +60,7 @@ export function SessionTable({ sessions, studentFilter: externalStudentFilter }:
             placeholder="Schüler suchen..."
             value={studentFilter}
             onChange={(e) => { setStudentFilter(e.target.value); setPage(1); }}
-            className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F6E56]"
+            className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#4A7FC1]"
           />
         )}
 
@@ -71,7 +71,7 @@ export function SessionTable({ sessions, studentFilter: externalStudentFilter }:
             setSubjectFilter(e.target.value);
             setPage(1);
           }}
-          className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#0F6E56]"
+          className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#4A7FC1]"
         />
 
         <button
@@ -87,7 +87,7 @@ export function SessionTable({ sessions, studentFilter: externalStudentFilter }:
           <span className="text-gray-300">|</span>
           <span><span className="font-semibold text-gray-800">{formatDuration(totalMin)}</span></span>
           <span className="text-gray-300">|</span>
-          <span className="font-bold text-[#0F6E56]">{formatCHF(totalCHF)}</span>
+          <span className="font-bold text-[#4A7FC1]">{formatCHF(totalCHF)}</span>
         </div>
       </div>
 
@@ -121,7 +121,7 @@ export function SessionTable({ sessions, studentFilter: externalStudentFilter }:
                   <td className="px-4 py-3 text-gray-500">{s.student?.subject ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-600">{formatDuration(s.durationMin)}</td>
                   <td className="px-4 py-3 text-right">
-                    <span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-semibold text-[#0F6E56]">
+                    <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-[#4A7FC1]">
                       {formatCHF(s.amountCHF)}
                     </span>
                   </td>
@@ -134,7 +134,7 @@ export function SessionTable({ sessions, studentFilter: externalStudentFilter }:
               <tr className="border-t-2 border-gray-200 bg-gray-50">
                 <td colSpan={3} className="px-4 py-3 text-xs font-semibold uppercase text-gray-400">Total</td>
                 <td className="px-4 py-3 text-sm font-semibold text-gray-700">{formatDuration(totalMin)}</td>
-                <td className="px-4 py-3 text-right text-sm font-bold text-[#0F6E56]">{formatCHF(totalCHF)}</td>
+                <td className="px-4 py-3 text-right text-sm font-bold text-[#4A7FC1]">{formatCHF(totalCHF)}</td>
               </tr>
             </tfoot>
           )}

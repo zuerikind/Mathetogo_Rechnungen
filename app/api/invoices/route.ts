@@ -31,5 +31,92 @@ export async function GET(req: NextRequest) {
     orderBy: [{ year: "desc" }, { month: "desc" }, { createdAt: "desc" }],
   });
 
-  return NextResponse.json(invoices);
+  // For pending/all views, also expose month/student combos that have sessions
+  // but no generated invoice yet, so the invoice tab is useful before first create.
+  if (status === "sent" || status === "created") {
+    return NextResponse.json(invoices);
+  }
+
+  const sessionRows = await prisma.session.findMany({
+    where: {
+      ...(year ? { year: Number(year) } : {}),
+      ...(studentId ? { studentId } : {}),
+    },
+    select: {
+      id: true,
+      studentId: true,
+      year: true,
+      month: true,
+      amountCHF: true,
+      student: {
+        select: {
+          id: true,
+          name: true,
+          subject: true,
+        },
+      },
+    },
+    orderBy: [{ year: "desc" }, { month: "desc" }],
+  });
+
+  const existingKeys = new Set(invoices.map((i) => `${i.studentId}-${i.year}-${i.month}`));
+  const virtualMap = new Map<
+    string,
+    {
+      id: string;
+      studentId: string;
+      year: number;
+      month: number;
+      totalCHF: number;
+      sessionIds: string;
+      sentAt: null;
+      pdfPath: null;
+      invoiceNumber: null;
+      isVirtual: true;
+      student: { id: string; name: string; subject: string };
+    }
+  >();
+
+  for (const row of sessionRows) {
+    const key = `${row.studentId}-${row.year}-${row.month}`;
+    if (existingKeys.has(key)) continue;
+    if (!virtualMap.has(key)) {
+      virtualMap.set(key, {
+        id: `virtual-${key}`,
+        studentId: row.studentId,
+        year: row.year,
+        month: row.month,
+        totalCHF: 0,
+        sessionIds: "[]",
+        sentAt: null,
+        pdfPath: null,
+        invoiceNumber: null,
+        isVirtual: true,
+        student: {
+          id: row.student.id,
+          name: row.student.name,
+          subject: row.student.subject,
+        },
+      });
+    }
+    const current = virtualMap.get(key);
+    if (current) {
+      current.totalCHF += row.amountCHF;
+      current.sessionIds = JSON.stringify([
+        ...JSON.parse(current.sessionIds),
+        row.id,
+      ]);
+    }
+  }
+
+  const realRows = invoices.map((invoice) => ({ ...invoice, isVirtual: false as const }));
+  const virtualRows = Array.from(virtualMap.values());
+
+  const merged = [...realRows, ...virtualRows].sort((a, b) => {
+    if (a.year !== b.year) return b.year - a.year;
+    if (a.month !== b.month) return b.month - a.month;
+    return a.student.name.localeCompare(b.student.name, "de-CH");
+  });
+
+  return NextResponse.json(merged);
 }

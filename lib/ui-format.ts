@@ -1,4 +1,7 @@
-export const TEAL = "#0F6E56";
+export const TEAL = "#4A7FC1";
+export const LILAC = "#7B6CB5";
+export const BLUE_BG = "#EBF4FF";
+export const LILAC_BG = "#F3F0FF";
 
 export const monthOptions = [
   { value: 1, label: "Januar" },

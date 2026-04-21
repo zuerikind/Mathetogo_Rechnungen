@@ -103,19 +103,8 @@ const styles = StyleSheet.create({
   },
 });
 
-function getTutorData() {
-  return {
-    name: process.env.TUTOR_NAME ?? "Max Mustermann",
-    address: process.env.TUTOR_ADDRESS ?? "Musterstrasse 1, 8000 Zürich",
-    email: process.env.TUTOR_EMAIL ?? "max@example.ch",
-    phone: process.env.TUTOR_PHONE ?? "+41 79 000 00 00",
-    iban: process.env.TUTOR_IBAN ?? "CH00 0000 0000 0000 0000 0",
-    bankName: process.env.TUTOR_BANK_NAME ?? "Zürcher Kantonalbank",
-  };
-}
-
 export function InvoicePDF({ payload, issueDate }: InvoicePDFProps) {
-  const tutor = getTutorData();
+  const tutor = payload.tutor;
   const dueDate = new Date(issueDate);
   dueDate.setDate(issueDate.getDate() + 30);
 

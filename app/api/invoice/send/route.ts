@@ -71,11 +71,11 @@ export async function POST(req: NextRequest) {
       <p>anbei findest du die Abrechnung für ${monthLabel}.</p>
       <p>${lessonCount} Lektionen, Total ${formatAmount(payload.totalCHF)}</p>
       <p>Bei Fragen stehe ich gerne zur Verfügung.</p>
-      <p>Beste Grüsse<br/>${process.env.TUTOR_NAME ?? "Max Mustermann"}</p>
+      <p>Beste Gruesse<br/>${payload.tutor.name}</p>
     `;
 
     await resend.emails.send({
-      from: process.env.TUTOR_EMAIL ?? "onboarding@resend.dev",
+      from: payload.tutor.email || process.env.TUTOR_EMAIL || "onboarding@resend.dev",
       to: invoice.student.email,
       subject,
       html,

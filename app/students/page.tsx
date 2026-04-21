@@ -89,7 +89,7 @@ export default function StudentsPage() {
               resetForm();
               setPanelOpen(true);
             }}
-            className="rounded-md bg-[#0F6E56] px-4 py-2 text-sm font-medium text-white"
+            className="rounded-md bg-[#4A7FC1] px-4 py-2 text-sm font-medium text-white"
           >
             Add student
           </button>
@@ -166,7 +166,7 @@ export default function StudentsPage() {
                 placeholder="Email (optional)"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
               />
-              <button className="rounded-md bg-[#0F6E56] px-4 py-2 text-sm font-medium text-white">
+              <button className="rounded-md bg-[#4A7FC1] px-4 py-2 text-sm font-medium text-white">
                 Save
               </button>
             </form>

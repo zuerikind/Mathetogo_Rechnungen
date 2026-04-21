@@ -43,3 +43,5 @@ prisma/prisma/
 
 # claude
 .claude/
+
+.vercel

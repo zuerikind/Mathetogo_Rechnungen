@@ -15,6 +15,7 @@ const navItems = [
   { href: "/students", label: "Students" },
   { href: "/invoices", label: "Invoices" },
   { href: "/sync", label: "Sync" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export function DashboardShell({ monthIncome, ytdIncome, children }: DashboardShellProps) {
@@ -33,7 +34,7 @@ export function DashboardShell({ monthIncome, ytdIncome, children }: DashboardSh
                   key={item.href}
                   href={item.href}
                   className={`block rounded-md px-3 py-2 text-sm ${
-                    active ? "bg-teal-50 font-medium text-[#0F6E56]" : "text-gray-700 hover:bg-gray-100"
+                    active ? "bg-blue-50 font-medium text-[#4A7FC1]" : "text-gray-700 hover:bg-gray-100"
                   }`}
                 >
                   {item.label}

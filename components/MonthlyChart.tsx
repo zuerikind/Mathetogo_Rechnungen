@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { formatCHF, TEAL } from "@/lib/ui-format";
+import { formatCHF, TEAL, BLUE_BG } from "@/lib/ui-format";
 
 export type ChartPoint = {
   month: number;
@@ -37,7 +37,7 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payl
       <div className="space-y-1">
         <div className="flex justify-between gap-4">
           <span className="text-gray-500">Einkommen</span>
-          <span className="font-semibold text-[#0F6E56]">{formatCHF(d.income)}</span>
+          <span className="font-semibold text-[#4A7FC1]">{formatCHF(d.income)}</span>
         </div>
         <div className="flex justify-between gap-4">
           <span className="text-gray-500">Sessions</span>
@@ -109,7 +109,7 @@ export function MonthlyChart({ data, selectedMonth, onMonthSelect }: Props) {
               tickFormatter={(v: number) => `${v}`}
               width={52}
             />
-            <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(15,110,86,0.04)" }} />
+            <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(74,127,193,0.06)" }} />
             {avg > 0 && (
               <ReferenceLine
                 y={avg}

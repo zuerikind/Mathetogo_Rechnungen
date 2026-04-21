@@ -13,6 +13,7 @@ type InvoiceRow = {
   sessionIds: string;
   sentAt: string | null;
   pdfPath: string | null;
+  isVirtual?: boolean;
   student: { name: string };
 };
 
@@ -113,7 +114,13 @@ export function InvoiceHistoryClient() {
           </tr>
         </thead>
         <tbody>
-          {rows.map((invoice) => {
+          {rows.length === 0 ? (
+            <tr style={{ borderTop: "1px solid #eee" }}>
+              <td colSpan={6} style={{ padding: 16, color: "#666" }}>
+                Keine Rechnungen gefunden. Sobald Sessions vorhanden sind, erscheinen hier ausstehende Eintraege.
+              </td>
+            </tr>
+          ) : rows.map((invoice) => {
             const statusText = getStatus(invoice);
             const sessionCount = JSON.parse(invoice.sessionIds || "[]").length;
             return (
@@ -149,42 +156,46 @@ export function InvoiceHistoryClient() {
                   ) : (
                     <span style={{ color: "#999" }}>Download</span>
                   )}
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      let forceResend = false;
-                      if (invoice.sentAt) {
-                        const ok = window.confirm(
-                          `Diese Rechnung wurde bereits am ${new Intl.DateTimeFormat("de-CH").format(new Date(invoice.sentAt))} gesendet. Nochmals senden?`
-                        );
-                        if (!ok) return;
-                        forceResend = true;
-                      }
-                      let response = await fetch("/api/invoice/send", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ invoiceId: invoice.id, forceResend }),
-                      });
-                      let data = await response.json();
-                      if (response.status === 409 && data.alreadySent) {
-                        const ok = window.confirm(data.error);
-                        if (!ok) return;
-                        response = await fetch("/api/invoice/send", {
+                  {!invoice.isVirtual ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        let forceResend = false;
+                        if (invoice.sentAt) {
+                          const ok = window.confirm(
+                            `Diese Rechnung wurde bereits am ${new Intl.DateTimeFormat("de-CH").format(new Date(invoice.sentAt))} gesendet. Nochmals senden?`
+                          );
+                          if (!ok) return;
+                          forceResend = true;
+                        }
+                        let response = await fetch("/api/invoice/send", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            invoiceId: invoice.id,
-                            forceResend: true,
-                          }),
+                          body: JSON.stringify({ invoiceId: invoice.id, forceResend }),
                         });
-                        data = await response.json();
-                      }
-                      if (response.ok) loadInvoices();
-                      else alert(data.error ?? "Versand fehlgeschlagen.");
-                    }}
-                  >
-                    Resend
-                  </button>
+                        let data = await response.json();
+                        if (response.status === 409 && data.alreadySent) {
+                          const ok = window.confirm(data.error);
+                          if (!ok) return;
+                          response = await fetch("/api/invoice/send", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              invoiceId: invoice.id,
+                              forceResend: true,
+                            }),
+                          });
+                          data = await response.json();
+                        }
+                        if (response.ok) loadInvoices();
+                        else alert(data.error ?? "Versand fehlgeschlagen.");
+                      }}
+                    >
+                      Resend
+                    </button>
+                  ) : (
+                    <span style={{ color: "#999" }}>Noch nicht generiert</span>
+                  )}
                 </td>
               </tr>
             );

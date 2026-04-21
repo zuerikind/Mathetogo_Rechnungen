@@ -100,7 +100,7 @@ export default function DashboardPage() {
   const activeMonthLabel = monthOptions.find((m) => m.value === (selectedMonth ?? month))?.label;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-[#F8FBFF]">
       <div className="mx-auto max-w-7xl px-4 py-6 space-y-5">
 
         {/* Header */}
@@ -120,7 +120,7 @@ export default function DashboardPage() {
             </nav>
           </div>
           <div className="flex items-center gap-2">
-            <select value={month} onChange={(e) => { setMonth(Number(e.target.value)); setSelectedMonth(null); }} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0F6E56]">
+            <select value={month} onChange={(e) => { setMonth(Number(e.target.value)); setSelectedMonth(null); }} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-[#4A7FC1]">
               {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </div>
@@ -129,7 +129,7 @@ export default function DashboardPage() {
         {/* Sync bar */}
         <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm flex flex-wrap items-center gap-3">
           <SyncButton year={year} month={month} onSynced={handleSynced} />
-          {toast && <span className="rounded-lg bg-teal-50 px-3 py-1.5 text-sm text-[#0F6E56] font-medium">{toast}</span>}
+          {toast && <span className="rounded-lg bg-blue-50 px-3 py-1.5 text-sm text-[#4A7FC1] font-medium">{toast}</span>}
         </div>
 
         {error ? (
@@ -156,14 +156,14 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-semibold text-gray-700">Jahresübersicht</h2>
-                  {refreshing && <span className="h-3.5 w-3.5 rounded-full border-2 border-[#0F6E56] border-t-transparent animate-spin" />}
+                  {refreshing && <span className="h-3.5 w-3.5 rounded-full border-2 border-[#4A7FC1] border-t-transparent animate-spin" />}
                 </div>
                 <div className="flex items-center gap-2">
                   {availableYears.map((y) => (
                     <button
                       key={y}
                       onClick={() => setYear(y)}
-                      className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${year === y ? "bg-[#0F6E56] text-white" : "bg-white border border-gray-200 text-gray-600 hover:border-[#0F6E56] hover:text-[#0F6E56]"}`}
+                      className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${year === y ? "bg-[#4A7FC1] text-white" : "bg-white border border-gray-200 text-gray-600 hover:border-[#4A7FC1] hover:text-[#4A7FC1]"}`}
                     >
                       {y}
                     </button>
@@ -181,8 +181,8 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-semibold text-gray-900">
                   Sessions
-                  {selectedMonth !== null && <span className="ml-1.5 text-[#0F6E56]">· {monthOptions.find((m) => m.value === selectedMonth)?.label}</span>}
-                  {selectedStudent && <span className="ml-1.5 text-[#0F6E56]">· {selectedStudent}</span>}
+                  {selectedMonth !== null && <span className="ml-1.5 text-[#4A7FC1]">· {monthOptions.find((m) => m.value === selectedMonth)?.label}</span>}
+                  {selectedStudent && <span className="ml-1.5 text-[#4A7FC1]">· {selectedStudent}</span>}
                 </h2>
                 {(selectedMonth !== null || selectedStudent) && (
                   <button onClick={() => { setSelectedMonth(null); setSelectedStudent(null); }} className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 rounded-full px-3 py-1">

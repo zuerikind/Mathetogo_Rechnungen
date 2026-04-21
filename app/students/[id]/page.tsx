@@ -125,7 +125,7 @@ export default function StudentDetailPage() {
                       <td className="py-2">
                         <Link
                           href={`/invoice/${student.id}/${year}/${m.month.value}`}
-                          className="text-[#0F6E56] underline"
+                          className="text-[#4A7FC1] underline"
                         >
                           Generate Invoice
                         </Link>

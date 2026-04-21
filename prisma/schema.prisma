@@ -50,3 +50,15 @@ model Invoice {
 
   @@unique([studentId, month, year])
 }
+
+model TutorProfile {
+  id        String   @id @default("default")
+  name      String   @default("Max Mustermann")
+  email     String   @default("max@example.ch")
+  address   String   @default("Musterstrasse 1, 8000 Zürich")
+  phone     String   @default("+41 79 000 00 00")
+  iban      String   @default("CH00 0000 0000 0000 0000 0")
+  bankName  String   @default("Zürcher Kantonalbank")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

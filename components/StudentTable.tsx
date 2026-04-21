@@ -34,7 +34,7 @@ export function StudentTable({ students, onEdit, onDeactivate }: StudentTablePro
           {students.map((s) => (
             <tr key={s.id}>
               <td className="px-4 py-3 font-medium text-gray-900">
-                <Link href={`/students/${s.id}`} className="text-[#0F6E56] hover:underline">
+                <Link href={`/students/${s.id}`} className="text-[#4A7FC1] hover:underline">
                   {s.name}
                 </Link>
               </td>

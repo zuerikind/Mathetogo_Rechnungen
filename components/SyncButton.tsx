@@ -48,7 +48,7 @@ export function SyncButton({ year, month, onSynced }: SyncButtonProps) {
       type="button"
       onClick={handleSync}
       disabled={loading}
-      className="rounded-md bg-[#0F6E56] px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+      className="rounded-md bg-[#4A7FC1] px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
     >
       {loading ? "Synchronisiere..." : "Sync from Google Calendar"}
     </button>

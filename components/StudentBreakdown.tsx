@@ -34,7 +34,7 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payl
       <div className="space-y-1">
         <div className="flex justify-between gap-4">
           <span className="text-gray-500">Einkommen</span>
-          <span className="font-semibold text-[#0F6E56]">{formatCHF(d.income)}</span>
+          <span className="font-semibold text-[#4A7FC1]">{formatCHF(d.income)}</span>
         </div>
         <div className="flex justify-between gap-4">
           <span className="text-gray-500">Sessions</span>
@@ -125,7 +125,7 @@ export function StudentBreakdown({ sessions, onStudentSelect, selectedStudent }:
               tickLine={false}
               width={110}
             />
-            <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(15,110,86,0.04)" }} />
+            <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(74,127,193,0.06)" }} />
             <Bar
               dataKey="income"
               radius={[0, 5, 5, 0]}
@@ -141,7 +141,7 @@ export function StudentBreakdown({ sessions, onStudentSelect, selectedStudent }:
               {byStudent.map((d, i) => (
                 <Cell
                   key={d.name}
-                  fill={selectedStudent === d.name ? "#0a5240" : TEAL}
+                  fill={selectedStudent === d.name ? "#2B5FA0" : TEAL}
                   opacity={selectedStudent && selectedStudent !== d.name ? 0.35 : 1 - i * 0.04}
                 />
               ))}
