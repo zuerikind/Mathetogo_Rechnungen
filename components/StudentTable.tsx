@@ -17,45 +17,45 @@ type StudentTableProps = {
 
 export function StudentTable({ students, onEdit, onDeactivate }: StudentTableProps) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-      <table className="min-w-full divide-y divide-gray-200 text-sm">
-        <thead className="bg-gray-50">
-          <tr className="text-left text-gray-600">
-            <th className="px-4 py-3">Name</th>
-            <th className="px-4 py-3">Subject</th>
-            <th className="px-4 py-3">Rate (CHF/min)</th>
-            <th className="px-4 py-3">Rate (CHF/hr)</th>
-            <th className="px-4 py-3">Total earned</th>
-            <th className="px-4 py-3">Sessions</th>
-            <th className="px-4 py-3">Actions</th>
+    <div className="overflow-x-auto rounded-2xl border border-blue-100 bg-white shadow-sm">
+      <table className="min-w-full divide-y divide-gray-100 text-sm">
+        <thead>
+          <tr className="text-left text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+            <th className="px-5 py-3.5">Name</th>
+            <th className="px-5 py-3.5">Fach</th>
+            <th className="px-5 py-3.5">CHF/Min</th>
+            <th className="px-5 py-3.5">CHF/Std</th>
+            <th className="px-5 py-3.5">Verdient</th>
+            <th className="px-5 py-3.5">Sessions</th>
+            <th className="px-5 py-3.5" />
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-gray-50">
           {students.map((s) => (
-            <tr key={s.id}>
-              <td className="px-4 py-3 font-medium text-gray-900">
+            <tr key={s.id} className="transition-colors hover:bg-[#F8FBFF]">
+              <td className="px-5 py-3 font-semibold">
                 <Link href={`/students/${s.id}`} className="text-[#4A7FC1] hover:underline">
                   {s.name}
                 </Link>
               </td>
-              <td className="px-4 py-3">{s.subject}</td>
-              <td className="px-4 py-3">{s.ratePerMin.toFixed(2)}</td>
-              <td className="px-4 py-3">{(s.ratePerMin * 60).toFixed(2)}</td>
-              <td className="px-4 py-3">{formatCHF(s.totalEarned)}</td>
-              <td className="px-4 py-3">{s.sessions}</td>
-              <td className="px-4 py-3">
+              <td className="px-5 py-3 text-gray-600">{s.subject}</td>
+              <td className="px-5 py-3 text-gray-600">{s.ratePerMin.toFixed(2)}</td>
+              <td className="px-5 py-3 text-gray-600">{(s.ratePerMin * 60).toFixed(2)}</td>
+              <td className="px-5 py-3 font-medium text-gray-800">{formatCHF(s.totalEarned)}</td>
+              <td className="px-5 py-3 text-gray-600">{s.sessions}</td>
+              <td className="px-5 py-3">
                 <div className="flex gap-2">
                   <button
                     onClick={() => onEdit(s)}
-                    className="rounded border border-gray-300 px-2 py-1 text-xs"
+                    className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
                   >
-                    Edit
+                    Bearbeiten
                   </button>
                   <button
                     onClick={() => onDeactivate(s.id)}
-                    className="rounded border border-orange-300 px-2 py-1 text-xs text-orange-700"
+                    className="rounded-lg border border-red-100 px-2.5 py-1 text-xs font-medium text-red-500 transition hover:border-red-300 hover:bg-red-50"
                   >
-                    Deactivate
+                    Deaktivieren
                   </button>
                 </div>
               </td>

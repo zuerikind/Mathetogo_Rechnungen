@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { DashboardShell } from "@/components/DashboardShell";
 import { formatAmount, formatDate, formatDuration, getPeriodLabel } from "@/lib/invoice";
 import {
   buildWhatsAppUrl,
@@ -21,6 +22,7 @@ type Student = {
   name: string;
   email: string | null;
 };
+
 type TutorSettings = {
   name: string;
   email: string;
@@ -64,19 +66,9 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
       fetch(`/api/invoices?studentId=${studentId}&year=${year}`).then((r) => r.json()),
       fetch("/api/settings").then((r) => (r.ok ? r.json() : null)),
     ]).then(([sessionData, studentData, invoices, settingsData]) => {
-      if (Array.isArray(sessionData)) {
-        setSessions(sessionData);
-      } else {
-        setSessions([]);
-      }
-      if (studentData && !("error" in studentData)) {
-        setStudent(studentData as Student);
-      } else {
-        setStudent(null);
-      }
-      const existing = (invoices ?? []).find(
-        (entry: { month: number }) => entry.month === month
-      );
+      setSessions(Array.isArray(sessionData) ? sessionData : []);
+      if (studentData && !("error" in studentData)) setStudent(studentData as Student);
+      const existing = (invoices ?? []).find((entry: { month: number }) => entry.month === month);
       if (existing) {
         setInvoice(existing);
         if (existing.pdfPath) setGeneratedPdfUrl(existing.pdfPath as string);
@@ -107,10 +99,7 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
       body: JSON.stringify({ studentId, year, month }),
     });
     const data = await response.json();
-    if (!response.ok) {
-      setSendState(data.error ?? "Fehler beim Generieren.");
-      return null;
-    }
+    if (!response.ok) { setSendState(data.error ?? "Fehler beim Generieren."); return null; }
     setInvoice((old) => ({ id: data.invoiceId, sentAt: old?.sentAt ?? null }));
     setGeneratedPdfUrl(typeof data.pdfUrl === "string" ? data.pdfUrl : null);
     setPreviewNonce((n) => n + 1);
@@ -132,10 +121,7 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
 
     if (response.status === 409 && data.alreadySent) {
       const confirmed = window.confirm(data.error);
-      if (!confirmed) {
-        setSendState("Versand abgebrochen.");
-        return;
-      }
+      if (!confirmed) { setSendState("Versand abgebrochen."); return; }
       response = await fetch("/api/invoice/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -144,20 +130,17 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
       data = await response.json();
     }
 
-    if (!response.ok) {
-      setSendState(data.error ?? "Fehler beim Versand.");
-      return;
-    }
-
+    if (!response.ok) { setSendState(data.error ?? "Fehler beim Versand."); return; }
     setInvoice({ id: invoiceId, sentAt: data.sentAt });
     setPreviewNonce((n) => n + 1);
-    setSendState(`Sent to ${data.sentTo} ✓`);
+    setSendState(`Gesendet an ${data.sentTo} ✓`);
   };
 
   const previewUrl = `/api/invoice/preview?studentId=${studentId}&year=${year}&month=${month}&_=${previewNonce}`;
   const downloadUrl = invoice ? `/invoices/${year}-${String(month).padStart(2, "0")}-${studentId}.pdf` : previewUrl;
   const sentDate = invoice?.sentAt ? formatDate(new Date(invoice.sentAt)) : null;
   const canSend = Boolean(student?.email);
+
   const waMessage = useMemo(() => {
     const values = buildWhatsAppValues({
       studentName: student?.name ?? "Schueler",
@@ -174,12 +157,8 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
   const openWhatsAppWithPdf = async () => {
     const generated = invoice?.id ? { invoiceId: invoice.id, pdfUrl: generatedPdfUrl ?? undefined } : await generateInvoice();
     if (!generated) return;
-    const pdfLink =
-      generated.pdfUrl ??
-      generatedPdfUrl ??
-      `/api/invoice/preview?studentId=${studentId}&year=${year}&month=${month}`;
-    const text = `${waMessage}\n\nPDF: ${pdfLink}`;
-    window.open(buildWhatsAppUrl(text, parentPhone), "_blank");
+    const pdfLink = generated.pdfUrl ?? generatedPdfUrl ?? previewUrl;
+    window.open(buildWhatsAppUrl(`${waMessage}\n\nPDF: ${pdfLink}`, parentPhone), "_blank");
   };
 
   const copyWhatsAppText = async () => {
@@ -191,138 +170,148 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
     }
   };
 
-  const resetTemplate = () => {
-    setTemplate(defaultWhatsAppTemplate);
-    setCopyState("Template zurueckgesetzt.");
-  };
+  const inputClass = "w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20";
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4 md:p-6">
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-4 lg:grid-cols-[40%_1fr]">
-        <section className="space-y-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Rechnungsdetails</h2>
-            <p className="mt-2 text-sm text-gray-700">
-              <strong className="text-gray-900">{student?.name ?? "..."}</strong>
-              <br />
-              {getPeriodLabel(month, year)}
-            </p>
-            <p className="mt-2 text-sm text-gray-600">
-              Lektionen: {sessions.length}
-              <br />
-              Total Stunden: {(totals.totalMinutes / 60).toFixed(2)}h
-              <br />
-              Total: <span className="font-semibold text-[#0F6E56]">{formatAmount(totals.totalCHF)}</span>
-            </p>
+    <DashboardShell monthIncome={totals.totalCHF} ytdIncome={totals.totalCHF}>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[42%_1fr]">
+
+        {/* Left panel: details + actions */}
+        <div className="space-y-4">
+
+          {/* Header info */}
+          <div className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
+            <h2 className="text-base font-semibold text-gray-900">Rechnungsdetails</h2>
+            <div className="mt-3 space-y-1 text-sm text-gray-700">
+              <p className="font-semibold text-gray-900">{student?.name ?? "..."}</p>
+              <p className="text-gray-500">{getPeriodLabel(month, year)}</p>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="rounded-xl bg-gray-50 px-3 py-2 text-center">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Lektionen</p>
+                <p className="text-lg font-bold text-gray-800">{sessions.length}</p>
+              </div>
+              <div className="rounded-xl bg-gray-50 px-3 py-2 text-center">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Stunden</p>
+                <p className="text-lg font-bold text-gray-800">{(totals.totalMinutes / 60).toFixed(1)}h</p>
+              </div>
+              <div className="rounded-xl bg-[#EBF4FF] px-3 py-2 text-center">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-[#4A7FC1]">Total</p>
+                <p className="text-lg font-bold text-[#4A7FC1]">{formatAmount(totals.totalCHF)}</p>
+              </div>
+            </div>
           </div>
 
-          <ul className="max-h-56 space-y-1 overflow-auto rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm text-gray-700">
-            {sessions.map((s) => (
-              <li key={s.id}>
-                {formatDate(new Date(s.date))} — {formatDuration(s.durationMin)} — {formatAmount(s.amountCHF)}
-              </li>
-            ))}
-          </ul>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => window.open(downloadUrl, "_blank")}
-              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-            >
-              Download PDF
-            </button>
-            <button
-              type="button"
-              onClick={() => void sendInvoice()}
-              disabled={!canSend}
-              title={canSend ? "" : "Bitte E-Mail-Adresse des Schülers hinterlegen"}
-              className="rounded-md bg-[#0F6E56] px-3 py-2 text-sm font-medium text-white hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Send to student
-            </button>
+          {/* Sessions list */}
+          <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Sessions</p>
+            <ul className="max-h-48 space-y-1 overflow-auto text-sm text-gray-700">
+              {sessions.map((s) => (
+                <li key={s.id} className="flex items-center justify-between rounded-lg px-2 py-1.5 odd:bg-gray-50">
+                  <span>{formatDate(new Date(s.date))}</span>
+                  <span className="text-gray-400">{formatDuration(s.durationMin)}</span>
+                  <span className="font-medium">{formatAmount(s.amountCHF)}</span>
+                </li>
+              ))}
+            </ul>
           </div>
 
-          <div className="rounded-lg border border-gray-200 bg-white p-4">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-gray-900">WhatsApp Nachricht</h3>
+          {/* Action buttons */}
+          <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Aktionen</p>
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={resetTemplate}
-                className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                onClick={() => window.open(downloadUrl, "_blank")}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
               >
-                Reset template
+                PDF herunterladen
+              </button>
+              <button
+                type="button"
+                onClick={() => void sendInvoice()}
+                disabled={!canSend}
+                title={canSend ? "" : "Bitte E-Mail-Adresse des Schülers hinterlegen"}
+                className="rounded-xl bg-[#4A7FC1] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                An Schüler senden
               </button>
             </div>
-            <p className="mb-2 text-xs text-gray-500">
+            {sentDate && (
+              <p className="mt-2 text-xs text-green-600">✓ Gesendet am {sentDate}</p>
+            )}
+            {sendState && (
+              <p className="mt-2 text-xs text-gray-500">{sendState}</p>
+            )}
+          </div>
+
+          {/* WhatsApp section */}
+          <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">WhatsApp</p>
+              <button
+                type="button"
+                onClick={() => { setTemplate(defaultWhatsAppTemplate); setCopyState("Template zurückgesetzt."); }}
+                className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-500 transition hover:border-gray-300"
+              >
+                Reset
+              </button>
+            </div>
+            <p className="mb-2 text-xs text-gray-400">
               Platzhalter: {"{parentName}"}, {"{studentName}"}, {"{monthLabel}"}, {"{amountCHF}"}, {"{dueDate}"}, {"{invoiceNumber}"}, {"{tutorName}"}
             </p>
-            <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-2">
-              <input
-                value={parentName}
-                onChange={(e) => setParentName(e.target.value)}
-                placeholder="Elternname (optional)"
-                className="rounded-md border border-gray-300 px-3 py-2 text-sm"
-              />
-              <input
-                value={parentPhone}
-                onChange={(e) => setParentPhone(e.target.value)}
-                placeholder="WhatsApp Nummer (optional)"
-                className="rounded-md border border-gray-300 px-3 py-2 text-sm"
-              />
+            <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <input value={parentName} onChange={(e) => setParentName(e.target.value)} placeholder="Elternname (optional)" className={inputClass} />
+              <input value={parentPhone} onChange={(e) => setParentPhone(e.target.value)} placeholder="WhatsApp Nummer (optional)" className={inputClass} />
             </div>
             <textarea
               value={template}
               onChange={(e) => setTemplate(e.target.value)}
-              rows={8}
-              className="w-full rounded-md border border-gray-300 p-3 text-sm"
+              rows={6}
+              className={`${inputClass} resize-none`}
             />
             <textarea
               value={waMessage}
               readOnly
-              rows={8}
-              className="mt-2 w-full rounded-md border border-gray-200 bg-gray-50 p-3 text-sm"
+              rows={6}
+              className="mt-2 w-full resize-none rounded-xl border border-gray-100 bg-gray-50 p-3 text-sm text-gray-600 outline-none"
             />
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => void copyWhatsAppText()}
-                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
               >
-                Copy WhatsApp text
+                Text kopieren
               </button>
               <button
                 type="button"
                 onClick={() => window.open(buildWhatsAppUrl(waMessage, parentPhone), "_blank")}
-                className="rounded-md bg-[#0F6E56] px-3 py-2 text-sm font-medium text-white hover:opacity-95"
+                className="rounded-xl bg-[#4A7FC1] px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90"
               >
-                Open in WhatsApp
+                WhatsApp öffnen
               </button>
               <button
                 type="button"
                 onClick={() => void openWhatsAppWithPdf()}
-                className="rounded-md border border-[#0F6E56] bg-white px-3 py-2 text-sm font-medium text-[#0F6E56] hover:bg-teal-50"
+                className="rounded-xl border border-[#4A7FC1] bg-white px-3 py-2 text-xs font-semibold text-[#4A7FC1] transition hover:bg-[#EBF4FF]"
               >
-                WhatsApp with PDF link
+                WhatsApp + PDF
               </button>
             </div>
-            {copyState ? <p className="mt-2 text-xs text-[#0F6E56]">{copyState}</p> : null}
+            {copyState && <p className="mt-2 text-xs text-[#4A7FC1]">{copyState}</p>}
           </div>
+        </div>
 
-          {sentDate ? (
-            <p className="text-sm text-[#0F6E56]">Sent on {sentDate}</p>
-          ) : null}
-          {sendState ? <p className="text-sm text-gray-700">{sendState}</p> : null}
-        </section>
-
-        <section className="rounded-xl border border-gray-200 bg-white p-2 shadow-sm">
+        {/* Right panel: PDF preview */}
+        <div className="rounded-2xl border border-blue-100 bg-white p-2 shadow-sm">
           <iframe
             src={previewUrl}
-            className="h-[78vh] w-full rounded-lg border border-gray-200"
-            title="Invoice Preview"
+            className="h-[80vh] w-full rounded-xl border border-gray-100"
+            title="Rechnungsvorschau"
           />
-        </section>
+        </div>
       </div>
-    </main>
+    </DashboardShell>
   );
 }
