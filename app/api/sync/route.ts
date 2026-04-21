@@ -71,9 +71,9 @@ export async function POST(req: NextRequest) {
 
   const students = await prisma.student.findMany({ where: { active: true } });
 
-  let synced = 0;
-  let skipped = 0;
   const unmatched: string[] = [];
+  type UpsertTask = { calEventId: string; studentId: string; date: Date; durationMin: number; amountCHF: number; notes: string | null };
+  const tasks: UpsertTask[] = [];
 
   for (const event of events) {
     const title = event.summary ?? "";
@@ -81,24 +81,18 @@ export async function POST(req: NextRequest) {
     const endStr = event.end?.dateTime;
     const calEventId = event.id;
 
-    if (!startStr || !endStr || !calEventId) {
-      skipped++;
-      continue;
-    }
+    if (!startStr || !endStr || !calEventId) continue;
 
     const titleLower = title.toLowerCase();
     const student = students.find((s) => {
       const nameLower = s.name.toLowerCase();
-      // Escape special regex chars (e.g. "/" in "Nikola/William")
       const escaped = nameLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      // Match whole name as a word — prevents "liam" matching inside "william"
       const regex = new RegExp(`(?<![a-z])${escaped}(?![a-z])`, "i");
       return regex.test(titleLower);
     });
 
     if (!student) {
       unmatched.push(title);
-      skipped++;
       continue;
     }
 
@@ -107,30 +101,18 @@ export async function POST(req: NextRequest) {
     const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
     const amountCHF = durationMin * student.ratePerMin;
 
-    await prisma.session.upsert({
-      where: { calEventId },
-      update: {
-        date: start,
-        durationMin,
-        amountCHF,
-        month,
-        year,
-        notes: event.description ?? null,
-      },
-      create: {
-        studentId: student.id,
-        date: start,
-        durationMin,
-        amountCHF,
-        calEventId,
-        month,
-        year,
-        notes: event.description ?? null,
-      },
-    });
-
-    synced++;
+    tasks.push({ calEventId, studentId: student.id, date: start, durationMin, amountCHF, notes: event.description ?? null });
   }
 
-  return NextResponse.json({ synced, skipped, unmatched, totalEvents: events.length });
+  await Promise.all(
+    tasks.map((t) =>
+      prisma.session.upsert({
+        where: { calEventId: t.calEventId },
+        update: { date: t.date, durationMin: t.durationMin, amountCHF: t.amountCHF, month, year, notes: t.notes },
+        create: { studentId: t.studentId, date: t.date, durationMin: t.durationMin, amountCHF: t.amountCHF, calEventId: t.calEventId, month, year, notes: t.notes },
+      })
+    )
+  );
+
+  return NextResponse.json({ synced: tasks.length, skipped: events.length - tasks.length - unmatched.length, unmatched, totalEvents: events.length });
 }
