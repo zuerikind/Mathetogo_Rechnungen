@@ -1,5 +1,6 @@
 import {
   Document,
+  Image,
   Page,
   StyleSheet,
   Text,
@@ -29,6 +30,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     gap: 16,
+    alignItems: "flex-start",
+  },
+  logo: {
+    width: 160,
+    height: 38,
+    marginBottom: 10,
   },
   heading: {
     fontSize: 32,
@@ -113,6 +120,11 @@ export function InvoicePDF({ payload, issueDate }: InvoicePDFProps) {
       <Page size="A4" style={styles.page}>
         <View style={styles.row}>
           <View>
+            {/* eslint-disable-next-line jsx-a11y/alt-text */}
+            <Image
+              src={`${process.env.NEXTAUTH_URL ?? "http://localhost:3000"}/mathetogo-logo-clean.png`}
+              style={styles.logo}
+            />
             <Text style={styles.brandTitle}>{tutor.name}</Text>
             <Text>{tutor.address}</Text>
             <Text>{tutor.email}</Text>
