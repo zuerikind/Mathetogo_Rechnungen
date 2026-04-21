@@ -98,14 +98,21 @@ export default function DashboardPage() {
 
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
+          <div className="flex items-center gap-6">
             <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-            <p className="text-sm text-gray-400 mt-0.5">Jahr {year} · {activeMonthLabel}</p>
+            <nav className="hidden sm:flex items-center gap-1 text-sm">
+              {[
+                { href: "/students", label: "Schüler" },
+                { href: "/invoices", label: "Rechnungen" },
+                { href: "/sync", label: "Sync" },
+              ].map((item) => (
+                <a key={item.href} href={item.href} className="px-3 py-1.5 rounded-lg text-gray-600 hover:bg-white hover:text-gray-900 font-medium transition-colors">
+                  {item.label}
+                </a>
+              ))}
+            </nav>
           </div>
           <div className="flex items-center gap-2">
-            <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0F6E56]">
-              {availableYears.map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
             <select value={month} onChange={(e) => { setMonth(Number(e.target.value)); setSelectedMonth(null); }} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0F6E56]">
               {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
@@ -138,9 +145,25 @@ export default function DashboardPage() {
             </section>
 
             {/* Charts */}
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <MonthlyChart data={chartData} selectedMonth={selectedMonth} onMonthSelect={setSelectedMonth} />
-              <StudentBreakdown sessions={breakdownSessions} selectedStudent={selectedStudent} onStudentSelect={setSelectedStudent} />
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-700">Jahresübersicht</h2>
+                <div className="flex items-center gap-2">
+                  {availableYears.map((y) => (
+                    <button
+                      key={y}
+                      onClick={() => setYear(y)}
+                      className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${year === y ? "bg-[#0F6E56] text-white" : "bg-white border border-gray-200 text-gray-600 hover:border-[#0F6E56] hover:text-[#0F6E56]"}`}
+                    >
+                      {y}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <MonthlyChart data={chartData} selectedMonth={selectedMonth} onMonthSelect={setSelectedMonth} />
+                <StudentBreakdown sessions={breakdownSessions} selectedStudent={selectedStudent} onStudentSelect={setSelectedStudent} />
+              </div>
             </div>
 
             {/* Sessions table */}
