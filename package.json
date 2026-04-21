@@ -8,9 +8,10 @@
     "start": "next start",
     "lint": "next lint",
     "postinstall": "prisma generate",
-    "db:push": "prisma db push",
-    "db:seed": "npx tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "supabase:setup": "dotenv -e .env.local -- npx tsx scripts/setup-supabase.ts",
+    "db:push": "dotenv -e .env.local -- prisma db push",
+    "db:seed": "dotenv -e .env.local -- npx tsx prisma/seed.ts",
+    "db:studio": "dotenv -e .env.local -- prisma studio"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.7.4",
@@ -31,6 +32,7 @@
     "@types/react-dom": "^18",
     "@types/react-pdf": "^6.2.0",
     "autoprefixer": "^10.0.1",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^8",
     "eslint-config-next": "14.2.29",
     "postcss": "^8",
