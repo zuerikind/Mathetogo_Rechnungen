@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MonthlyChart } from "@/components/MonthlyChart";
 import { SessionTable } from "@/components/SessionTable";
 import { StatCard } from "@/components/StatCard";
@@ -27,6 +27,7 @@ export default function DashboardPage() {
   const [year, setYear] = useState(now.year);
   const [sessions, setSessions] = useState<SessionWithStudent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
@@ -34,9 +35,9 @@ export default function DashboardPage() {
 
   const availableYears = useMemo(() => { const y = now.year; return [y - 2, y - 1, y, y + 1]; }, [now.year]);
 
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (isInitial = false) => {
     try {
-      setLoading(true);
+      if (isInitial) setLoading(true); else setRefreshing(true);
       setError("");
       const res = await fetch(`/api/sessions?year=${year}`);
       if (!res.ok) throw new Error();
@@ -45,10 +46,16 @@ export default function DashboardPage() {
       setError("Fehler beim Laden der Daten.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [year]);
 
-  useEffect(() => { void loadSessions(); }, [loadSessions]);
+  const isInitialLoad = useRef(true);
+  useEffect(() => {
+    const initial = isInitialLoad.current;
+    isInitialLoad.current = false;
+    void loadSessions(initial);
+  }, [loadSessions]);
   useEffect(() => { setSelectedMonth(null); setSelectedStudent(null); }, [year]);
 
   const currentMonthSessions = useMemo(() => sessions.filter((s) => s.month === month), [sessions, month]);
@@ -125,14 +132,14 @@ export default function DashboardPage() {
           {toast && <span className="rounded-lg bg-teal-50 px-3 py-1.5 text-sm text-[#0F6E56] font-medium">{toast}</span>}
         </div>
 
-        {loading ? (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-28 animate-pulse rounded-xl bg-gray-100" />)}
-          </div>
-        ) : error ? (
+        {error ? (
           <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700 flex items-center justify-between">
             <span>{error}</span>
             <button onClick={() => void loadSessions()} className="underline font-medium">Erneut versuchen</button>
+          </div>
+        ) : loading ? (
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-28 animate-pulse rounded-xl bg-gray-100" />)}
           </div>
         ) : (
           <>
@@ -147,7 +154,10 @@ export default function DashboardPage() {
             {/* Charts */}
             <div>
               <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold text-gray-700">Jahresübersicht</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold text-gray-700">Jahresübersicht</h2>
+                  {refreshing && <span className="h-3.5 w-3.5 rounded-full border-2 border-[#0F6E56] border-t-transparent animate-spin" />}
+                </div>
                 <div className="flex items-center gap-2">
                   {availableYears.map((y) => (
                     <button
