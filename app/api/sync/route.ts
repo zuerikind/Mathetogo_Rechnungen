@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
     tasks.push({ calEventId, studentId: student.id, date: start, durationMin, amountCHF, notes: event.description ?? null });
   }
 
-  await Promise.all(
+  await prisma.$transaction(
     tasks.map((t) =>
       prisma.session.upsert({
         where: { calEventId: t.calEventId },
