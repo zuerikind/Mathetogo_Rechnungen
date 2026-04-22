@@ -51,26 +51,26 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SUB-01 | — | Pending |
-| SUB-02 | — | Pending |
-| SUB-03 | — | Pending |
-| SUB-04 | — | Pending |
-| SUB-05 | — | Pending |
-| INV-01 | — | Pending |
-| INV-02 | — | Pending |
-| INV-03 | — | Pending |
-| PAY-01 | — | Pending |
-| PAY-02 | — | Pending |
-| PAY-03 | — | Pending |
-| DASH-01 | — | Pending |
-| DASH-02 | — | Pending |
-| DASH-03 | — | Pending |
+| SUB-01 | Phase 2 | Pending |
+| SUB-02 | Phase 2 | Pending |
+| SUB-03 | Phase 2 | Pending |
+| SUB-04 | Phase 1 | Pending |
+| SUB-05 | Phase 2 | Pending |
+| INV-01 | Phase 3 | Pending |
+| INV-02 | Phase 3 | Pending |
+| INV-03 | Phase 3 | Pending |
+| PAY-01 | Phase 4 | Pending |
+| PAY-02 | Phase 4 | Pending |
+| PAY-03 | Phase 4 | Pending |
+| DASH-01 | Phase 4 | Pending |
+| DASH-02 | Phase 4 | Pending |
+| DASH-03 | Phase 4 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 14 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 14 ⚠️
+- Mapped to phases: 14
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-22*
-*Last updated: 2026-04-22 after initial definition*
+*Last updated: 2026-04-22 — traceability mapped after roadmap creation*
