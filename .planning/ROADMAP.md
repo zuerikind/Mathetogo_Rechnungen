@@ -50,7 +50,12 @@ Plans:
   2. Tutor can edit an existing subscription's amount or billing method; editing does not create additional charge rows — the charge count for that subscription stays equal to its duration
   3. Tutor can deactivate a subscription before it ends; after deactivation, no new charges are created for future months and the subscription shows as inactive
   4. The student detail page subscription section shows: active/inactive status, monthly amount, months remaining, and a per-month list of charges with their payment status (paid/unpaid/scheduled)
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — TDD: subscription-utils helpers (chargeStatus, monthsRemaining, buildChargeRows) with unit tests (Wave 0)
+- [ ] 02-02-PLAN.md — API routes GET+POST /api/subscriptions and PATCH /api/subscriptions/[id] + TypeScript types (Wave 1)
+- [ ] 02-03-PLAN.md — SubscriptionSection component + student detail page wiring + browser verification (Wave 2)
 
 ### Phase 3: Invoice Integration
 **Goal**: When a student's billing method is "invoice", the platform fee appears as a clearly labelled, visually distinct line item on their monthly PDF invoice, and the invoice total correctly includes the fee
