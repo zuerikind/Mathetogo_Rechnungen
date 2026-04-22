@@ -34,7 +34,12 @@ What shipped: student management, session tracking (calendar sync), monthly invo
   2. A `@@unique([subscriptionId, month, year])` constraint exists on `PlatformCharge`, making charge generation idempotent — running it twice produces the same number of rows as running it once
   3. The `addMonths` utility correctly handles year-wrap: a 6-month subscription starting in October produces charges for months 10, 11, 12 of year Y and 1, 2, 3 of year Y+1
   4. `lib/platform-charges.ts` exports `ensureChargeForMonth` which can be called from `getInvoicePayload` without breaking existing invoice generation for students without subscriptions
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Install vitest, create failing test stubs for lib/platform-charges.ts (Wave 0)
+- [ ] 01-02-PLAN.md — Extend schema.prisma, generate and apply Prisma migration (Wave 1)
+- [ ] 01-03-PLAN.md — Implement lib/platform-charges.ts, make all tests green (Wave 2)
 
 ### Phase 2: Subscription CRUD and Student Detail
 **Goal**: The tutor can add, edit, and deactivate a platform subscription for any student, and see the current subscription status and per-month charge history on the student detail page
@@ -76,7 +81,7 @@ What shipped: student management, session tracking (calendar sync), monthly invo
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Schema and Data Foundation | v1.1 | 0/TBD | Not started | - |
+| 1. Schema and Data Foundation | v1.1 | 0/3 | Not started | - |
 | 2. Subscription CRUD and Student Detail | v1.1 | 0/TBD | Not started | - |
 | 3. Invoice Integration | v1.1 | 0/TBD | Not started | - |
 | 4. Dashboard and Payment Tracking | v1.1 | 0/TBD | Not started | - |
