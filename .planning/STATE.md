@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Platform Revenue Tracking
 status: planning
-stopped_at: Completed 02-subscription-crud-and-student-detail/02-01-PLAN.md
-last_updated: "2026-04-22T20:54:41.440Z"
+stopped_at: "Checkpoint: 02-03 Task 3 human-verify — awaiting browser verification"
+last_updated: "2026-04-22T21:09:11.269Z"
 last_activity: 2026-04-22 — Roadmap created for v1.1 milestone
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
   percent: 33
 ---
 
@@ -76,6 +76,7 @@ Recent decisions affecting current work:
 - [Phase 02-subscription-crud-and-student-detail]: PATCH /api/subscriptions/[id] never touches PlatformCharge table — charge rows are immutable from subscription edits
 - [Phase 02-subscription-crud-and-student-detail]: Date injected as parameter (now: Date = new Date()) for deterministic tests without mocking
 - [Phase 02-subscription-crud-and-student-detail]: MinimalCharge and MinimalSubscription defined inline in subscription-utils.ts to avoid premature coupling before Plan 02-02 types exist
+- [Phase 02-subscription-crud-and-student-detail]: ChargeRow.charge is MinimalCharge so amount column always uses sub.amountCHF — correct for Phase 2 where no charge records exist yet
 
 ### Pending Todos
 
@@ -88,6 +89,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-22T20:54:31.452Z
-Stopped at: Completed 02-subscription-crud-and-student-detail/02-01-PLAN.md
+Last session: 2026-04-22T21:08:58.036Z
+Stopped at: Checkpoint: 02-03 Task 3 human-verify — awaiting browser verification
 Resume file: None

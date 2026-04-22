@@ -19,7 +19,7 @@ What shipped: student management, session tracking (calendar sync), monthly invo
 **Milestone Goal:** The tutor can add Mathetogo platform subscriptions per student, have the platform fee appear correctly on monthly invoices, mark direct-transfer payments as received, and see platform revenue broken out on the dashboard — without any manual calculation.
 
 - [ ] **Phase 1: Schema and Data Foundation** - Prisma models, migration, month arithmetic utility, and platform charge helpers
-- [ ] **Phase 2: Subscription CRUD and Student Detail** - API routes and UI for creating, editing, and deactivating subscriptions; subscription section on student detail page
+- [x] **Phase 2: Subscription CRUD and Student Detail** - API routes and UI for creating, editing, and deactivating subscriptions; subscription section on student detail page (completed 2026-04-22)
 - [ ] **Phase 3: Invoice Integration** - Platform line item in PDF, correct totalCHF, visual distinction
 - [ ] **Phase 4: Dashboard and Payment Tracking** - Platform revenue stats, mark-as-paid flow, outstanding charges visibility
 
@@ -87,6 +87,6 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Schema and Data Foundation | 2/3 | In Progress|  | - |
-| 2. Subscription CRUD and Student Detail | 2/3 | In Progress|  | - |
+| 2. Subscription CRUD and Student Detail | 3/3 | Complete   | 2026-04-22 | - |
 | 3. Invoice Integration | v1.1 | 0/TBD | Not started | - |
 | 4. Dashboard and Payment Tracking | v1.1 | 0/TBD | Not started | - |
