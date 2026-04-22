@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Platform Revenue Tracking
 status: planning
-stopped_at: Completed 02-subscription-crud-and-student-detail/02-02-PLAN.md
-last_updated: "2026-04-22T20:50:00.472Z"
+stopped_at: Completed 02-subscription-crud-and-student-detail/02-01-PLAN.md
+last_updated: "2026-04-22T20:54:41.440Z"
 last_activity: 2026-04-22 — Roadmap created for v1.1 milestone
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 6
-  completed_plans: 4
+  completed_plans: 5
   percent: 33
 ---
 
@@ -74,6 +74,8 @@ Recent decisions affecting current work:
 - [Phase 01-schema-and-data-foundation]: ensureChargeForMonth uses update:{} no-op so repeat calls are idempotent
 - [Phase 02-subscription-crud-and-student-detail]: POST /api/subscriptions does NOT create PlatformCharge rows — charge generation deferred to Phase 3 just-in-time via ensureChargeForMonth
 - [Phase 02-subscription-crud-and-student-detail]: PATCH /api/subscriptions/[id] never touches PlatformCharge table — charge rows are immutable from subscription edits
+- [Phase 02-subscription-crud-and-student-detail]: Date injected as parameter (now: Date = new Date()) for deterministic tests without mocking
+- [Phase 02-subscription-crud-and-student-detail]: MinimalCharge and MinimalSubscription defined inline in subscription-utils.ts to avoid premature coupling before Plan 02-02 types exist
 
 ### Pending Todos
 
@@ -86,6 +88,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-22T20:50:00.463Z
-Stopped at: Completed 02-subscription-crud-and-student-detail/02-02-PLAN.md
+Last session: 2026-04-22T20:54:31.452Z
+Stopped at: Completed 02-subscription-crud-and-student-detail/02-01-PLAN.md
 Resume file: None

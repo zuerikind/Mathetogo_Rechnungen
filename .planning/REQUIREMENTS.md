@@ -11,7 +11,7 @@
 - [x] **SUB-02**: Tutor can edit an existing subscription (change amount or billing method)
 - [x] **SUB-03**: Tutor can deactivate a subscription before its duration ends
 - [x] **SUB-04**: System automatically applies a monthly platform charge for each active subscription month (for 6-month subscriptions, one charge per month for 6 months)
-- [ ] **SUB-05**: Student detail page shows current subscription status (active/inactive), monthly amount, duration remaining, and per-month payment status
+- [x] **SUB-05**: Student detail page shows current subscription status (active/inactive), monthly amount, duration remaining, and per-month payment status
 
 ### Invoice Integration
 
@@ -55,7 +55,7 @@
 | SUB-02 | Phase 2 | Complete |
 | SUB-03 | Phase 2 | Complete |
 | SUB-04 | Phase 1 | Complete |
-| SUB-05 | Phase 2 | Pending |
+| SUB-05 | Phase 2 | Complete |
 | INV-01 | Phase 3 | Pending |
 | INV-02 | Phase 3 | Pending |
 | INV-03 | Phase 3 | Pending |
