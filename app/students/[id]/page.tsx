@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
+import { SubscriptionSection } from "@/components/SubscriptionSection";
 import { formatCHF, formatDate, formatDuration, monthOptions } from "@/lib/ui-format";
-import type { SessionWithStudent, Student } from "@/lib/ui-types";
+import type { PlatformSubscriptionWithCharges, SessionWithStudent, Student } from "@/lib/ui-types";
 
 export default function StudentDetailPage() {
   const params = useParams();
@@ -13,6 +14,7 @@ export default function StudentDetailPage() {
 
   const [student, setStudent] = useState<Student | null>(null);
   const [allSessions, setAllSessions] = useState<SessionWithStudent[]>([]);
+  const [subscriptions, setSubscriptions] = useState<PlatformSubscriptionWithCharges[]>([]);
   const [year, setYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -26,13 +28,15 @@ export default function StudentDetailPage() {
     try {
       setLoading(true);
       setError("");
-      const [studentRes, sessionsRes] = await Promise.all([
+      const [studentRes, sessionsRes, subscriptionsRes] = await Promise.all([
         fetch(`/api/students/${id}`),
         fetch(`/api/sessions?studentId=${encodeURIComponent(id)}`),
+        fetch(`/api/subscriptions?studentId=${encodeURIComponent(id)}`),
       ]);
-      if (!studentRes.ok || !sessionsRes.ok) throw new Error("load failed");
+      if (!studentRes.ok || !sessionsRes.ok || !subscriptionsRes.ok) throw new Error("load failed");
       setStudent((await studentRes.json()) as Student);
       setAllSessions((await sessionsRes.json()) as SessionWithStudent[]);
+      setSubscriptions((await subscriptionsRes.json()) as PlatformSubscriptionWithCharges[]);
     } catch {
       setError("Fehler beim Laden.");
     } finally {
@@ -160,6 +164,8 @@ export default function StudentDetailPage() {
               </table>
             </div>
           </section>
+
+          <SubscriptionSection studentId={id} initialSubscriptions={subscriptions} />
         </div>
       )}
     </DashboardShell>
