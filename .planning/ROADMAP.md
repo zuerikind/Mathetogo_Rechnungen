@@ -81,7 +81,7 @@ Plans:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Schema and Data Foundation | 1/3 | In Progress|  | - |
+| 1. Schema and Data Foundation | 2/3 | In Progress|  | - |
 | 2. Subscription CRUD and Student Detail | v1.1 | 0/TBD | Not started | - |
 | 3. Invoice Integration | v1.1 | 0/TBD | Not started | - |
 | 4. Dashboard and Payment Tracking | v1.1 | 0/TBD | Not started | - |

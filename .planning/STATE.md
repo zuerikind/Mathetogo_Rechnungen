@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Platform Revenue Tracking
 status: planning
-stopped_at: Completed 01-schema-and-data-foundation/01-01-PLAN.md
-last_updated: "2026-04-22T02:12:44.460Z"
+stopped_at: Completed 01-schema-and-data-foundation/01-02-PLAN.md
+last_updated: "2026-04-22T20:04:26.401Z"
 last_activity: 2026-04-22 — Roadmap created for v1.1 milestone
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 33
 ---
 
@@ -51,6 +51,7 @@ Progress: [███░░░░░░░] 33%
 
 *Updated after each plan completion*
 | Phase 01-schema-and-data-foundation P01 | 2 | 2 tasks | 4 files |
+| Phase 01-schema-and-data-foundation P02 | 30 | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -64,6 +65,9 @@ Recent decisions affecting current work:
 - v1.1 planning: Dashboard revenue uses Session + PlatformCharge as source tables directly (not Invoice.totalCHF) to avoid double-counting
 - [Phase 01-schema-and-data-foundation]: vitest chosen over jest: lighter, faster, native ESM for Next.js TypeScript project
 - [Phase 01-schema-and-data-foundation]: Test stubs are intentionally red: import failure proves implementation not yet present
+- [Phase 01-schema-and-data-foundation]: billingMethod stored as String not enum to match existing schema convention where currency is also String
+- [Phase 01-schema-and-data-foundation]: PlatformCharge omits updatedAt — charges are immutable once created; paidAt update path added in Phase 4
+- [Phase 01-schema-and-data-foundation]: Migration tracked via prisma migrate dev (not db push) so SQL file is replayable on Supabase via prisma migrate deploy
 
 ### Pending Todos
 
@@ -76,6 +80,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-22T02:12:44.459Z
-Stopped at: Completed 01-schema-and-data-foundation/01-01-PLAN.md
+Last session: 2026-04-22T20:04:26.396Z
+Stopped at: Completed 01-schema-and-data-foundation/01-02-PLAN.md
 Resume file: None
