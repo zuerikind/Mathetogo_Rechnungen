@@ -16,9 +16,10 @@ model Student {
   currency   String    @default("CHF")
   email      String?
   active     Boolean   @default(true)
-  sessions   Session[]
-  invoices   Invoice[]
-  createdAt  DateTime  @default(now())
+  sessions       Session[]
+  invoices       Invoice[]
+  subscriptions  PlatformSubscription[]
+  createdAt      DateTime  @default(now())
 }
 
 model Session {
@@ -45,6 +46,7 @@ model Invoice {
   sessionIds    String
   invoiceNumber String    @default("")
   sentAt        DateTime?
+  paidAt        DateTime?
   pdfPath       String?
   createdAt     DateTime  @default(now())
 
@@ -61,4 +63,32 @@ model TutorProfile {
   bankName  String   @default("Zürcher Kantonalbank")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model PlatformSubscription {
+  id             String           @id @default(cuid())
+  studentId      String
+  student        Student          @relation(fields: [studentId], references: [id])
+  amountCHF      Float
+  billingMethod  String           // "invoice" | "direct"
+  durationMonths Int              // 1 or 6
+  startMonth     Int              // 1–12
+  startYear      Int
+  active         Boolean          @default(true)
+  charges        PlatformCharge[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+}
+
+model PlatformCharge {
+  id             String               @id @default(cuid())
+  subscriptionId String
+  subscription   PlatformSubscription @relation(fields: [subscriptionId], references: [id])
+  month          Int
+  year           Int
+  amountCHF      Float
+  paidAt         DateTime?
+  createdAt      DateTime             @default(now())
+
+  @@unique([subscriptionId, month, year])
 }
