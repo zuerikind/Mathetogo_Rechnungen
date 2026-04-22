@@ -57,6 +57,12 @@ export function StudentTable({ students, onEdit, onDeactivate }: StudentTablePro
                   >
                     Deaktivieren
                   </button>
+                  <Link
+                    href={`/students/${s.id}`}
+                    className="rounded-lg border border-blue-100 px-2.5 py-1 text-xs font-medium text-[#4A7FC1] transition hover:border-[#4A7FC1] hover:bg-blue-50"
+                  >
+                    Abonnement
+                  </Link>
                 </div>
               </td>
             </tr>
