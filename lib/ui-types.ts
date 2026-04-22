@@ -34,3 +34,27 @@ export type SyncResponse = {
   clientError?: string;
   sessions?: SessionWithStudent[];
 };
+
+export type PlatformCharge = {
+  id: string;
+  subscriptionId: string;
+  month: number;
+  year: number;
+  amountCHF: number;
+  paidAt: string | null;
+  createdAt: string;
+};
+
+export type PlatformSubscriptionWithCharges = {
+  id: string;
+  studentId: string;
+  amountCHF: number;
+  billingMethod: string;
+  durationMonths: number;
+  startMonth: number;
+  startYear: number;
+  active: boolean;
+  charges: PlatformCharge[];
+  createdAt: string;
+  updatedAt: string;
+};
