@@ -10,7 +10,7 @@
 - [ ] **SUB-01**: Tutor can add a Mathetogo platform subscription to a student (amount in CHF, duration: 1 or 6 months, billing method: invoice or direct transfer)
 - [ ] **SUB-02**: Tutor can edit an existing subscription (change amount or billing method)
 - [ ] **SUB-03**: Tutor can deactivate a subscription before its duration ends
-- [ ] **SUB-04**: System automatically applies a monthly platform charge for each active subscription month (for 6-month subscriptions, one charge per month for 6 months)
+- [x] **SUB-04**: System automatically applies a monthly platform charge for each active subscription month (for 6-month subscriptions, one charge per month for 6 months)
 - [ ] **SUB-05**: Student detail page shows current subscription status (active/inactive), monthly amount, duration remaining, and per-month payment status
 
 ### Invoice Integration
@@ -54,7 +54,7 @@
 | SUB-01 | Phase 2 | Pending |
 | SUB-02 | Phase 2 | Pending |
 | SUB-03 | Phase 2 | Pending |
-| SUB-04 | Phase 1 | Pending |
+| SUB-04 | Phase 1 | Complete |
 | SUB-05 | Phase 2 | Pending |
 | INV-01 | Phase 3 | Pending |
 | INV-02 | Phase 3 | Pending |

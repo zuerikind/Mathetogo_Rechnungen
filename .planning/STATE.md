@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.1
+milestone_name: Platform Revenue Tracking
+status: planning
+stopped_at: Completed 01-schema-and-data-foundation/01-01-PLAN.md
+last_updated: "2026-04-22T02:12:44.460Z"
+last_activity: 2026-04-22 — Roadmap created for v1.1 milestone
+progress:
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 3
+  completed_plans: 1
+  percent: 33
+---
+
 # Project State
 
 ## Project Reference
@@ -14,7 +30,7 @@ Plan: 0 of TBD in current phase
 Status: Ready to plan
 Last activity: 2026-04-22 — Roadmap created for v1.1 milestone
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
@@ -34,6 +50,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 01-schema-and-data-foundation P01 | 2 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -45,6 +62,8 @@ Recent decisions affecting current work:
 - v1.1 planning: Platform fee as separate invoice line item (injected via InvoicePayload, not a separate Invoice record)
 - v1.1 planning: Charge generation is just-in-time via `ensureChargeForMonth` — not eager on subscription creation, to avoid stale future charges after edits or deactivation
 - v1.1 planning: Dashboard revenue uses Session + PlatformCharge as source tables directly (not Invoice.totalCHF) to avoid double-counting
+- [Phase 01-schema-and-data-foundation]: vitest chosen over jest: lighter, faster, native ESM for Next.js TypeScript project
+- [Phase 01-schema-and-data-foundation]: Test stubs are intentionally red: import failure proves implementation not yet present
 
 ### Pending Todos
 
@@ -57,6 +76,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-22
-Stopped at: Roadmap written, STATE.md initialised — ready to plan Phase 1
+Last session: 2026-04-22T02:12:44.459Z
+Stopped at: Completed 01-schema-and-data-foundation/01-01-PLAN.md
 Resume file: None
