@@ -1,4 +1,4 @@
-import { getChargeMonths, addMonths } from "@/lib/platform-charges";
+import { getChargeMonths, addMonths } from "@/lib/month-math";
 
 export type ChargeStatus = "paid" | "unpaid" | "scheduled";
 
@@ -11,6 +11,9 @@ export type ChargeRow = {
 
 type MinimalCharge = { paidAt: string | null; month: number; year: number };
 type MinimalSubscription = { startMonth: number; startYear: number; durationMonths: number };
+
+/** Optional: when `billingMethod === "direct"` (Ueberweisung), all periods count as settled (UI + analysis only, not on pupil invoices). */
+export type SubscriptionChargePlan = MinimalSubscription & { billingMethod?: string };
 
 /**
  * Classify a charge as paid, scheduled, or unpaid.
@@ -44,7 +47,7 @@ export function monthsRemaining(sub: MinimalSubscription, now: Date = new Date()
  * months as "scheduled" or "unpaid" depending on whether they are in the future.
  */
 export function buildChargeRows(
-  sub: MinimalSubscription,
+  sub: SubscriptionChargePlan,
   charges: MinimalCharge[],
   now: Date = new Date()
 ): ChargeRow[] {
@@ -53,6 +56,8 @@ export function buildChargeRows(
   return expectedMonths.map(({ month, year }) => {
     const charge = chargeMap.get(`${year}-${month}`) ?? null;
     const synthetic: MinimalCharge = charge ?? { paidAt: null, month, year };
-    return { month, year, charge, status: chargeStatus(synthetic, now) };
+    const status: ChargeStatus =
+      sub.billingMethod === "direct" ? "paid" : chargeStatus(synthetic, now);
+    return { month, year, charge, status };
   });
 }

@@ -112,6 +112,32 @@ export function SubscriptionSection({ studentId, initialSubscriptions }: Subscri
     }
   }
 
+  async function handleDelete(subId: string) {
+    if (
+      !window.confirm(
+        "Abonnement endgueltig loeschen? Alle zugehoerigen Monatszeilen (PlatformCharge) werden entfernt. Dies kann nicht rueckgaengig gemacht werden."
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/subscriptions/${subId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        setError(data.error ?? "Fehler beim Loeschen.");
+        return;
+      }
+      setSubscriptions((prev) => prev.filter((s) => s.id !== subId));
+      if (editingId === subId) setEditingId(null);
+    } catch {
+      setError("Netzwerkfehler.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDeactivate(subId: string) {
     if (!window.confirm("Abonnement wirklich deaktivieren? Dies stoppt zukuenftige Abrechnungen.")) return;
     setSaving(true);
@@ -279,28 +305,42 @@ export function SubscriptionSection({ studentId, initialSubscriptions }: Subscri
                   )}
                   <span className="text-sm text-gray-800">{formatCHF(sub.amountCHF)}/Monat</span>
                   <span className="text-xs text-gray-500">
-                    {sub.billingMethod === "direct" ? "Ueberweisung" : "Rechnung"}
+                    {sub.billingMethod === "direct" ? "Ueberweisung (sofort bezahlt)" : "Rechnung"}
                   </span>
                   <span className="text-xs text-gray-500">
                     {remaining > 0 ? `${remaining} Monate verbleibend` : "Abgelaufen"}
                   </span>
                 </div>
 
-                {sub.active && !isEditing && (
-                  <div className="flex gap-2">
+                {!isEditing && (
+                  <div className="flex flex-wrap gap-2">
+                    {sub.active && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => openEditForm(sub)}
+                          className="text-xs text-[#4A7FC1] hover:underline"
+                          disabled={saving}
+                        >
+                          Bearbeiten
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeactivate(sub.id)}
+                          className="text-xs text-red-500 hover:underline"
+                          disabled={saving}
+                        >
+                          Deaktivieren
+                        </button>
+                      </>
+                    )}
                     <button
-                      onClick={() => openEditForm(sub)}
-                      className="text-xs text-[#4A7FC1] hover:underline"
+                      type="button"
+                      onClick={() => void handleDelete(sub.id)}
+                      className="text-xs text-red-600 hover:underline font-medium"
                       disabled={saving}
                     >
-                      Bearbeiten
-                    </button>
-                    <button
-                      onClick={() => void handleDeactivate(sub.id)}
-                      className="text-xs text-red-500 hover:underline"
-                      disabled={saving}
-                    >
-                      Deaktivieren
+                      Loeschen
                     </button>
                   </div>
                 )}
@@ -390,10 +430,17 @@ export function SubscriptionSection({ studentId, initialSubscriptions }: Subscri
                       ))}
                     </tbody>
                   </table>
-                  {allScheduled && (
-                    <p className="mt-1 text-xs text-gray-400">
-                      Abrechnungen werden bei Rechnungserstellung erstellt.
+                  {sub.billingMethod === "direct" ? (
+                    <p className="mt-1 text-xs text-green-800 bg-green-50 border border-green-100 rounded px-2 py-1">
+                      Direktzahlung: Monatsliste gruen (bezahlt). Kein Abo auf Schueler-Rechnung/PDF — Einkommen nur in
+                      deiner Auswertung (Dashboard, Diagramme).
                     </p>
+                  ) : (
+                    allScheduled && (
+                      <p className="mt-1 text-xs text-gray-400">
+                        Abrechnungen werden bei Rechnungserstellung erstellt.
+                      </p>
+                    )
                   )}
                 </div>
               )}

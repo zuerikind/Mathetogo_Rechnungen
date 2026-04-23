@@ -46,9 +46,9 @@ export default function SyncPage() {
 
   return (
     <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome}>
-      <div className="space-y-4">
+      <div className="min-w-0 space-y-4">
         {/* Month + Year Picker card */}
-        <section className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
+        <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
           <h2 className="text-base font-semibold text-gray-900">Kalender Sync</h2>
           <p className="mt-0.5 text-sm text-gray-500">Wähle Monat und Jahr aus, dann synchronisiere mit Google Kalender.</p>
 
@@ -130,7 +130,7 @@ export default function SyncPage() {
 
         {/* Results */}
         {result && !result.clientError && !loading && !loadError ? (
-          <section className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
+          <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
             {/* Summary pills */}
             <div className="mb-4 flex flex-wrap gap-2">
               <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
@@ -154,10 +154,12 @@ export default function SyncPage() {
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Stunden</p>
                 <ul className="space-y-1">
                   {sessions.map((session) => (
-                    <li key={session.id} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-700 odd:bg-gray-50">
-                      <span className="text-green-500">✓</span>
-                      <span className="font-medium">{session.student?.name ?? "Unbekannt"}</span>
-                      <span className="ml-auto text-gray-400">
+                    <li key={session.id} className="flex flex-col gap-1 rounded-lg px-3 py-2 text-sm text-gray-700 odd:bg-gray-50 sm:flex-row sm:items-center sm:gap-2">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="shrink-0 text-green-500">✓</span>
+                        <span className="min-w-0 font-medium break-words">{session.student?.name ?? "Unbekannt"}</span>
+                      </span>
+                      <span className="shrink-0 text-gray-400 sm:ml-auto">
                         {new Date(session.date).toLocaleDateString("de-CH")}
                       </span>
                     </li>

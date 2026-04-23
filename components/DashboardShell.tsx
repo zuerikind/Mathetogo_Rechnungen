@@ -23,17 +23,17 @@ export function DashboardShell({ monthIncome, ytdIncome, children }: DashboardSh
   const pathname = usePathname();
 
   return (
-    <div className="min-h-screen bg-[#F0F5FF]">
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 p-5 md:grid-cols-[240px_1fr]">
+    <div className="min-h-screen min-w-0 bg-[#F0F5FF]">
+      <div className="mx-auto grid min-w-0 max-w-7xl grid-cols-1 gap-4 px-3 py-4 sm:gap-5 sm:px-5 sm:py-5 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
         {/* Sidebar */}
-        <aside className="flex flex-col gap-4">
-          <div className="rounded-2xl border border-blue-100 bg-white px-4 py-3 shadow-sm">
+        <aside className="flex min-w-0 flex-col gap-4">
+          <div className="hidden rounded-2xl border border-blue-100 bg-white px-4 py-3 shadow-sm md:block">
             <Image
               src="/mathetogo-logo-clean.png"
               alt="Mathetogo"
               width={190}
               height={46}
-              className="h-9 w-auto"
+              className="h-9 w-auto max-w-full"
               priority
             />
           </div>
@@ -46,14 +46,14 @@ export function DashboardShell({ monthIncome, ytdIncome, children }: DashboardSh
                   <li key={item.href}>
                     <Link
                       href={item.href}
-                      className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-all ${
+                      className={`flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-all ${
                         active
                           ? "bg-[#EBF4FF] font-semibold text-[#4A7FC1]"
                           : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                       }`}
                     >
-                      <span className="text-base">{item.icon}</span>
-                      {item.label}
+                      <span className="shrink-0 text-base">{item.icon}</span>
+                      <span className="min-w-0 flex-1 leading-snug">{item.label}</span>
                       {active && (
                         <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#4A7FC1]" />
                       )}
@@ -80,7 +80,7 @@ export function DashboardShell({ monthIncome, ytdIncome, children }: DashboardSh
           </div>
         </aside>
 
-        <main>{children}</main>
+        <main className="min-w-0 max-w-full">{children}</main>
       </div>
     </div>
   );

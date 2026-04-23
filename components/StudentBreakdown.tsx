@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
   Bar,
   BarChart,
@@ -9,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { formatCHF, TEAL } from "@/lib/ui-format";
+import { formatCHF, normStudentDisplayName, TEAL } from "@/lib/ui-format";
 import type { SessionWithStudent } from "@/lib/ui-types";
 
 type StudentStat = {
@@ -21,6 +23,8 @@ type StudentStat = {
 
 type Props = {
   sessions: SessionWithStudent[];
+  /** Analysis: prorated Abo-Anteil pro Schülername (Kalendermonat der Ansicht). */
+  subscriptionIncomeByName?: Record<string, number>;
   onStudentSelect?: (name: string | null) => void;
   selectedStudent?: string | null;
 };
@@ -46,31 +50,63 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payl
         </div>
         <div className="flex justify-between gap-4 border-t border-gray-100 pt-1">
           <span className="text-gray-500">Ø / Session</span>
-          <span className="font-medium">{formatCHF(d.income / (d.sessions || 1))}</span>
+          <span className="font-medium">
+            {d.sessions > 0 ? formatCHF(d.income / d.sessions) : "—"}
+          </span>
         </div>
       </div>
     </div>
   );
 }
 
-export function StudentBreakdown({ sessions, onStudentSelect, selectedStudent }: Props) {
-  const byStudent: StudentStat[] = Object.values(
-    sessions.reduce(
-      (acc, s) => {
-        const name = s.student?.name ?? "Unbekannt";
-        if (!acc[name]) acc[name] = { name, income: 0, sessions: 0, hours: 0 };
-        acc[name].income += s.amountCHF;
-        acc[name].sessions += 1;
-        acc[name].hours += s.durationMin / 60;
-        return acc;
+export function StudentBreakdown({
+  sessions,
+  subscriptionIncomeByName = {},
+  onStudentSelect,
+  selectedStudent,
+}: Props) {
+  const compact = useMediaQuery("(max-width: 639px)");
+  const [showAllStudents, setShowAllStudents] = useState(false);
+
+  const rankedStudents: StudentStat[] = useMemo(() => {
+    const acc = sessions.reduce(
+      (map, s) => {
+        const name = normStudentDisplayName(s.student?.name);
+        if (!map[name]) map[name] = { name, income: 0, sessions: 0, hours: 0 };
+        map[name].income += s.amountCHF;
+        map[name].sessions += 1;
+        map[name].hours += s.durationMin / 60;
+        return map;
       },
       {} as Record<string, StudentStat>
-    )
-  )
-    .sort((a, b) => b.income - a.income)
-    .slice(0, 15);
+    );
+    for (const [nameKey, extra] of Object.entries(subscriptionIncomeByName)) {
+      if (extra === 0) continue;
+      const name = normStudentDisplayName(nameKey);
+      if (!acc[name]) acc[name] = { name, income: 0, sessions: 0, hours: 0 };
+      acc[name].income += extra;
+    }
+    return Object.values(acc).sort((a, b) => b.income - a.income);
+  }, [sessions, subscriptionIncomeByName]);
 
-  if (byStudent.length === 0) {
+  useEffect(() => {
+    setShowAllStudents(false);
+  }, [sessions]);
+
+  const collapsedStudents = useMemo(() => {
+    const top = rankedStudents.slice(0, 10);
+    if (!selectedStudent) return top;
+    const sel = normStudentDisplayName(selectedStudent);
+    const row = rankedStudents.find((r) => r.name === sel);
+    if (!row || top.some((r) => r.name === sel)) return top;
+    return [...rankedStudents.slice(0, 9), row];
+  }, [rankedStudents, selectedStudent]);
+
+  const byStudent = showAllStudents ? rankedStudents : collapsedStudents;
+
+  const selectedNorm = selectedStudent ? normStudentDisplayName(selectedStudent) : null;
+
+  if (rankedStudents.length === 0 && Object.keys(subscriptionIncomeByName).length === 0) {
     return (
       <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm flex items-center justify-center h-40 text-sm text-gray-400">
         Keine Daten für diesen Zeitraum
@@ -79,51 +115,79 @@ export function StudentBreakdown({ sessions, onStudentSelect, selectedStudent }:
   }
 
   const chartHeight = Math.max(200, byStudent.length * 38);
+  const canExpand = rankedStudents.length > 10;
 
   const handleClick = (dataPoint: unknown) => {
     const d = dataPoint as StudentStat;
     if (!d?.name || !onStudentSelect) return;
-    onStudentSelect(selectedStudent === d.name ? null : d.name);
+    const sel = selectedStudent ? normStudentDisplayName(selectedStudent) : null;
+    onStudentSelect(sel === d.name ? null : d.name);
   };
 
+  const chartMargin = compact
+    ? { top: 4, right: 8, left: 0, bottom: 4 }
+    : { top: 8, right: 168, left: 4, bottom: 8 };
+  const yAxisWidth = compact ? 76 : 118;
+
   return (
-    <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between mb-4">
-        <div>
+    <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold text-gray-900">Einkommen nach Schüler</h3>
-          <p className="text-xs text-gray-400 mt-0.5">Top {byStudent.length} · Klick zum Filtern</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {showAllStudents
+              ? `Alle ${rankedStudents.length} · Klick zum Filtern`
+              : `Top ${Math.min(10, rankedStudents.length)} · Klick zum Filtern`}
+          </p>
         </div>
-        {selectedStudent && onStudentSelect && (
-          <button
-            onClick={() => onStudentSelect(null)}
-            className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 rounded-full px-2.5 py-0.5"
-          >
-            {selectedStudent} ✕
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto sm:justify-end">
+          {canExpand && (
+            <button
+              type="button"
+              onClick={() => setShowAllStudents((v) => !v)}
+              className="rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
+            >
+              {showAllStudents ? "Weniger anzeigen" : "Alle anzeigen"}
+            </button>
+          )}
+          {selectedStudent && onStudentSelect && (
+            <button
+              onClick={() => onStudentSelect(null)}
+              className="max-w-full shrink-0 truncate rounded-full border border-gray-200 px-2.5 py-0.5 text-xs text-gray-400 hover:text-gray-700"
+              title={selectedStudent}
+            >
+              {compact && selectedStudent.length > 18
+                ? `${selectedStudent.slice(0, 17)}… ✕`
+                : `${selectedStudent} ✕`}
+            </button>
+          )}
+        </div>
       </div>
-      <div style={{ height: chartHeight }}>
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="min-w-0 overflow-x-auto overflow-y-visible" style={{ height: chartHeight }}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={compact ? 260 : undefined}>
           <BarChart
             data={byStudent}
             layout="vertical"
             barCategoryGap="20%"
-            margin={{ top: 0, right: 60, left: 0, bottom: 0 }}
+            margin={chartMargin}
           >
             <XAxis
               type="number"
-              tick={{ fontSize: 11, fill: "#9ca3af" }}
+              tick={{ fontSize: compact ? 9 : 10, fill: "#9ca3af" }}
               axisLine={false}
               tickLine={false}
-              tickFormatter={(v: number) => `CHF ${v}`}
+              tickFormatter={(v: number) => (compact ? `${v}` : `CHF ${v}`)}
             />
             <YAxis
               type="category"
               dataKey="name"
-              tick={{ fontSize: 12, fill: "#374151" }}
+              tick={{ fontSize: compact ? 10 : 11, fill: "#374151" }}
               axisLine={false}
               tickLine={false}
-              width={110}
+              width={yAxisWidth}
+              tickFormatter={(v: string) =>
+                compact && v.length > 10 ? `${v.slice(0, 9)}…` : v
+              }
             />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(74,127,193,0.06)" }} />
             <Bar
@@ -131,18 +195,23 @@ export function StudentBreakdown({ sessions, onStudentSelect, selectedStudent }:
               radius={[0, 5, 5, 0]}
               onClick={handleClick}
               style={{ cursor: onStudentSelect ? "pointer" : "default" }}
-              label={{
-                position: "right",
-                fontSize: 11,
-                fill: "#6b7280",
-                formatter: (label) => formatCHF(Number(label)),
-              }}
+              label={
+                compact
+                  ? false
+                  : {
+                      position: "right",
+                      fontSize: 10,
+                      fill: "#6b7280",
+                      offset: 10,
+                      formatter: (label: unknown) => formatCHF(Number(label)),
+                    }
+              }
             >
               {byStudent.map((d, i) => (
                 <Cell
                   key={d.name}
-                  fill={selectedStudent === d.name ? "#2B5FA0" : TEAL}
-                  opacity={selectedStudent && selectedStudent !== d.name ? 0.35 : 1 - i * 0.04}
+                  fill={selectedNorm === d.name ? "#2B5FA0" : TEAL}
+                  opacity={selectedNorm && selectedNorm !== d.name ? 0.35 : 1 - i * 0.04}
                 />
               ))}
             </Bar>

@@ -76,7 +76,7 @@ export default function SettingsPage() {
 
   return (
     <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome}>
-      <section className="rounded-lg border border-gray-200 bg-white p-5">
+      <section className="min-w-0 rounded-lg border border-gray-200 bg-white p-4 sm:p-5">
         <h2 className="text-xl font-semibold text-gray-900">Tutor Settings</h2>
         <p className="mt-1 text-sm text-gray-500">
           Diese Daten werden fuer Rechnung PDF und WhatsApp-Nachrichten verwendet.

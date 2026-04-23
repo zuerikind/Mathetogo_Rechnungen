@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { addMonths, getChargeMonths, ensureChargeForMonth } from "@/lib/platform-charges";
+import { addMonths, getChargeMonths } from "@/lib/month-math";
+import { ensureChargeForMonth } from "@/lib/platform-charges";
 
 describe("addMonths", () => {
   it("returns the same month when offset is 0", () => {

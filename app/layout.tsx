@@ -14,14 +14,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="de">
       <body>
         <header className="sticky top-0 z-50 border-b border-blue-100 bg-white/80 backdrop-blur-md">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
-            <div className="flex items-center gap-3">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
               <Image
                 src="/mathetogo-logo-clean.png"
                 alt="Mathetogo"
                 width={170}
                 height={40}
-                className="h-8 w-auto"
+                className="h-7 w-auto max-w-[min(100%,9.5rem)] shrink-0 sm:h-8 sm:max-w-none"
                 priority
               />
             </div>
@@ -33,7 +33,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             >
               <button
                 type="submit"
-                className="rounded-full border border-gray-200 bg-white px-4 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition hover:border-red-200 hover:text-red-600"
+                className="shrink-0 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition hover:border-red-200 hover:text-red-600 sm:px-4"
               >
                 Abmelden
               </button>

@@ -1,22 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const year = searchParams.get("year");
+  const month = searchParams.get("month");
   const studentId = searchParams.get("studentId");
   const status = searchParams.get("status");
 
   const invoices = await prisma.invoice.findMany({
     where: {
       ...(year ? { year: Number(year) } : {}),
+      ...(month ? { month: Number(month) } : {}),
       ...(studentId ? { studentId } : {}),
-      ...(status === "sent"
-        ? { sentAt: { not: null } }
+      ...(status === "paid"
+        ? { paidAt: { not: null } }
+        : status === "sent"
+          ? { sentAt: { not: null }, paidAt: null }
         : status === "created"
-          ? { sentAt: null, pdfPath: { not: null } }
+          ? { sentAt: null, paidAt: null, pdfPath: { not: null } }
           : status === "pending"
-            ? { sentAt: null, pdfPath: null }
+            ? { sentAt: null, paidAt: null, pdfPath: null }
             : {}),
     },
     include: {
@@ -40,6 +45,7 @@ export async function GET(req: NextRequest) {
   const sessionRows = await prisma.session.findMany({
     where: {
       ...(year ? { year: Number(year) } : {}),
+      ...(month ? { month: Number(month) } : {}),
       ...(studentId ? { studentId } : {}),
     },
     select: {
@@ -70,6 +76,7 @@ export async function GET(req: NextRequest) {
       totalCHF: number;
       sessionIds: string;
       sentAt: null;
+      paidAt: null;
       pdfPath: null;
       invoiceNumber: null;
       isVirtual: true;
@@ -89,6 +96,7 @@ export async function GET(req: NextRequest) {
         totalCHF: 0,
         sessionIds: "[]",
         sentAt: null,
+        paidAt: null,
         pdfPath: null,
         invoiceNumber: null,
         isVirtual: true,
@@ -106,6 +114,30 @@ export async function GET(req: NextRequest) {
         ...JSON.parse(current.sessionIds),
         row.id,
       ]);
+    }
+  }
+
+  const studentIdsForSubs = Array.from(new Set(sessionRows.map((r) => r.studentId)));
+  if (studentIdsForSubs.length > 0) {
+    const platformSubs = await prisma.platformSubscription.findMany({
+      where: { studentId: { in: studentIdsForSubs } },
+      select: {
+        id: true,
+        studentId: true,
+        amountCHF: true,
+        billingMethod: true,
+        durationMonths: true,
+        startMonth: true,
+        startYear: true,
+      },
+    });
+    for (const v of Array.from(virtualMap.values())) {
+      const lines = getSubscriptionInvoiceLines(
+        platformSubs.filter((s) => s.studentId === v.studentId),
+        v.year,
+        v.month
+      );
+      v.totalCHF += lines.reduce((acc, l) => acc + l.amountCHF, 0);
     }
   }
 

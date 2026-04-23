@@ -44,7 +44,7 @@ export function StudentTable({ students, onEdit, onDeactivate }: StudentTablePro
               <td className="px-5 py-3 font-medium text-gray-800">{formatCHF(s.totalEarned)}</td>
               <td className="px-5 py-3 text-gray-600">{s.sessions}</td>
               <td className="px-5 py-3">
-                <div className="flex gap-2">
+                <div className="flex min-w-0 max-w-[16rem] flex-wrap gap-2 sm:max-w-none">
                   <button
                     onClick={() => onEdit(s)}
                     className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"

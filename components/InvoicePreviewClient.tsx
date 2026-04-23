@@ -9,6 +9,7 @@ import {
   defaultWhatsAppTemplate,
   renderWhatsAppTemplate,
 } from "@/lib/whatsapp";
+import { getSubscriptionInvoiceLines, type SubscriptionBillingInput } from "@/lib/subscription-billing";
 
 type Session = {
   id: string;
@@ -46,6 +47,7 @@ type Props = {
 
 export function InvoicePreviewClient({ studentId, year, month }: Props) {
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionBillingInput[]>([]);
   const [student, setStudent] = useState<Student | null>(null);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [generatedPdfUrl, setGeneratedPdfUrl] = useState<string | null>(null);
@@ -64,9 +66,25 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
       fetch(`/api/sessions?studentId=${studentId}&year=${year}&month=${month}`).then((r) => r.json()),
       fetch(`/api/students/${studentId}`).then((r) => r.json()),
       fetch(`/api/invoices?studentId=${studentId}&year=${year}`).then((r) => r.json()),
+      fetch(`/api/subscriptions?studentId=${encodeURIComponent(studentId)}`).then((r) => r.json()),
       fetch("/api/settings").then((r) => (r.ok ? r.json() : null)),
-    ]).then(([sessionData, studentData, invoices, settingsData]) => {
+    ]).then(([sessionData, studentData, invoices, subData, settingsData]) => {
       setSessions(Array.isArray(sessionData) ? sessionData : []);
+      if (Array.isArray(subData)) {
+        setSubscriptions(
+          subData.map((s: SubscriptionBillingInput) => ({
+            id: s.id,
+            studentId: s.studentId,
+            amountCHF: s.amountCHF,
+            billingMethod: s.billingMethod,
+            durationMonths: s.durationMonths,
+            startMonth: s.startMonth,
+            startYear: s.startYear,
+          }))
+        );
+      } else {
+        setSubscriptions([]);
+      }
       if (studentData && !("error" in studentData)) setStudent(studentData as Student);
       const existing = (invoices ?? []).find((entry: { month: number }) => entry.month === month);
       if (existing) {
@@ -86,11 +104,17 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
     window.localStorage.setItem(storageKey, template);
   }, [storageKey, template]);
 
+  const subscriptionLines = useMemo(
+    () => getSubscriptionInvoiceLines(subscriptions, year, month),
+    [subscriptions, year, month]
+  );
+
   const totals = useMemo(() => {
     const totalMinutes = sessions.reduce((sum, s) => sum + s.durationMin, 0);
-    const totalCHF = sessions.reduce((sum, s) => sum + s.amountCHF, 0);
-    return { totalMinutes, totalCHF };
-  }, [sessions]);
+    const sessionsCHF = sessions.reduce((sum, s) => sum + s.amountCHF, 0);
+    const subscriptionCHF = subscriptionLines.reduce((sum, l) => sum + l.amountCHF, 0);
+    return { totalMinutes, sessionsCHF, subscriptionCHF, totalCHF: sessionsCHF + subscriptionCHF };
+  }, [sessions, subscriptionLines]);
 
   const generateInvoice = async (): Promise<{ invoiceId: string; pdfUrl?: string } | null> => {
     const response = await fetch("/api/invoice/generate", {
@@ -137,7 +161,8 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
   };
 
   const previewUrl = `/api/invoice/preview?studentId=${studentId}&year=${year}&month=${month}&_=${previewNonce}`;
-  const downloadUrl = invoice ? `/invoices/${year}-${String(month).padStart(2, "0")}-${studentId}.pdf` : previewUrl;
+  // Always download the freshly rendered preview PDF (same as iframe), not a cached Supabase URL.
+  const pdfDownloadUrl = `${previewUrl}&download=1`;
   const sentDate = invoice?.sentAt ? formatDate(new Date(invoice.sentAt)) : null;
   const canSend = Boolean(student?.email);
 
@@ -174,10 +199,10 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
 
   return (
     <DashboardShell monthIncome={totals.totalCHF} ytdIncome={totals.totalCHF}>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[42%_1fr]">
+      <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,42%)_minmax(0,1fr)]">
 
         {/* Left panel: details + actions */}
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
 
           {/* Header info */}
           <div className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
@@ -186,7 +211,7 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
               <p className="font-semibold text-gray-900">{student?.name ?? "..."}</p>
               <p className="text-gray-500">{getPeriodLabel(month, year)}</p>
             </div>
-            <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="mt-3 grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
               <div className="rounded-xl bg-gray-50 px-3 py-2 text-center">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Lektionen</p>
                 <p className="text-lg font-bold text-gray-800">{sessions.length}</p>
@@ -196,10 +221,16 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
                 <p className="text-lg font-bold text-gray-800">{(totals.totalMinutes / 60).toFixed(1)}h</p>
               </div>
               <div className="rounded-xl bg-[#EBF4FF] px-3 py-2 text-center">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-[#4A7FC1]">Total</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-[#4A7FC1]">Total Rechnung</p>
                 <p className="text-lg font-bold text-[#4A7FC1]">{formatAmount(totals.totalCHF)}</p>
               </div>
             </div>
+            {subscriptionLines.length > 0 && (
+              <p className="mt-2 text-xs text-gray-500">
+                Inkl. Abonnement (Rechnung): {subscriptionLines.map((l) => l.description).join(", ")} ·{" "}
+                {formatAmount(totals.subscriptionCHF)}
+              </p>
+            )}
           </div>
 
           {/* Sessions list */}
@@ -207,10 +238,20 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Sessions</p>
             <ul className="max-h-48 space-y-1 overflow-auto text-sm text-gray-700">
               {sessions.map((s) => (
-                <li key={s.id} className="flex items-center justify-between rounded-lg px-2 py-1.5 odd:bg-gray-50">
-                  <span>{formatDate(new Date(s.date))}</span>
+                <li key={s.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-lg px-2 py-1.5 odd:bg-gray-50">
+                  <span className="shrink-0">{formatDate(new Date(s.date))}</span>
                   <span className="text-gray-400">{formatDuration(s.durationMin)}</span>
-                  <span className="font-medium">{formatAmount(s.amountCHF)}</span>
+                  <span className="ml-auto font-medium sm:ml-0">{formatAmount(s.amountCHF)}</span>
+                </li>
+              ))}
+              {subscriptionLines.map((l) => (
+                <li
+                  key={l.id}
+                  className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-lg border border-dashed border-[#4A7FC1]/30 bg-[#EBF4FF]/40 px-2 py-1.5 text-[#2B5FA0]"
+                >
+                  <span className="shrink-0">—</span>
+                  <span className="text-gray-500">{l.description}</span>
+                  <span className="ml-auto font-medium sm:ml-0">{formatAmount(l.amountCHF)}</span>
                 </li>
               ))}
             </ul>
@@ -222,7 +263,7 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => window.open(downloadUrl, "_blank")}
+                onClick={() => window.open(pdfDownloadUrl, "_blank")}
                 className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
               >
                 PDF herunterladen
@@ -304,10 +345,10 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
         </div>
 
         {/* Right panel: PDF preview */}
-        <div className="rounded-2xl border border-blue-100 bg-white p-2 shadow-sm">
+        <div className="min-h-0 min-w-0 rounded-2xl border border-blue-100 bg-white p-2 shadow-sm">
           <iframe
             src={previewUrl}
-            className="h-[80vh] w-full rounded-xl border border-gray-100"
+            className="h-[55vh] min-h-[20rem] w-full rounded-xl border border-gray-100 sm:h-[70vh] lg:h-[80vh]"
             title="Rechnungsvorschau"
           />
         </div>

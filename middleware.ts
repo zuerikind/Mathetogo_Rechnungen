@@ -22,5 +22,11 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: [
+    /*
+     * Skip Next internals + static files in /public (logos, icons, PDFs, etc.).
+     * Otherwise middleware redirects image requests to /login and next/image fails.
+     */
+    "/((?!_next/static|_next/image|favicon.ico|icon\\.png|.*\\.(?:png|jpg|jpeg|webp|svg|ico|gif|pdf|txt|xml|json|woff2?)$).*)",
+  ],
 };

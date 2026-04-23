@@ -47,3 +47,9 @@ export function getCurrentMonthYear() {
   const now = new Date();
   return { month: now.getMonth() + 1, year: now.getFullYear() };
 }
+
+/** Trim + collapse spaces so Session- und Abo-Zuordnung zum gleichen Schüler zusammenpasst. */
+export function normStudentDisplayName(name: string | null | undefined): string {
+  const t = (name ?? "").trim().replace(/\s+/g, " ");
+  return t.length > 0 ? t : "Unbekannt";
+}

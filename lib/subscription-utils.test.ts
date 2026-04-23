@@ -72,4 +72,14 @@ describe("buildChargeRows", () => {
     );
     expect(rows).toHaveLength(6);
   });
+
+  it("marks every month as paid for Ueberweisung (direct)", () => {
+    const rows = buildChargeRows(
+      { startMonth: 1, startYear: 2026, durationMonths: 6, billingMethod: "direct" },
+      [],
+      REF_DATE
+    );
+    expect(rows).toHaveLength(6);
+    expect(rows.every((r) => r.status === "paid")).toBe(true);
+  });
 });

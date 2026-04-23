@@ -1,4 +1,4 @@
-import { formatAmount, getPeriodLabel } from "@/lib/invoice";
+import { formatAmount, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice";
 
 export type WhatsAppTemplateValues = {
   studentName: string;
@@ -11,13 +11,24 @@ export type WhatsAppTemplateValues = {
 };
 
 export const defaultWhatsAppTemplate = [
-  "Hallo {parentName},",
+  "Hallo zusammen,",
   "",
-  "anbei sende ich dir die Rechnung fuer {studentName} ({monthLabel}) ueber {amountCHF}.",
-  "Bitte bis {dueDate} begleichen.",
+  "{monthLabel} ist vorbei und ich schicke euch die Abrechnung der Lektionen für {studentName} ({amountCHF}) und die Informationen für die Überweisung:",
   "",
+  "Anbei habt ihr die Abrechnung von den letzten Lektionen. Das Geld könnt ihr mir gerne auf mein Konto überweisen (z. B. per QR-Code oder Twint), die Informationen findet ihr direkt hier:",
+  "",
+  "Konto Inhaber: Omid Shams",
+  "IBAN: CH68 8080 8006 1552 5435 4",
+  "",
+  "Wenn ihr es twinten wollt könnt ihr das direkt auf diese Nummer: 0772886085",
+  "",
+  "Das Geld könnt ihr auch weiterhin direkt über Revolut überweisen: https://revolut.me/omidr83to",
+  "",
+  "Fälligkeit: {dueDate}",
   "Rechnungsnummer: {invoiceNumber}",
-  "Vielen Dank und liebe Gruesse",
+  "",
+  "Falls ihr Fragen habt, lasst es mich wissen.",
+  "Liebe Grüsse",
   "{tutorName}",
 ].join("\n");
 
@@ -31,7 +42,7 @@ export function buildWhatsAppValues(args: {
   tutorName?: string;
   dueDate?: Date;
 }): WhatsAppTemplateValues {
-  const dueDate = args.dueDate ?? new Date(args.year, args.month, 7);
+  const dueDate = args.dueDate ?? getInvoiceDueDate(args.year, args.month);
   return {
     studentName: args.studentName,
     parentName: args.parentName?.trim() || "Familie",

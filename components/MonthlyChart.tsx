@@ -1,5 +1,6 @@
 "use client";
 
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
   Bar,
   BarChart,
@@ -11,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { formatCHF, TEAL, BLUE_BG } from "@/lib/ui-format";
+import { formatCHF, TEAL } from "@/lib/ui-format";
 
 export type ChartPoint = {
   month: number;
@@ -19,6 +20,7 @@ export type ChartPoint = {
   income: number;
   sessions: number;
   hours: number;
+  medianPerHour: number;
 };
 
 type Props = {
@@ -47,10 +49,10 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payl
           <span className="text-gray-500">Stunden</span>
           <span className="font-medium text-gray-700">{d.hours.toFixed(1)}h</span>
         </div>
-        {d.sessions > 0 && (
+        {d.medianPerHour > 0 && (
           <div className="flex justify-between gap-4 border-t border-gray-100 pt-1 mt-1">
-            <span className="text-gray-500">Ø / Session</span>
-            <span className="font-medium text-gray-700">{formatCHF(d.income / d.sessions)}</span>
+            <span className="text-gray-500">Median / Stunde</span>
+            <span className="font-medium text-gray-700">{formatCHF(d.medianPerHour)}</span>
           </div>
         )}
       </div>
@@ -60,6 +62,7 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payl
 }
 
 export function MonthlyChart({ data, selectedMonth, onMonthSelect }: Props) {
+  const compact = useMediaQuery("(max-width: 639px)");
   const activeBars = data.filter((d) => d.income > 0);
   const avg = activeBars.length > 0
     ? activeBars.reduce((s, d) => s + d.income, 0) / activeBars.length
@@ -73,8 +76,8 @@ export function MonthlyChart({ data, selectedMonth, onMonthSelect }: Props) {
 
   return (
     <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between mb-1">
-        <div>
+      <div className="mb-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold text-gray-900">Monatliches Einkommen</h3>
           {avg > 0 && (
             <p className="text-xs text-gray-400 mt-0.5">
@@ -85,29 +88,34 @@ export function MonthlyChart({ data, selectedMonth, onMonthSelect }: Props) {
         {selectedMonth !== null && (
           <button
             onClick={() => onMonthSelect(null)}
-            className="text-xs text-gray-400 hover:text-gray-700 transition-colors border border-gray-200 rounded-full px-2.5 py-0.5"
+            className="shrink-0 self-start text-xs text-gray-400 transition-colors hover:text-gray-700 sm:self-auto rounded-full border border-gray-200 px-2.5 py-0.5"
           >
             Filter zurücksetzen ✕
           </button>
         )}
       </div>
 
-      <div className="h-72 w-full mt-4">
+      <div className={`mt-4 w-full ${compact ? "h-52" : "h-72"}`}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} barCategoryGap="35%" margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
+          <BarChart
+            data={data}
+            barCategoryGap={compact ? "28%" : "35%"}
+            margin={{ top: 8, right: compact ? 4 : 16, left: compact ? 0 : 8, bottom: 0 }}
+          >
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
             <XAxis
               dataKey="label"
-              tick={{ fontSize: 11, fill: "#9ca3af" }}
+              tick={{ fontSize: compact ? 9 : 11, fill: "#9ca3af" }}
               axisLine={false}
               tickLine={false}
+              interval={compact ? "preserveStartEnd" : 0}
             />
             <YAxis
-              tick={{ fontSize: 11, fill: "#9ca3af" }}
+              tick={{ fontSize: compact ? 9 : 11, fill: "#9ca3af" }}
               axisLine={false}
               tickLine={false}
               tickFormatter={(v: number) => `${v}`}
-              width={52}
+              width={compact ? 34 : 52}
             />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(74,127,193,0.06)" }} />
             {avg > 0 && (

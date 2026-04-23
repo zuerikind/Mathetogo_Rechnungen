@@ -2,8 +2,8 @@ import { signIn } from "@/auth";
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="bg-white rounded-lg shadow p-8 w-full max-w-sm">
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-8">
+      <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow sm:p-8">
         <h1 className="text-2xl font-bold text-gray-900 mb-2 text-center">
           Nachhilfe Tracker
         </h1>

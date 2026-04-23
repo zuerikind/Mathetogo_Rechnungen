@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
-import { getInvoicePayload } from "@/lib/invoice";
+import { getInvoicePayload, getInvoicePdfDownloadBaseName } from "@/lib/invoice";
 
 export async function GET(req: NextRequest) {
   try {
@@ -19,10 +19,18 @@ export async function GET(req: NextRequest) {
     const payload = await getInvoicePayload(studentId, year, month);
     const pdfBuffer = await buildInvoicePdf(payload);
 
+    const fileName = getInvoicePdfDownloadBaseName(payload.student.name, month, year);
+    const download = searchParams.get("download");
+    const disposition =
+      download === "1" || download === "true"
+        ? `attachment; filename="${fileName}"`
+        : `inline; filename="${fileName}"`;
+
     return new Response(new Uint8Array(pdfBuffer), {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="rechnung-${year}-${month}-${studentId}.pdf"`,
+        "Content-Disposition": disposition,
+        "Cache-Control": "no-store",
       },
     });
   } catch (error) {

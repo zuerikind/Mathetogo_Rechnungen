@@ -104,15 +104,70 @@ export async function POST(req: NextRequest) {
     tasks.push({ calEventId, studentId: student.id, date: start, durationMin, amountCHF, notes: event.description ?? null });
   }
 
-  await prisma.$transaction(
-    tasks.map((t) =>
-      prisma.session.upsert({
-        where: { calEventId: t.calEventId },
-        update: { date: t.date, durationMin: t.durationMin, amountCHF: t.amountCHF, month, year, notes: t.notes },
-        create: { studentId: t.studentId, date: t.date, durationMin: t.durationMin, amountCHF: t.amountCHF, calEventId: t.calEventId, month, year, notes: t.notes },
-      })
-    )
-  );
+  const keepIds = Array.from(new Set(tasks.map((t) => t.calEventId)));
+  const affectedStudentIds = Array.from(new Set(tasks.map((t) => t.studentId)));
+  const shouldPruneOrphans = tasks.length > 0 || events.length === 0;
 
-  return NextResponse.json({ synced: tasks.length, skipped: events.length - tasks.length - unmatched.length, unmatched, totalEvents: events.length });
+  const removed = await prisma.$transaction(async (tx) => {
+    for (const t of tasks) {
+      await tx.session.upsert({
+        where: { calEventId: t.calEventId },
+        update: {
+          date: t.date,
+          durationMin: t.durationMin,
+          amountCHF: t.amountCHF,
+          month,
+          year,
+          notes: t.notes,
+        },
+        create: {
+          studentId: t.studentId,
+          date: t.date,
+          durationMin: t.durationMin,
+          amountCHF: t.amountCHF,
+          calEventId: t.calEventId,
+          month,
+          year,
+          notes: t.notes,
+        },
+      });
+    }
+
+    if (!shouldPruneOrphans) {
+      return { count: 0 };
+    }
+    // Remove calendar-backed sessions for this month that no longer exist in Google.
+    // Manual sessions (calEventId = null) are never touched.
+    if (events.length === 0) {
+      return tx.session.deleteMany({
+        where: { year, month, calEventId: { not: null } },
+      });
+    }
+    if (keepIds.length === 0) {
+      if (affectedStudentIds.length === 0) {
+        return tx.session.deleteMany({
+          where: { year, month, calEventId: { not: null } },
+        });
+      }
+      return tx.session.deleteMany({
+        where: { year, month, studentId: { in: affectedStudentIds }, calEventId: { not: null } },
+      });
+    }
+    return tx.session.deleteMany({
+      where: {
+        year,
+        month,
+        calEventId: { notIn: keepIds },
+        ...(affectedStudentIds.length > 0 ? { studentId: { in: affectedStudentIds } } : {}),
+      },
+    });
+  });
+
+  return NextResponse.json({
+    synced: tasks.length,
+    removed: removed.count,
+    skipped: events.length - tasks.length - unmatched.length,
+    unmatched,
+    totalEvents: events.length,
+  });
 }
