@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import { ReactNode } from "react";
 import { signOut } from "@/auth";
+import { NavigationProgress } from "@/components/NavigationProgress";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,6 +14,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="de">
       <body>
+        <NavigationProgress />
         <header className="sticky top-0 z-50 border-b border-blue-100 bg-white/80 backdrop-blur-md">
           <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3">
             <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">

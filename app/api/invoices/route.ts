@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
+import { getEffectiveManualBaseline, mergeManualBaselineSessions } from "@/lib/manual-revenue";
 import { prisma } from "@/lib/prisma";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
+import { MANUAL_BASELINE_STUDENT_ID } from "@/lib/ui-types";
 
 export async function GET(req: NextRequest) {
+  const authSession = await auth();
+  if (!authSession) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { searchParams } = new URL(req.url);
   const year = searchParams.get("year");
   const month = searchParams.get("month");
@@ -42,7 +48,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(invoices);
   }
 
-  const sessionRows = await prisma.session.findMany({
+  const sessionRowsRaw = await prisma.session.findMany({
     where: {
       ...(year ? { year: Number(year) } : {}),
       ...(month ? { month: Number(month) } : {}),
@@ -54,6 +60,11 @@ export async function GET(req: NextRequest) {
       year: true,
       month: true,
       amountCHF: true,
+      notes: true,
+      date: true,
+      durationMin: true,
+      calEventId: true,
+      createdAt: true,
       student: {
         select: {
           id: true,
@@ -63,6 +74,32 @@ export async function GET(req: NextRequest) {
       },
     },
     orderBy: [{ year: "desc" }, { month: "desc" }],
+  });
+
+  let tutorRow: {
+    manualQ1Year: number | null;
+    manualQ1M1Chf: number | null;
+    manualQ1M2Chf: number | null;
+    manualQ1M3Chf: number | null;
+  } | null = null;
+  try {
+    const rows = await prisma.$queryRaw<
+      {
+        manualQ1Year: number | null;
+        manualQ1M1Chf: number | null;
+        manualQ1M2Chf: number | null;
+        manualQ1M3Chf: number | null;
+      }[]
+    >`SELECT "manualQ1Year", "manualQ1M1Chf", "manualQ1M2Chf", "manualQ1M3Chf" FROM "TutorProfile" WHERE id = 'default' LIMIT 1`;
+    tutorRow = rows[0] ?? null;
+  } catch {
+    tutorRow = null;
+  }
+
+  const baseline = getEffectiveManualBaseline(tutorRow);
+  const sessionRows = mergeManualBaselineSessions(sessionRowsRaw, { studentId, year, month }, {
+    year: baseline.year,
+    entries: baseline.entries,
   });
 
   const existingKeys = new Set(invoices.map((i) => `${i.studentId}-${i.year}-${i.month}`));
@@ -85,6 +122,7 @@ export async function GET(req: NextRequest) {
   >();
 
   for (const row of sessionRows) {
+    if (row.studentId === MANUAL_BASELINE_STUDENT_ID) continue;
     const key = `${row.studentId}-${row.year}-${row.month}`;
     if (existingKeys.has(key)) continue;
     if (!virtualMap.has(key)) {

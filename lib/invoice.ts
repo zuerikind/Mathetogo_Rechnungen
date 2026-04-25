@@ -37,8 +37,15 @@ export function formatDate(date: Date): string {
   return dateFormatter.format(date);
 }
 
+const chfFormatter = new Intl.NumberFormat("de-CH", {
+  style: "currency",
+  currency: "CHF",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 export function formatAmount(amount: number): string {
-  return `CHF ${amount.toFixed(2)}`;
+  return chfFormatter.format(amount);
 }
 
 export function formatDuration(minutes: number): string {

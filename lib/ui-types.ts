@@ -24,6 +24,17 @@ export type SessionWithStudent = {
   };
 };
 
+export const MANUAL_BASELINE_STUDENT_ID = "manual-baseline-revenue";
+
+export function isManualBaselineSession(
+  session: Pick<SessionWithStudent, "studentId" | "notes">
+): boolean {
+  return (
+    session.studentId === MANUAL_BASELINE_STUDENT_ID ||
+    Boolean(session.notes?.toLowerCase().includes("manuell: gesamteinnahmen monat"))
+  );
+}
+
 export type SyncResponse = {
   synced: number;
   skipped: number;

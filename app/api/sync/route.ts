@@ -3,6 +3,18 @@ import { google } from "googleapis";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 
+/** One pool slot + long tx: concurrent /api/sync causes P2024 on the second request. */
+let syncDbChain = Promise.resolve();
+
+function runSyncDbSerialized<T>(fn: () => Promise<T>): Promise<T> {
+  const next = syncDbChain.then(() => fn());
+  syncDbChain = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
+}
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -69,105 +81,112 @@ export async function POST(req: NextRequest) {
   console.log("[sync] total events found:", events.length);
   console.log("[sync] event titles:", events.map((e) => e.summary));
 
-  const students = await prisma.student.findMany({ where: { active: true } });
+  return runSyncDbSerialized(async () => {
+    const students = await prisma.student.findMany({ where: { active: true } });
 
-  const unmatched: string[] = [];
-  type UpsertTask = { calEventId: string; studentId: string; date: Date; durationMin: number; amountCHF: number; notes: string | null };
-  const tasks: UpsertTask[] = [];
+    const unmatched: string[] = [];
+    type UpsertTask = { calEventId: string; studentId: string; date: Date; durationMin: number; amountCHF: number; notes: string | null };
+    const tasks: UpsertTask[] = [];
 
-  for (const event of events) {
-    const title = event.summary ?? "";
-    const startStr = event.start?.dateTime;
-    const endStr = event.end?.dateTime;
-    const calEventId = event.id;
+    for (const event of events) {
+      const title = event.summary ?? "";
+      const startStr = event.start?.dateTime;
+      const endStr = event.end?.dateTime;
+      const calEventId = event.id;
 
-    if (!startStr || !endStr || !calEventId) continue;
+      if (!startStr || !endStr || !calEventId) continue;
 
-    const titleLower = title.toLowerCase();
-    const student = students.find((s) => {
-      const nameLower = s.name.toLowerCase();
-      const escaped = nameLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const regex = new RegExp(`(?<![a-z])${escaped}(?![a-z])`, "i");
-      return regex.test(titleLower);
-    });
-
-    if (!student) {
-      unmatched.push(title);
-      continue;
-    }
-
-    const start = new Date(startStr);
-    const end = new Date(endStr);
-    const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
-    const amountCHF = durationMin * student.ratePerMin;
-
-    tasks.push({ calEventId, studentId: student.id, date: start, durationMin, amountCHF, notes: event.description ?? null });
-  }
-
-  const keepIds = Array.from(new Set(tasks.map((t) => t.calEventId)));
-  const affectedStudentIds = Array.from(new Set(tasks.map((t) => t.studentId)));
-  const shouldPruneOrphans = tasks.length > 0 || events.length === 0;
-
-  const removed = await prisma.$transaction(async (tx) => {
-    for (const t of tasks) {
-      await tx.session.upsert({
-        where: { calEventId: t.calEventId },
-        update: {
-          date: t.date,
-          durationMin: t.durationMin,
-          amountCHF: t.amountCHF,
-          month,
-          year,
-          notes: t.notes,
-        },
-        create: {
-          studentId: t.studentId,
-          date: t.date,
-          durationMin: t.durationMin,
-          amountCHF: t.amountCHF,
-          calEventId: t.calEventId,
-          month,
-          year,
-          notes: t.notes,
-        },
+      const titleLower = title.toLowerCase();
+      const student = students.find((s) => {
+        const nameLower = s.name.toLowerCase();
+        const escaped = nameLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(`(?<![a-z])${escaped}(?![a-z])`, "i");
+        return regex.test(titleLower);
       });
-    }
 
-    if (!shouldPruneOrphans) {
-      return { count: 0 };
-    }
-    // Remove calendar-backed sessions for this month that no longer exist in Google.
-    // Manual sessions (calEventId = null) are never touched.
-    if (events.length === 0) {
-      return tx.session.deleteMany({
-        where: { year, month, calEventId: { not: null } },
-      });
-    }
-    if (keepIds.length === 0) {
-      if (affectedStudentIds.length === 0) {
-        return tx.session.deleteMany({
-          where: { year, month, calEventId: { not: null } },
-        });
+      if (!student) {
+        unmatched.push(title);
+        continue;
       }
-      return tx.session.deleteMany({
-        where: { year, month, studentId: { in: affectedStudentIds }, calEventId: { not: null } },
-      });
-    }
-    return tx.session.deleteMany({
-      where: {
-        year,
-        month,
-        calEventId: { notIn: keepIds },
-        ...(affectedStudentIds.length > 0 ? { studentId: { in: affectedStudentIds } } : {}),
-      },
-    });
-  });
 
-  return NextResponse.json({
-    synced: tasks.length,
-    removed: removed.count,
-    skipped: events.length - tasks.length - unmatched.length,
-    unmatched,
-    totalEvents: events.length,
+      const start = new Date(startStr);
+      const end = new Date(endStr);
+      const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
+      const amountCHF = durationMin * student.ratePerMin;
+
+      tasks.push({ calEventId, studentId: student.id, date: start, durationMin, amountCHF, notes: event.description ?? null });
+    }
+
+    const keepIds = Array.from(new Set(tasks.map((t) => t.calEventId)));
+    const affectedStudentIds = Array.from(new Set(tasks.map((t) => t.studentId)));
+    const shouldPruneOrphans = tasks.length > 0 || events.length === 0;
+
+    // Default interactive transaction timeout is too low for a full month of upserts + deleteMany
+    // (leads to P2028 "Transaction not found" when Prisma closes the tx mid-loop).
+    const removed = await prisma.$transaction(
+      async (tx) => {
+        for (const t of tasks) {
+          await tx.session.upsert({
+            where: { calEventId: t.calEventId },
+            update: {
+              date: t.date,
+              durationMin: t.durationMin,
+              amountCHF: t.amountCHF,
+              month,
+              year,
+              notes: t.notes,
+            },
+            create: {
+              studentId: t.studentId,
+              date: t.date,
+              durationMin: t.durationMin,
+              amountCHF: t.amountCHF,
+              calEventId: t.calEventId,
+              month,
+              year,
+              notes: t.notes,
+            },
+          });
+        }
+
+        if (!shouldPruneOrphans) {
+          return { count: 0 };
+        }
+        // Remove calendar-backed sessions for this month that no longer exist in Google.
+        // Manual sessions (calEventId = null) are never touched.
+        if (events.length === 0) {
+          return tx.session.deleteMany({
+            where: { year, month, calEventId: { not: null } },
+          });
+        }
+        if (keepIds.length === 0) {
+          if (affectedStudentIds.length === 0) {
+            return tx.session.deleteMany({
+              where: { year, month, calEventId: { not: null } },
+            });
+          }
+          return tx.session.deleteMany({
+            where: { year, month, studentId: { in: affectedStudentIds }, calEventId: { not: null } },
+          });
+        }
+        return tx.session.deleteMany({
+          where: {
+            year,
+            month,
+            calEventId: { notIn: keepIds },
+            ...(affectedStudentIds.length > 0 ? { studentId: { in: affectedStudentIds } } : {}),
+          },
+        });
+      },
+      { maxWait: 20_000, timeout: 180_000 }
+    );
+
+    return NextResponse.json({
+      synced: tasks.length,
+      removed: removed.count,
+      skipped: events.length - tasks.length - unmatched.length,
+      unmatched,
+      totalEvents: events.length,
+    });
   });
 }

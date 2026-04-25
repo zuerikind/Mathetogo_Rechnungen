@@ -8,6 +8,11 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+enum MiscEarningSource {
+  manual
+  q1_adjustment
+}
+
 model Student {
   id         String    @id @default(cuid())
   name       String    @unique
@@ -46,6 +51,7 @@ model Invoice {
   sessionIds    String
   invoiceNumber String    @default("")
   sentAt        DateTime?
+  reminderSentAt DateTime?
   paidAt        DateTime?
   pdfPath       String?
   createdAt     DateTime  @default(now())
@@ -61,6 +67,12 @@ model TutorProfile {
   phone     String   @default("+41 79 000 00 00")
   iban      String   @default("CH00 0000 0000 0000 0000 0")
   bankName  String   @default("Zürcher Kantonalbank")
+  /// Jahr für manuelle Q1-Summen (Jan.–Mär.); nur für dieses Jahr
+  manualQ1Year   Int?
+  /// CHF; wenn alle drei null, gelten die Defaults aus lib/manual-revenue
+  manualQ1M1Chf  Float?
+  manualQ1M2Chf  Float?
+  manualQ1M3Chf  Float?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -91,4 +103,17 @@ model PlatformCharge {
   createdAt      DateTime             @default(now())
 
   @@unique([subscriptionId, month, year])
+}
+
+model MiscEarning {
+  id        String            @id @default(cuid())
+  year      Int
+  month     Int
+  amountCHF Float
+  label     String?
+  source    MiscEarningSource @default(manual)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@unique([year, month, source])
 }

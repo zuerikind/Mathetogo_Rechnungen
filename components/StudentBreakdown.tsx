@@ -189,7 +189,7 @@ export function StudentBreakdown({
                 compact && v.length > 10 ? `${v.slice(0, 9)}…` : v
               }
             />
-            <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(74,127,193,0.06)" }} />
+            <Tooltip content={<CustomTooltip />} cursor={false} />
             <Bar
               dataKey="income"
               radius={[0, 5, 5, 0]}

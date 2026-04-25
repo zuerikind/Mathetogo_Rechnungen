@@ -2,19 +2,19 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
+import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { SyncButton } from "@/components/SyncButton";
 import { getCurrentMonthYear, monthOptions } from "@/lib/ui-format";
 import type { SessionWithStudent, SyncResponse } from "@/lib/ui-types";
 
 export default function SyncPage() {
+  const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
   const now = getCurrentMonthYear();
   const [month, setMonth] = useState(now.month);
   const [year, setYear] = useState(now.year);
   const [result, setResult] = useState<SyncResponse | null>(null);
   const [sessions, setSessions] = useState<SessionWithStudent[]>([]);
 
-  const [monthIncome, setMonthIncome] = useState(0);
-  const [ytdIncome, setYtdIncome] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [syncError, setSyncError] = useState("");
@@ -29,10 +29,8 @@ export default function SyncPage() {
       ]);
       if (!monthRes.ok || !yearRes.ok) throw new Error("Laden fehlgeschlagen");
       const monthRows = (await monthRes.json()) as SessionWithStudent[];
-      const yearRows = (await yearRes.json()) as SessionWithStudent[];
+      await yearRes.json();
       setSessions(monthRows);
-      setMonthIncome(monthRows.reduce((acc, s) => acc + s.amountCHF, 0));
-      setYtdIncome(yearRows.reduce((acc, s) => acc + s.amountCHF, 0));
     } catch {
       setLoadError("Fehler beim Laden.");
     } finally {
@@ -45,7 +43,7 @@ export default function SyncPage() {
   }, [loadData]);
 
   return (
-    <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome}>
+    <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       <div className="min-w-0 space-y-4">
         {/* Month + Year Picker card */}
         <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">

@@ -117,7 +117,8 @@ export function MonthlyChart({ data, selectedMonth, onMonthSelect }: Props) {
               tickFormatter={(v: number) => `${v}`}
               width={compact ? 34 : 52}
             />
-            <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(74,127,193,0.06)" }} />
+            {/* cursor=false: Recharts v3 tooltip band can draw a heavy border (looks like a black box) after bar clicks */}
+            <Tooltip content={<CustomTooltip />} cursor={false} />
             {avg > 0 && (
               <ReferenceLine
                 y={avg}

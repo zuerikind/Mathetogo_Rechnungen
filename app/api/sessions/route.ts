@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
+import { getEffectiveManualBaseline, mergeManualBaselineSessions } from "@/lib/manual-revenue";
+import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -29,5 +30,33 @@ export async function GET(req: NextRequest) {
     orderBy: { date: "desc" },
   });
 
-  return NextResponse.json(sessions);
+  let tutorRow: {
+    manualQ1Year: number | null;
+    manualQ1M1Chf: number | null;
+    manualQ1M2Chf: number | null;
+    manualQ1M3Chf: number | null;
+  } | null = null;
+  try {
+    const rows = await prisma.$queryRaw<
+      {
+        manualQ1Year: number | null;
+        manualQ1M1Chf: number | null;
+        manualQ1M2Chf: number | null;
+        manualQ1M3Chf: number | null;
+      }[]
+    >`SELECT "manualQ1Year", "manualQ1M1Chf", "manualQ1M2Chf", "manualQ1M3Chf" FROM "TutorProfile" WHERE id = 'default' LIMIT 1`;
+    tutorRow = rows[0] ?? null;
+  } catch {
+    // DB not migrated yet (missing manual Q1 columns) — use file defaults in getEffectiveManualBaseline
+    tutorRow = null;
+  }
+
+  const baseline = getEffectiveManualBaseline(tutorRow);
+  const merged = mergeManualBaselineSessions(
+    sessions,
+    { studentId, year, month },
+    { year: baseline.year, entries: baseline.entries }
+  );
+
+  return NextResponse.json(merged);
 }

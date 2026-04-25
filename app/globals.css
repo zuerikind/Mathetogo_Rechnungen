@@ -25,3 +25,39 @@ a {
 button {
   font: inherit;
 }
+
+/* Recharts focuses the SVG on bar click; browsers draw a thick outline (looks like a black box). */
+.recharts-responsive-container:focus,
+.recharts-responsive-container:focus-visible,
+.recharts-wrapper:focus,
+.recharts-wrapper:focus-visible,
+.recharts-surface:focus,
+.recharts-surface:focus-visible {
+  outline: none;
+}
+
+.recharts-wrapper rect:focus {
+  outline: none;
+}
+
+/* Recharts v3 tooltip cursor (path.recharts-tooltip-cursor) — some browsers show a harsh stroke */
+.recharts-tooltip-cursor {
+  stroke: none !important;
+  outline: none;
+}
+
+@keyframes nav-progress-slide {
+  0% {
+    transform: translateX(-100%);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(220%);
+    opacity: 0.85;
+  }
+}
+
+.nav-progress-indeterminate {
+  width: 45%;
+  animation: nav-progress-slide 1.1s ease-in-out infinite;
+}

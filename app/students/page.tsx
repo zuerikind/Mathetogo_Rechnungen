@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
+import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { StudentTable } from "@/components/StudentTable";
 import type { SessionWithStudent, Student } from "@/lib/ui-types";
 
@@ -16,6 +17,7 @@ function todayYmd(): string {
 }
 
 export default function StudentsPage() {
+  const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
   const [students, setStudents] = useState<Student[]>([]);
   const [sessions, setSessions] = useState<SessionWithStudent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,16 +39,17 @@ export default function StudentsPage() {
     try {
       setLoading(true);
       setError("");
-      const [studentsRes, sessionsRes] = await Promise.all([
-        fetch("/api/students"),
-        fetch(`/api/sessions?year=${new Date().getFullYear()}`),
-      ]);
-      if (!studentsRes.ok || !sessionsRes.ok) throw new Error("Fehler");
+      const studentsRes = await fetch("/api/students");
+      if (!studentsRes.ok) throw new Error("Fehler");
       setStudents((await studentsRes.json()) as Student[]);
+      setLoading(false);
+
+      // Sessions can be slow (sync/migrations); load them in background so student list appears immediately.
+      const sessionsRes = await fetch(`/api/sessions?year=${new Date().getFullYear()}`);
+      if (!sessionsRes.ok) return;
       setSessions((await sessionsRes.json()) as SessionWithStudent[]);
     } catch {
       setError("Fehler beim Laden.");
-    } finally {
       setLoading(false);
     }
   }, []);
@@ -62,13 +65,6 @@ export default function StudentsPage() {
       }),
     [students, sessions]
   );
-
-  const monthIncome = sessions
-    .filter((s) => s.month === new Date().getMonth() + 1 && s.year === new Date().getFullYear())
-    .reduce((acc, s) => acc + s.amountCHF, 0);
-  const ytd = sessions
-    .filter((s) => s.year === new Date().getFullYear())
-    .reduce((acc, s) => acc + s.amountCHF, 0);
 
   const resetForm = () => setForm({ name: "", subject: "", ratePerMin: "", email: "" });
 
@@ -128,7 +124,7 @@ export default function StudentsPage() {
   const inputClass = "w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20";
 
   return (
-    <DashboardShell monthIncome={monthIncome} ytdIncome={ytd}>
+    <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       <div className="min-w-0 space-y-5">
 
         {/* Page header */}

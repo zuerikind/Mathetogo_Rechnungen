@@ -26,6 +26,14 @@ export async function getTutorProfile(): Promise<TutorProfileData> {
       where: { id: "default" },
       update: {},
       create: { id: "default", ...envFallback() },
+      select: {
+        name: true,
+        email: true,
+        address: true,
+        phone: true,
+        iban: true,
+        bankName: true,
+      },
     });
     return {
       name: profile.name,

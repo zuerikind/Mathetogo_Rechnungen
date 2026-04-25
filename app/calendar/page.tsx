@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
+import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { getCurrentMonthYear, monthOptions } from "@/lib/ui-format";
-import type { SessionWithStudent } from "@/lib/ui-types";
 
 type CalendarEventRow = {
   id: string;
@@ -37,7 +37,26 @@ function parseEventStart(event: CalendarEventRow): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function parseEventEnd(event: CalendarEventRow): Date | null {
+  if (!event.end) return null;
+  const parsed = new Date(event.end);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatEventDuration(event: CalendarEventRow): string {
+  if (event.allDay) return "Ganztagig";
+  const start = parseEventStart(event);
+  const end = parseEventEnd(event);
+  if (!start || !end) return "";
+  const minutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+  if (minutes < 60) return `${minutes}min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}min`;
+}
+
 export default function CalendarPage() {
+  const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
   const now = getCurrentMonthYear();
   const [month, setMonth] = useState(now.month);
   const [year, setYear] = useState(now.year);
@@ -47,26 +66,10 @@ export default function CalendarPage() {
   const [error, setError] = useState("");
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
 
-  const [monthIncome, setMonthIncome] = useState(0);
-  const [ytdIncome, setYtdIncome] = useState(0);
-
-  const loadIncome = useCallback(async () => {
-    const [monthRes, yearRes] = await Promise.all([
-      fetch(`/api/sessions?year=${year}&month=${month}`),
-      fetch(`/api/sessions?year=${year}`),
-    ]);
-    if (!monthRes.ok || !yearRes.ok) throw new Error("income failed");
-    const monthRows = (await monthRes.json()) as SessionWithStudent[];
-    const yearRows = (await yearRes.json()) as SessionWithStudent[];
-    setMonthIncome(monthRows.reduce((acc, s) => acc + s.amountCHF, 0));
-    setYtdIncome(yearRows.reduce((acc, s) => acc + s.amountCHF, 0));
-  }, [month, year]);
-
   const loadEvents = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
-      await loadIncome();
       const res = await fetch(`/api/calendar/events?year=${year}&month=${month}`);
       const data = (await res.json()) as CalendarApiResponse;
       if (!res.ok) throw new Error(data.error ?? "Kalender konnte nicht geladen werden.");
@@ -78,7 +81,7 @@ export default function CalendarPage() {
     } finally {
       setLoading(false);
     }
-  }, [year, month, loadIncome]);
+  }, [year, month]);
 
   useEffect(() => {
     void loadEvents();
@@ -162,7 +165,7 @@ export default function CalendarPage() {
   }, [selectedDayKey]);
 
   return (
-    <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome}>
+    <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       <div className="min-w-0 space-y-4">
         <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
           <h2 className="text-base font-semibold text-gray-900">Google Kalender</h2>
@@ -309,6 +312,7 @@ export default function CalendarPage() {
                                       minute: "2-digit",
                                     })
                                   : ""}
+                              {formatEventDuration(e) ? ` - ${formatEventDuration(e)}` : ""}
                               {e.location ? ` - ${e.location}` : ""}
                             </div>
                           </div>
@@ -361,6 +365,7 @@ export default function CalendarPage() {
                               minute: "2-digit",
                             })
                           : ""}
+                      {formatEventDuration(e) ? ` - ${formatEventDuration(e)}` : ""}
                       {e.end && !e.allDay
                         ? ` - ${new Date(e.end).toLocaleTimeString("de-CH", {
                             hour: "2-digit",

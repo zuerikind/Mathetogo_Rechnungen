@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
-import { formatAmount, getPeriodLabel } from "@/lib/invoice";
+import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
+import { formatAmount, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice";
+import { formatCHF } from "@/lib/ui-format";
 
 type InvoiceRow = {
   id: string;
@@ -21,37 +24,92 @@ type InvoiceRow = {
 
 type Student = { id: string; name: string };
 
-function getStatus(invoice: InvoiceRow): "Bezahlt" | "Rechnung gesendet" | "Erstellt" | "Ausstehend" {
-  if (invoice.paidAt) return "Bezahlt";
-  if (invoice.sentAt) return "Rechnung gesendet";
+type InvoiceRowUiState = "paid" | "overdue" | "sent" | "draft";
+
+function safeSessionCount(sessionIds: string): number {
+  try {
+    const parsed = JSON.parse(sessionIds || "[]") as unknown;
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function endOfDay(date: Date): Date {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+function getRowUiState(invoice: InvoiceRow, now: Date): InvoiceRowUiState {
+  if (invoice.paidAt) return "paid";
+  if (invoice.sentAt) {
+    const due = endOfDay(getInvoiceDueDate(invoice.year, invoice.month));
+    if (now.getTime() > due.getTime()) return "overdue";
+    return "sent";
+  }
+  return "draft";
+}
+
+function getRowClasses(state: InvoiceRowUiState): string {
+  if (state === "paid") return "bg-emerald-50/65 hover:bg-emerald-50";
+  if (state === "overdue") return "bg-red-50/65 hover:bg-red-50";
+  if (state === "sent") return "bg-amber-50/65 hover:bg-amber-50";
+  return "hover:bg-[#F8FBFF]";
+}
+
+function getStatusLabel(invoice: InvoiceRow, now: Date): string {
+  const state = getRowUiState(invoice, now);
+  if (state === "paid") return "Bezahlt";
+  if (state === "overdue") return "Überfällig";
+  if (state === "sent") return "Rechnung gesendet";
   if (invoice.pdfPath) return "Erstellt";
   return "Ausstehend";
 }
 
 const statusBadge: Record<string, string> = {
   Bezahlt: "bg-emerald-50 text-emerald-700",
-  "Rechnung gesendet": "bg-green-50 text-green-700",
+  "Rechnung gesendet": "bg-amber-100 text-amber-800",
+  "Überfällig": "bg-red-100 text-red-700",
   Erstellt: "bg-gray-100 text-gray-600",
   Ausstehend: "bg-orange-50 text-orange-700",
 };
 
+/** Archiv: feste Jahres-Verdienste (nicht aus der Tabelle berechnet). */
+const FIXED_YEAR_EARNINGS_CHF: Readonly<Record<number, number>> = {
+  2024: 16534.25,
+  2025: 55705.5,
+};
+
 export function InvoiceHistoryClient() {
+  const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
   const [rows, setRows] = useState<InvoiceRow[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
-  const [year, setYear] = useState("");
+  /** Default: laufendes Jahr — sonst lädt «Alle Jahre» sehr lange und die Summe ist nicht mit «Jahr gesamt» vergleichbar. */
+  const [year, setYear] = useState(() => String(new Date().getFullYear()));
   const [month, setMonth] = useState("");
   const [studentId, setStudentId] = useState("");
   const [status, setStatus] = useState("");
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+  const [listLoading, setListLoading] = useState(true);
 
-  const loadInvoices = useCallback(() => {
+  const loadInvoices = useCallback(async () => {
     const query = new URLSearchParams();
     if (year) query.set("year", year);
     if (month) query.set("month", month);
     if (studentId) query.set("studentId", studentId);
     if (status) query.set("status", status);
-    void fetch(`/api/invoices?${query.toString()}`)
-      .then((r) => r.json())
-      .then((data) => setRows(data ?? []));
+    setListLoading(true);
+    try {
+      const r = await fetch(`/api/invoices?${query.toString()}`);
+      if (!r.ok) throw new Error("load");
+      const data = (await r.json()) as unknown;
+      setRows(Array.isArray(data) ? (data as InvoiceRow[]) : []);
+    } catch {
+      setRows([]);
+    } finally {
+      setListLoading(false);
+    }
   }, [year, month, studentId, status]);
 
   useEffect(() => {
@@ -60,20 +118,54 @@ export function InvoiceHistoryClient() {
       .then((data) => setStudents(data ?? []));
   }, []);
 
-  useEffect(() => { loadInvoices(); }, [loadInvoices]);
+  useEffect(() => {
+    void loadInvoices();
+  }, [loadInvoices]);
 
   const years = useMemo(() => {
     const current = new Date().getFullYear();
     return [current - 1, current, current + 1];
   }, []);
 
-  const total = rows.reduce((sum, r) => sum + r.totalCHF, 0);
+  const now = new Date();
+  const calendarYear = now.getFullYear();
+
+  const earningsByYear = useMemo(() => {
+    const map = new Map<number, { totalCHF: number; count: number }>();
+    for (const r of rows) {
+      const y = r.year;
+      const cur = map.get(y) ?? { totalCHF: 0, count: 0 };
+      cur.totalCHF += r.totalCHF;
+      cur.count += 1;
+      map.set(y, cur);
+    }
+    return Array.from(map.entries())
+      .map(([y, v]) => ({ year: y, totalCHF: v.totalCHF, count: v.count }))
+      .sort((a, b) => b.year - a.year);
+  }, [rows]);
+
+  /** Dynamische Jahre aus der Tabelle + feste Archiv-Jahre 2024/2025 (keine Doppelzählung). */
+  const yearCards = useMemo(() => {
+    const fixedYears = [2025, 2024] as const;
+    const dynamic = earningsByYear
+      .filter((e) => FIXED_YEAR_EARNINGS_CHF[e.year] === undefined)
+      .map((e) => ({ ...e, isFixed: false as const }));
+    const fixed = fixedYears.map((y) => ({
+      year: y,
+      totalCHF: FIXED_YEAR_EARNINGS_CHF[y],
+      count: null as number | null,
+      isFixed: true as const,
+    }));
+    return [...dynamic, ...fixed].sort((a, b) => b.year - a.year);
+  }, [earningsByYear]);
+
+  const hasNarrowFilters = Boolean(month || studentId || status);
 
   const selectClass =
     "w-full min-w-0 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20 sm:w-auto sm:min-w-[8.5rem]";
 
   return (
-    <DashboardShell monthIncome={0} ytdIncome={total}>
+    <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       <div className="min-w-0 space-y-5">
 
         {/* Page header */}
@@ -124,21 +216,63 @@ export function InvoiceHistoryClient() {
           </div>
         </div>
 
-        {/* Total card */}
-        <div className="flex min-w-0 flex-wrap items-stretch gap-3">
-          <div className="min-w-0 flex-1 rounded-2xl border border-blue-100 bg-[#EBF4FF] px-4 py-3 shadow-sm sm:flex-none sm:px-5">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-[#4A7FC1]">Total</p>
-            <p className="break-words text-xl font-bold tabular-nums text-[#4A7FC1] sm:text-2xl">CHF {total.toFixed(2)}</p>
+        {/* Verdienst pro Jahr — je Kalenderjahr eine Box aus den sichtbaren Tabellenzeilen */}
+        <section className="min-w-0 space-y-2">
+          <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+            <h2 className="text-sm font-semibold text-gray-800">Verdienst pro Jahr</h2>
+            <p className="text-[11px] leading-snug text-gray-500">
+              2024 und 2025 sind fest hinterlegt; andere Jahre aus der Tabelle unten. «Dieser Monat» / «Jahr gesamt» oben gelten nur für {calendarYear} (Kalender + Abos).
+            </p>
           </div>
-          <div className="min-w-0 flex-1 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm sm:flex-none sm:px-5">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Rechnungen</p>
-            <p className="text-xl font-bold tabular-nums text-gray-700 sm:text-2xl">{rows.length}</p>
+          {hasNarrowFilters && !listLoading ? (
+            <p className="text-[11px] text-amber-800">
+              Monats-, Schüler- oder Status-Filter aktiv — die Boxen zeigen nur den gefilterten Ausschnitt.
+            </p>
+          ) : null}
+          <div className="flex min-w-0 flex-wrap items-stretch gap-3">
+            {listLoading ? (
+              <div className="flex min-h-[5.5rem] min-w-[9rem] shrink-0 items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-gray-50/80 px-3 py-4">
+                <LoadingSpinner size={24} label="Tabelle …" />
+              </div>
+            ) : null}
+            {yearCards.map(({ year: y, totalCHF, count, isFixed }) => {
+              const isCurrentYear = !isFixed && y === calendarYear;
+              return (
+                <div
+                  key={y}
+                  className={`min-w-[9.5rem] flex-1 rounded-2xl border px-4 py-3 shadow-sm sm:max-w-[14rem] sm:flex-none ${
+                    isCurrentYear
+                      ? "border-[#4A7FC1] bg-[#EBF4FF]"
+                      : isFixed
+                        ? "border-gray-200 bg-gray-50/90"
+                        : "border-gray-100 bg-white"
+                  }`}
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">
+                    Jahr {y}
+                    {isCurrentYear ? <span className="ml-1 font-medium text-[#4A7FC1]">(aktuell)</span> : null}
+                    {isFixed ? <span className="ml-1 font-medium text-gray-500">(fix)</span> : null}
+                  </p>
+                  <p className={`mt-1.5 break-words text-xl font-bold tabular-nums sm:text-2xl ${isCurrentYear ? "text-[#4A7FC1]" : "text-gray-900"}`}>
+                    {formatCHF(totalCHF)}
+                  </p>
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    {isFixed ? "Fest hinterlegt (Archiv)" : `${count} ${count === 1 ? "Rechnungszeile" : "Rechnungszeilen"}`}
+                  </p>
+                </div>
+              );
+            })}
           </div>
-        </div>
+        </section>
 
         {/* Table */}
-        <div className="min-w-0 overflow-x-auto rounded-2xl border border-blue-100 bg-white shadow-sm">
-          <table className="min-w-[44rem] w-full divide-y divide-gray-100 text-sm sm:min-w-full">
+        <div className="relative min-w-0 overflow-x-auto rounded-2xl border border-blue-100 bg-white shadow-sm">
+          {listLoading ? (
+            <div className="flex min-h-[14rem] flex-col items-center justify-center gap-3 py-12">
+              <LoadingSpinner size={32} label="Rechnungen werden geladen …" />
+            </div>
+          ) : null}
+          <table className={`min-w-[44rem] w-full divide-y divide-gray-100 text-sm sm:min-w-full ${listLoading ? "hidden" : ""}`}>
             <thead>
               <tr className="text-left text-[10px] font-semibold uppercase tracking-widest text-gray-400">
                 <th className="whitespace-nowrap px-3 py-3.5 sm:px-5">Monat</th>
@@ -157,10 +291,13 @@ export function InvoiceHistoryClient() {
                   </td>
                 </tr>
               ) : rows.map((invoice) => {
-                const statusText = getStatus(invoice);
-                const sessionCount = JSON.parse(invoice.sessionIds || "[]").length;
+                const statusText = getStatusLabel(invoice, now);
+                const rowState = getRowUiState(invoice, now);
+                const dueDate = endOfDay(getInvoiceDueDate(invoice.year, invoice.month));
+                const isBusy = actionBusyId === invoice.id;
+                const sessionCount = safeSessionCount(invoice.sessionIds);
                 return (
-                  <tr key={invoice.id} className="transition-colors hover:bg-[#F8FBFF]">
+                  <tr key={invoice.id} className={`transition-colors ${getRowClasses(rowState)}`}>
                     <td className="whitespace-nowrap px-3 py-3 font-medium text-gray-800 sm:px-5">{getPeriodLabel(invoice.month, invoice.year)}</td>
                     <td className="max-w-[10rem] truncate px-3 py-3 text-gray-700 sm:max-w-none sm:whitespace-normal sm:px-5" title={invoice.student.name}>{invoice.student.name}</td>
                     <td className="whitespace-nowrap px-3 py-3 text-gray-600 sm:px-5">{sessionCount}</td>
@@ -169,6 +306,11 @@ export function InvoiceHistoryClient() {
                       <span className={`inline-block max-w-full truncate rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadge[statusText]}`} title={statusText}>
                         {statusText}
                       </span>
+                      {rowState !== "paid" && invoice.sentAt && (
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Fällig bis {new Intl.DateTimeFormat("de-CH").format(dueDate)}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-3 sm:px-5">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -189,73 +331,15 @@ export function InvoiceHistoryClient() {
                           </a>
                         ) : (
                           <span className="rounded-lg border border-gray-100 px-2.5 py-1 text-xs font-medium text-gray-300">
-                            Download
+                            PDF View
                           </span>
                         )}
-                        {invoice.isVirtual ? (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const response = await fetch("/api/invoice/generate", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                  studentId: invoice.studentId,
-                                  year: invoice.year,
-                                  month: invoice.month,
-                                }),
-                              });
-                              const data = await response.json();
-                              if (response.ok) loadInvoices();
-                              else alert(data.error ?? "Rechnung konnte nicht generiert werden.");
-                            }}
-                            className="rounded-lg border border-[#4A7FC1] bg-white px-2.5 py-1 text-xs font-semibold text-[#4A7FC1] transition hover:bg-[#EBF4FF]"
-                          >
-                            Generieren
-                          </button>
-                        ) : null}
-                        {!invoice.isVirtual ? (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              let forceResend = false;
-                              if (invoice.sentAt) {
-                                const ok = window.confirm(
-                                  `Diese Rechnung wurde bereits am ${new Intl.DateTimeFormat("de-CH").format(new Date(invoice.sentAt))} gesendet. Nochmals senden?`
-                                );
-                                if (!ok) return;
-                                forceResend = true;
-                              }
-                              let response = await fetch("/api/invoice/send", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ invoiceId: invoice.id, forceResend }),
-                              });
-                              let data = await response.json();
-                              if (response.status === 409 && data.alreadySent) {
-                                const ok = window.confirm(data.error);
-                                if (!ok) return;
-                                response = await fetch("/api/invoice/send", {
-                                  method: "POST",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ invoiceId: invoice.id, forceResend: true }),
-                                });
-                                data = await response.json();
-                              }
-                              if (response.ok) loadInvoices();
-                              else alert(data.error ?? "Versand fehlgeschlagen.");
-                            }}
-                            className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
-                          >
-                            Rechnung senden
-                          </button>
-                        ) : (
-                          <span className="text-xs text-gray-300">Noch nicht generiert</span>
-                        )}
-                        {!invoice.isVirtual && !invoice.sentAt ? (
-                          <button
-                            type="button"
-                            onClick={async () => {
+                        <button
+                          type="button"
+                          disabled={Boolean(invoice.isVirtual) || !invoice.pdfPath || Boolean(invoice.sentAt) || isBusy}
+                          onClick={async () => {
+                            setActionBusyId(invoice.id);
+                            try {
                               const response = await fetch(`/api/invoices/${invoice.id}/status`, {
                                 method: "PATCH",
                                 headers: { "Content-Type": "application/json" },
@@ -264,16 +348,55 @@ export function InvoiceHistoryClient() {
                               const data = await response.json();
                               if (response.ok) loadInvoices();
                               else alert(data.error ?? "Status konnte nicht aktualisiert werden.");
-                            }}
-                            className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
-                          >
-                            Als gesendet
-                          </button>
-                        ) : null}
-                        {!invoice.isVirtual && !invoice.paidAt ? (
-                          <button
-                            type="button"
-                            onClick={async () => {
+                            } finally {
+                              setActionBusyId(null);
+                            }
+                          }}
+                          className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-amber-300 hover:text-amber-700 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Rechnung gesendet
+                        </button>
+                        <button
+                          type="button"
+                          disabled={Boolean(invoice.isVirtual) || !invoice.sentAt || Boolean(invoice.paidAt) || isBusy}
+                          onClick={async () => {
+                            setActionBusyId(invoice.id);
+                            try {
+                              const response = await fetch("/api/invoice/send", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ invoiceId: invoice.id, forceResend: true }),
+                              });
+                              const data = await response.json();
+                              if (response.ok) {
+                                await fetch(`/api/invoices/${invoice.id}/status`, {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ status: "reminder" }),
+                                });
+                                loadInvoices();
+                                alert(`Reminder gesendet an ${data.sentTo ?? "Empfänger"}.`);
+                              } else {
+                                alert(data.error ?? "Reminder konnte nicht gesendet werden.");
+                              }
+                            } finally {
+                              setActionBusyId(null);
+                            }
+                          }}
+                          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                            rowState === "overdue"
+                              ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+                              : "border-gray-200 text-gray-600 hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
+                          }`}
+                        >
+                          Reminder
+                        </button>
+                        <button
+                          type="button"
+                          disabled={Boolean(invoice.isVirtual) || Boolean(invoice.paidAt) || isBusy}
+                          onClick={async () => {
+                            setActionBusyId(invoice.id);
+                            try {
                               const response = await fetch(`/api/invoices/${invoice.id}/status`, {
                                 method: "PATCH",
                                 headers: { "Content-Type": "application/json" },
@@ -282,12 +405,36 @@ export function InvoiceHistoryClient() {
                               const data = await response.json();
                               if (response.ok) loadInvoices();
                               else alert(data.error ?? "Status konnte nicht aktualisiert werden.");
-                            }}
-                            className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
-                          >
-                            Als bezahlt
-                          </button>
-                        ) : null}
+                            } finally {
+                              setActionBusyId(null);
+                            }
+                          }}
+                          className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Gezahlt
+                        </button>
+                        <button
+                          type="button"
+                          disabled={Boolean(invoice.isVirtual) || !invoice.paidAt || isBusy}
+                          onClick={async () => {
+                            setActionBusyId(invoice.id);
+                            try {
+                              const response = await fetch(`/api/invoices/${invoice.id}/status`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ status: "unpaid" }),
+                              });
+                              const data = await response.json();
+                              if (response.ok) loadInvoices();
+                              else alert(data.error ?? "Status konnte nicht aktualisiert werden.");
+                            } finally {
+                              setActionBusyId(null);
+                            }
+                          }}
+                          className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-orange-300 hover:text-orange-800 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Nicht bezahlt
+                        </button>
                       </div>
                     </td>
                   </tr>

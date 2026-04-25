@@ -3,11 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
+import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { formatCHF, getCurrentMonthYear } from "@/lib/ui-format";
 
 type DashboardShellProps = {
   monthIncome: number;
   ytdIncome: number;
+  /** While sessions/subscriptions for KPIs are still loading */
+  incomeLoading?: boolean;
   children: React.ReactNode;
 };
 
@@ -21,12 +24,15 @@ const navItems = [
 ];
 
 const AUTO_SYNC_MS = 15 * 60 * 1000;
+/** Delay first background sync so pages can load sessions/KPIs first (Google + DB is heavy). */
+const FIRST_AUTO_SYNC_DELAY_MS = 8_000;
 const LOCK_TTL_MS = 2 * 60 * 1000;
 const LAST_SYNC_KEY = "mtg:auto-sync:last";
 const LOCK_KEY = "mtg:auto-sync:lock";
 
-export function DashboardShell({ monthIncome, ytdIncome, children }: DashboardShellProps) {
+export function DashboardShell({ monthIncome, ytdIncome, incomeLoading = false, children }: DashboardShellProps) {
   const pathname = usePathname();
+  const currentPath = pathname ?? "";
   const tabIdRef = useRef<string>(`tab-${Math.random().toString(36).slice(2)}`);
 
   useEffect(() => {
@@ -100,24 +106,31 @@ export function DashboardShell({ monthIncome, ytdIncome, children }: DashboardSh
     };
 
     // Keep invoicing/session data near-real-time while app is open.
-    // Do it only on primary work views to reduce duplicate traffic.
+    // Skip /sync: user runs explicit sync there; avoids double Google traffic.
+    // Defer first run so initial /api/sessions + UI are not blocked by /api/sync.
     const allowAutoSync =
-      pathname === "/dashboard" ||
-      pathname.startsWith("/students") ||
-      pathname.startsWith("/invoices") ||
-      pathname === "/sync";
+      currentPath === "/dashboard" ||
+      currentPath.startsWith("/students") ||
+      currentPath.startsWith("/invoices");
 
-    if (allowAutoSync) void syncCurrentMonth();
-    const id = window.setInterval(() => {
+    let firstTimer: ReturnType<typeof setTimeout> | undefined;
+    if (allowAutoSync) {
+      firstTimer = setTimeout(() => {
+        void syncCurrentMonth();
+      }, FIRST_AUTO_SYNC_DELAY_MS);
+    }
+
+    const id = setInterval(() => {
       if (!allowAutoSync) return;
       void syncCurrentMonth();
     }, AUTO_SYNC_MS);
     return () => {
       mounted = false;
-      window.clearInterval(id);
+      if (firstTimer !== undefined) clearTimeout(firstTimer);
+      clearInterval(id);
       releaseLock();
     };
-  }, [pathname]);
+  }, [currentPath]);
 
   return (
     <div className="min-h-screen min-w-0 bg-[#F0F5FF]">
@@ -126,7 +139,7 @@ export function DashboardShell({ monthIncome, ytdIncome, children }: DashboardSh
           <p className="mb-3 px-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Navigation</p>
           <ul className="flex flex-wrap gap-1.5">
             {navItems.map((item) => {
-              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const active = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
               return (
                 <li key={item.href}>
                   <Link
@@ -150,11 +163,23 @@ export function DashboardShell({ monthIncome, ytdIncome, children }: DashboardSh
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
             <p className="text-[10px] font-medium uppercase tracking-wide text-[#4A7FC1]">Dieser Monat</p>
-            <p className="mt-0.5 text-lg font-bold text-[#4A7FC1]">{formatCHF(monthIncome)}</p>
+            <div className="mt-0.5 min-h-[1.75rem]">
+              {incomeLoading ? (
+                <LoadingSpinner size={22} label="Laden …" />
+              ) : (
+                <p className="text-lg font-bold text-[#4A7FC1]">{formatCHF(monthIncome)}</p>
+              )}
+            </div>
           </div>
           <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
             <p className="text-[10px] font-medium uppercase tracking-wide text-[#7B6CB5]">Jahr gesamt</p>
-            <p className="mt-0.5 text-lg font-bold text-[#7B6CB5]">{formatCHF(ytdIncome)}</p>
+            <div className="mt-0.5 min-h-[1.75rem]">
+              {incomeLoading ? (
+                <LoadingSpinner size={22} label="Laden …" />
+              ) : (
+                <p className="text-lg font-bold text-[#7B6CB5]">{formatCHF(ytdIncome)}</p>
+              )}
+            </div>
           </div>
         </section>
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
+import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { SubscriptionSection } from "@/components/SubscriptionSection";
 import { formatCHF, formatDate, formatDuration, monthOptions } from "@/lib/ui-format";
 import {
@@ -14,8 +15,10 @@ import {
 import type { PlatformSubscriptionWithCharges, SessionWithStudent, Student } from "@/lib/ui-types";
 
 export default function StudentDetailPage() {
+  const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
   const params = useParams();
-  const id = typeof params.id === "string" ? params.id : params.id?.[0] ?? "";
+  const rawId = params?.id;
+  const id = typeof rawId === "string" ? rawId : rawId?.[0] ?? "";
 
   const [student, setStudent] = useState<Student | null>(null);
   const [allSessions, setAllSessions] = useState<SessionWithStudent[]>([]);
@@ -72,16 +75,6 @@ export default function StudentDetailPage() {
     [subscriptions]
   );
 
-  const now = new Date();
-  const monthIncome =
-    allSessions
-      .filter((s) => s.month === now.getMonth() + 1 && s.year === now.getFullYear())
-      .reduce((acc, s) => acc + s.amountCHF, 0) +
-    subscriptionProrationForMonth(
-      subscriptionBillingInputs,
-      now.getFullYear(),
-      now.getMonth() + 1
-    );
   const ytd =
     sessionsForYear.reduce((acc, s) => acc + s.amountCHF, 0) +
     subscriptionProrationYearTotal(subscriptionBillingInputs, year);
@@ -101,7 +94,7 @@ export default function StudentDetailPage() {
     totalSubscriptionContractCHF(subscriptionBillingInputs);
 
   return (
-    <DashboardShell monthIncome={monthIncome} ytdIncome={ytd}>
+    <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       {loading ? (
         <div className="h-96 animate-pulse rounded-lg border border-gray-200 bg-white" />
       ) : error || !student ? (

@@ -16,20 +16,36 @@ import {
 } from "@/lib/ui-format";
 import { getChargeMonths } from "@/lib/month-math";
 import {
+  computeMonthIncome,
+  computeYtdIncome,
+} from "@/lib/income-summary";
+import {
+  monthMiscEarningsTotal,
+  type MiscEarningForIncome,
+} from "@/lib/misc-earnings";
+import {
   subscriptionProrationByStudentForMonth,
   subscriptionProrationForMonth,
   type SubscriptionBillingInput,
 } from "@/lib/subscription-billing";
-import type { SessionWithStudent, SyncResponse } from "@/lib/ui-types";
+import {
+  isManualBaselineSession,
+  type SessionWithStudent,
+  type SyncResponse,
+} from "@/lib/ui-types";
 
 type SubscriptionAnalyticsRow = SubscriptionBillingInput & {
   student?: { name: string; subject: string };
 };
+type SettingsIncomePayload = {
+  miscEarnings?: MiscEarningForIncome[];
+};
 
 function calcStats(sessions: SessionWithStudent[]) {
   const income = sessions.reduce((s, r) => s + r.amountCHF, 0);
-  const minutes = sessions.reduce((s, r) => s + r.durationMin, 0);
-  const students = new Set(sessions.map((s) => s.studentId)).size;
+  const nonManual = sessions.filter((s) => !isManualBaselineSession(s));
+  const minutes = nonManual.reduce((s, r) => s + r.durationMin, 0);
+  const students = new Set(nonManual.map((s) => s.studentId)).size;
   return { income, minutes, hours: minutes / 60, students, avgPerHour: minutes === 0 ? 0 : (income / minutes) * 60 };
 }
 
@@ -65,6 +81,7 @@ export default function DashboardPage() {
   // ── Data ─────────────────────────────────────────────────────────────
   const [sessions, setSessions] = useState<SessionWithStudent[]>([]);
   const [subscriptions, setSubscriptions] = useState<SubscriptionAnalyticsRow[]>([]);
+  const [miscEarnings, setMiscEarnings] = useState<MiscEarningForIncome[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -78,9 +95,10 @@ export default function DashboardPage() {
     try {
       if (isInitial) setLoading(true); else setRefreshing(true);
       setError("");
-      const [res, subRes] = await Promise.all([
+      const [res, subRes, settingsRes] = await Promise.all([
         fetch(`/api/sessions?year=${year}`),
         fetch(`/api/subscriptions/analytics?year=${year}`),
+        fetch(`/api/settings?miscYear=${year}`),
       ]);
       if (!res.ok) throw new Error();
       setSessions((await res.json()) as SessionWithStudent[]);
@@ -89,6 +107,12 @@ export default function DashboardPage() {
         setSubscriptions(Array.isArray(body.subscriptions) ? body.subscriptions : []);
       } else {
         setSubscriptions([]);
+      }
+      if (settingsRes.ok) {
+        const settingsBody = (await settingsRes.json()) as SettingsIncomePayload;
+        setMiscEarnings(Array.isArray(settingsBody.miscEarnings) ? settingsBody.miscEarnings : []);
+      } else {
+        setMiscEarnings([]);
       }
     } catch {
       setError("Fehler beim Laden der Daten.");
@@ -120,56 +144,81 @@ export default function DashboardPage() {
     [subscriptions]
   );
 
+  const realSessions = useMemo(
+    () => sessions.filter((s) => !isManualBaselineSession(s)),
+    [sessions]
+  );
+  const manualOverrideMonths = useMemo(() => {
+    const set = new Set<number>();
+    for (const s of sessions) {
+      if (isManualBaselineSession(s)) set.add(s.month);
+    }
+    return set;
+  }, [sessions]);
+  const isManualOverrideMonth = useCallback(
+    (m: number) => manualOverrideMonths.has(m),
+    [manualOverrideMonths]
+  );
   const currentMonthSessions = useMemo(() => sessions.filter((s) => s.month === month), [sessions, month]);
+  const currentMonthRealSessions = useMemo(
+    () => realSessions.filter((s) => s.month === month),
+    [realSessions, month]
+  );
   const prevMonth = month === 1 ? 12 : month - 1;
   const prevMonthSessions = useMemo(() => sessions.filter((s) => s.month === prevMonth), [sessions, prevMonth]);
   const currentStats = useMemo(() => {
     const base = calcStats(currentMonthSessions);
-    const sub = subscriptionProrationForMonth(subscriptionBilling, year, month);
-    return { ...base, income: base.income + sub };
-  }, [currentMonthSessions, subscriptionBilling, year, month]);
+    const income = computeMonthIncome(currentMonthSessions, subscriptionBilling, miscEarnings, year, month);
+    return { ...base, income };
+  }, [currentMonthSessions, subscriptionBilling, miscEarnings, year, month]);
   const prevStats = useMemo(() => {
     const base = calcStats(prevMonthSessions);
-    const sub = subscriptionProrationForMonth(subscriptionBilling, year, prevMonth);
-    return { ...base, income: base.income + sub };
-  }, [prevMonthSessions, subscriptionBilling, year, prevMonth]);
-  const ytdIncome = useMemo(() => {
-    const sessionSum = sessions.reduce((s, r) => s + r.amountCHF, 0);
-    let subSum = 0;
-    for (let m = 1; m <= 12; m++) {
-      subSum += subscriptionProrationForMonth(subscriptionBilling, year, m);
-    }
-    return sessionSum + subSum;
-  }, [sessions, subscriptionBilling, year]);
+    const income = computeMonthIncome(prevMonthSessions, subscriptionBilling, miscEarnings, year, prevMonth);
+    return { ...base, income };
+  }, [prevMonthSessions, subscriptionBilling, miscEarnings, year, prevMonth]);
+  const ytdIncome = useMemo(
+    () => computeYtdIncome(sessions, subscriptionBilling, miscEarnings, year),
+    [sessions, subscriptionBilling, miscEarnings, year]
+  );
 
   const chartData = useMemo(() =>
     monthOptions.map((m) => {
       const ms = sessions.filter((s) => s.month === m.value);
-      const sub = subscriptionProrationForMonth(subscriptionBilling, year, m.value);
+      const realMs = ms.filter((s) => !isManualBaselineSession(s));
+      const sub = isManualOverrideMonth(m.value) ? 0 : subscriptionProrationForMonth(subscriptionBilling, year, m.value);
+      const misc = monthMiscEarningsTotal(miscEarnings, year, m.value, {
+        includeQ1Adjustment: !isManualOverrideMonth(m.value),
+      });
       return {
         month: m.value,
         label: m.label.slice(0, 3),
-        income: ms.reduce((s, r) => s + r.amountCHF, 0) + sub,
-        sessions: ms.length,
-        hours: ms.reduce((s, r) => s + r.durationMin, 0) / 60,
-        medianPerHour: medianPerHour(ms),
+        income: ms.reduce((s, r) => s + r.amountCHF, 0) + sub + misc,
+        sessions: realMs.length,
+        hours: realMs.reduce((s, r) => s + r.durationMin, 0) / 60,
+        medianPerHour: medianPerHour(realMs),
       };
     }),
-  [sessions, subscriptionBilling, year]);
+  [sessions, subscriptionBilling, miscEarnings, year, isManualOverrideMonth]);
 
   const breakdownSessions = useMemo(
-    () => (selectedMonth !== null ? sessions.filter((s) => s.month === selectedMonth) : currentMonthSessions),
-    [sessions, selectedMonth, currentMonthSessions]
+    () =>
+      selectedMonth !== null
+        ? realSessions.filter((s) => s.month === selectedMonth)
+        : currentMonthRealSessions,
+    [realSessions, selectedMonth, currentMonthRealSessions]
   );
 
   const tableSessions = useMemo(() => {
-    let s = selectedMonth !== null ? sessions.filter((r) => r.month === selectedMonth) : currentMonthSessions;
+    let s =
+      selectedMonth !== null
+        ? realSessions.filter((r) => r.month === selectedMonth)
+        : currentMonthRealSessions;
     if (selectedStudent) {
       const target = normStudentDisplayName(selectedStudent);
       s = s.filter((r) => normStudentDisplayName(r.student?.name) === target);
     }
     return s;
-  }, [sessions, selectedMonth, currentMonthSessions, selectedStudent]);
+  }, [realSessions, selectedMonth, currentMonthRealSessions, selectedStudent]);
 
   /**
    * Gleiche Logik wie Diagramm / Schüler-Balken: voller Monatsbetrag für jeden
@@ -182,6 +231,9 @@ export default function DashboardPage() {
           (s) => normStudentDisplayName(s.student?.name) === normStudentDisplayName(selectedStudent)
         )
       : subscriptions;
+    if (isManualOverrideMonth(viewMonth)) {
+      return [];
+    }
 
     const rows: SubscriptionAnalysisTableRow[] = [];
     for (const raw of subsScoped) {
@@ -204,10 +256,13 @@ export default function DashboardPage() {
       });
     }
     return rows;
-  }, [subscriptions, selectedStudent, year, month, selectedMonth]);
+  }, [subscriptions, selectedStudent, year, month, selectedMonth, isManualOverrideMonth]);
 
   const breakdownMonth = selectedMonth !== null ? selectedMonth : month;
   const subscriptionIncomeByName = useMemo(() => {
+    if (isManualOverrideMonth(breakdownMonth)) {
+      return {};
+    }
     const byId = subscriptionProrationByStudentForMonth(
       subscriptionBilling,
       year,
@@ -224,7 +279,7 @@ export default function DashboardPage() {
       names[n] = (names[n] ?? 0) + amt;
     }
     return names;
-  }, [subscriptionBilling, subscriptions, year, breakdownMonth]);
+  }, [subscriptionBilling, subscriptions, year, breakdownMonth, isManualOverrideMonth]);
 
   const handleSynced = (result: SyncResponse) => {
     const parts = [`${result.synced} Sessions synchronisiert`];
@@ -238,7 +293,11 @@ export default function DashboardPage() {
     "rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20";
 
   return (
-    <DashboardShell monthIncome={currentStats.income} ytdIncome={ytdIncome}>
+    <DashboardShell
+      monthIncome={currentStats.income}
+      ytdIncome={ytdIncome}
+      incomeLoading={loading || refreshing}
+    >
       <div className="min-w-0 space-y-5">
 
         {/* Page header */}
@@ -318,10 +377,10 @@ export default function DashboardPage() {
             {/* KPI Cards — driven by `month` filter */}
             <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
               <div className="min-w-0">
-                <StatCard label="Einkommen (Monat)" value={formatCHF(currentStats.income)} subValue={`${currentMonthSessions.length} Sessions`} trend={trend(currentStats.income, prevStats.income)} trendLabel="Vormonat" />
+                <StatCard label="Einkommen (Monat)" value={formatCHF(currentStats.income)} subValue={`${currentMonthRealSessions.length} Sessions`} trend={trend(currentStats.income, prevStats.income)} trendLabel="Vormonat" />
               </div>
               <div className="min-w-0">
-                <StatCard label="Jahreseinkommen" value={formatCHF(ytdIncome)} subValue={`${sessions.length} Sessions total`} accent="lilac" />
+                <StatCard label="Jahreseinkommen" value={formatCHF(ytdIncome)} subValue={`${realSessions.length} Sessions total`} accent="lilac" />
               </div>
               <div className="min-w-0">
                 <StatCard label="Stunden (Monat)" value={`${currentStats.hours.toFixed(1)}h`} subValue={formatDuration(currentStats.minutes)} trend={trend(currentStats.hours, prevStats.hours)} trendLabel="Vormonat" />

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-type InvoiceStatusUpdate = "sent" | "paid";
+type InvoiceStatusUpdate = "sent" | "paid" | "reminder" | "unpaid";
 
 export async function PATCH(
   req: NextRequest,
@@ -16,7 +16,7 @@ export async function PATCH(
       return NextResponse.json({ error: "invoiceId ist erforderlich." }, { status: 400 });
     }
 
-    if (status !== "sent" && status !== "paid") {
+    if (status !== "sent" && status !== "paid" && status !== "reminder" && status !== "unpaid") {
       return NextResponse.json({ error: "Ungültiger Status." }, { status: 400 });
     }
 
@@ -38,12 +38,32 @@ export async function PATCH(
 
     const now = new Date();
 
+    if (status === "reminder") {
+      await prisma.$executeRaw`
+        UPDATE "Invoice"
+        SET "sentAt" = COALESCE("sentAt", ${now}),
+            "reminderSentAt" = ${now}
+        WHERE "id" = ${invoiceId}
+      `;
+      const updated = await prisma.invoice.findUnique({
+        where: { id: invoiceId },
+        select: { id: true, sentAt: true, paidAt: true },
+      });
+      return NextResponse.json({ success: true, invoice: updated });
+    }
+
+    if (status === "unpaid") {
+      const updated = await prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { paidAt: null },
+        select: { id: true, sentAt: true, paidAt: true },
+      });
+      return NextResponse.json({ success: true, invoice: updated });
+    }
+
     const updated = await prisma.invoice.update({
       where: { id: invoiceId },
-      data:
-        status === "sent"
-          ? { sentAt: now, paidAt: null }
-          : { sentAt: invoice.sentAt ?? now, paidAt: now },
+      data: status === "sent" ? { sentAt: now, paidAt: null } : { sentAt: invoice.sentAt ?? now, paidAt: now },
       select: { id: true, sentAt: true, paidAt: true },
     });
 
