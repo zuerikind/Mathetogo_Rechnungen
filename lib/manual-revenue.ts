@@ -126,26 +126,27 @@ export function mergeManualBaselineSessions<T extends SessionLike>(
     if (!hasAnyBaselineYear) return sessions;
   }
 
-  // Start by removing old synthetic rows and all baseline-month rows for baseline year.
-  // Manual Q1 should act as strict month override, independent from existing real rows.
-  const cleaned = sessions.filter((s) => {
-    const isSynthetic =
-      s.studentId === MANUAL_ID ||
-      (s.notes ?? "").toLowerCase().includes("manuell: gesamteinnahmen monat");
-    if (isSynthetic) return false;
-    const isBaselineMonthRow = s.year === baselineYear && months.has(s.month);
-    return !isBaselineMonthRow;
-  }) as T[];
+  // Remove old synthetic rows only (keep real per-student sessions for breakdown display).
+  const withoutSynthetic = sessions.filter(
+    (s) =>
+      !(
+        s.studentId === MANUAL_ID ||
+        (s.notes ?? "").toLowerCase().includes("manuell: gesamteinnahmen monat")
+      )
+  ) as T[];
 
   let entries = [...baseline.entries];
   if (query.month) {
     const m = Number(query.month);
-    if (!Number.isFinite(m) || !months.has(m)) return cleaned;
+    if (!Number.isFinite(m) || !months.has(m)) return withoutSynthetic;
     entries = entries.filter((e) => e.month === m);
   }
 
+  // Always inject synthetic baseline for Q1 months so income calculations
+  // use the canonical manual total instead of the sum of imported sessions.
+  // Real sessions are kept for per-student breakdown.
   const added = entries.map((e) => syntheticSession(baseline, e.month, e.amountCHF) as T);
-  const combined = [...cleaned, ...added] as T[];
+  const combined = [...withoutSynthetic, ...added] as T[];
   combined.sort((a, b) => b.date.getTime() - a.date.getTime());
   return combined;
 }

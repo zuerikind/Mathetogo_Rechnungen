@@ -19,13 +19,9 @@ import {
   computeMonthIncome,
   computeYtdIncome,
 } from "@/lib/income-summary";
-import {
-  monthMiscEarningsTotal,
-  type MiscEarningForIncome,
-} from "@/lib/misc-earnings";
+import type { MiscEarningForIncome } from "@/lib/misc-earnings";
 import {
   subscriptionProrationByStudentForMonth,
-  subscriptionProrationForMonth,
   type SubscriptionBillingInput,
 } from "@/lib/subscription-billing";
 import {
@@ -185,20 +181,16 @@ export default function DashboardPage() {
     monthOptions.map((m) => {
       const ms = sessions.filter((s) => s.month === m.value);
       const realMs = ms.filter((s) => !isManualBaselineSession(s));
-      const sub = isManualOverrideMonth(m.value) ? 0 : subscriptionProrationForMonth(subscriptionBilling, year, m.value);
-      const misc = monthMiscEarningsTotal(miscEarnings, year, m.value, {
-        includeQ1Adjustment: !isManualOverrideMonth(m.value),
-      });
       return {
         month: m.value,
         label: m.label.slice(0, 3),
-        income: ms.reduce((s, r) => s + r.amountCHF, 0) + sub + misc,
+        income: computeMonthIncome(sessions, subscriptionBilling, miscEarnings, year, m.value),
         sessions: realMs.length,
         hours: realMs.reduce((s, r) => s + r.durationMin, 0) / 60,
         medianPerHour: medianPerHour(realMs),
       };
     }),
-  [sessions, subscriptionBilling, miscEarnings, year, isManualOverrideMonth]);
+  [sessions, subscriptionBilling, miscEarnings, year]);
 
   const breakdownSessions = useMemo(
     () =>

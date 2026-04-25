@@ -22,8 +22,12 @@ export function computeMonthIncome(
   month: number
 ): number {
   const monthSessions = sessions.filter((s) => s.month === month);
-  const sessionIncome = monthSessions.reduce((acc, s) => acc + s.amountCHF, 0);
   const hasManualOverride = monthSessions.some((s) => isManualBaselineSession(s));
+  // For manual Q1 months: count only the synthetic baseline (not real imported sessions)
+  // so income matches the canonical PDF total, not the sum of per-student imports.
+  const sessionIncome = hasManualOverride
+    ? monthSessions.filter(isManualBaselineSession).reduce((acc, s) => acc + s.amountCHF, 0)
+    : monthSessions.reduce((acc, s) => acc + s.amountCHF, 0);
   const subIncome = hasManualOverride ? 0 : subscriptionProrationForMonth(subscriptions, year, month);
   const miscIncome = monthMiscEarningsTotal(miscEarnings, year, month, {
     includeQ1Adjustment: !hasManualOverride,
@@ -37,8 +41,16 @@ export function computeYtdIncome(
   miscEarnings: MiscEarningForIncome[],
   year: number
 ): number {
-  const sessionIncome = sessions.reduce((acc, s) => acc + s.amountCHF, 0);
   const manualMonths = manualOverrideMonths(sessions);
+  let sessionIncome = 0;
+  for (const s of sessions) {
+    if (manualMonths.has(s.month)) {
+      // Manual Q1 month: only count synthetic baseline, skip real imported sessions
+      if (isManualBaselineSession(s)) sessionIncome += s.amountCHF;
+    } else {
+      sessionIncome += s.amountCHF;
+    }
+  }
   let subscriptionIncome = 0;
   for (let m = 1; m <= 12; m += 1) {
     if (manualMonths.has(m)) continue;
