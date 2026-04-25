@@ -1,11 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { computeMonthIncome, computeYtdIncome } from "@/lib/income-summary";
-import { getEffectiveManualBaseline, mergeManualBaselineSessions } from "@/lib/manual-revenue";
-import type { MiscEarningForIncome } from "@/lib/misc-earnings";
+import { getEffectiveManualBaseline } from "@/lib/manual-revenue";
+import { monthMiscEarningsTotal, ytdMiscEarningsTotal, type MiscEarningForIncome } from "@/lib/misc-earnings";
 import { prisma } from "@/lib/prisma";
-import type { SubscriptionBillingInput } from "@/lib/subscription-billing";
-import type { SessionWithStudent } from "@/lib/ui-types";
+import { subscriptionProrationForMonth, type SubscriptionBillingInput } from "@/lib/subscription-billing";
+
+type IncomeSummaryPayload = {
+  year: number;
+  month: number;
+  monthIncome: number;
+  ytdIncome: number;
+  fromCache?: boolean;
+};
+
+const CACHE_TTL_MS = 20_000;
+const summaryCache = new Map<string, { at: number; value: IncomeSummaryPayload }>();
+
+function cacheKey(year: number, month: number) {
+  return `${year}-${month}`;
+}
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -25,115 +38,111 @@ export async function GET(req: NextRequest) {
       ? Math.floor(monthParsed)
       : now.getMonth() + 1;
 
-  const [dbSessions, subscriptionRows] = await Promise.all([
-    prisma.session.findMany({
-      where: { year },
-      select: {
-        id: true,
-        studentId: true,
-        date: true,
-        durationMin: true,
-        amountCHF: true,
-        month: true,
-        year: true,
-        notes: true,
-      },
-      orderBy: { date: "desc" },
-    }),
-    prisma.platformSubscription.findMany({
-      select: {
-        id: true,
-        studentId: true,
-        amountCHF: true,
-        billingMethod: true,
-        durationMonths: true,
-        startMonth: true,
-        startYear: true,
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-  ]);
-
-  let tutorRow: {
-    manualQ1Year: number | null;
-    manualQ1M1Chf: number | null;
-    manualQ1M2Chf: number | null;
-    manualQ1M3Chf: number | null;
-  } | null = null;
-  try {
-    const rows = await prisma.$queryRaw<
-      {
-        manualQ1Year: number | null;
-        manualQ1M1Chf: number | null;
-        manualQ1M2Chf: number | null;
-        manualQ1M3Chf: number | null;
-      }[]
-    >`SELECT "manualQ1Year", "manualQ1M1Chf", "manualQ1M2Chf", "manualQ1M3Chf" FROM "TutorProfile" WHERE id = 'default' LIMIT 1`;
-    tutorRow = rows[0] ?? null;
-  } catch {
-    tutorRow = null;
+  const key = cacheKey(year, month);
+  const cached = summaryCache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return NextResponse.json({ ...cached.value, fromCache: true });
   }
 
-  const baseline = getEffectiveManualBaseline(tutorRow);
-  const sessionLikes = dbSessions.map((s) => ({
-    id: s.id,
-    studentId: s.studentId,
-    date: s.date,
-    durationMin: s.durationMin,
-    amountCHF: s.amountCHF,
-    calEventId: null,
-    month: s.month,
-    year: s.year,
-    notes: s.notes,
-    createdAt: s.date,
-    student: null,
-  }));
-
-  const merged = mergeManualBaselineSessions(sessionLikes, { studentId: null, year: String(year), month: null }, {
-    year: baseline.year,
-    entries: baseline.entries,
-  });
-
-  const forIncome: SessionWithStudent[] = merged.map((s) => ({
-    id: s.id,
-    studentId: s.studentId,
-    date: s.date.toISOString(),
-    durationMin: s.durationMin,
-    amountCHF: s.amountCHF,
-    month: s.month,
-    year: s.year,
-    notes: s.notes,
-    student: s.student ?? undefined,
-  }));
-
-  const subscriptions: SubscriptionBillingInput[] = subscriptionRows.map((s) => ({
-    id: s.id,
-    studentId: s.studentId,
-    amountCHF: s.amountCHF,
-    billingMethod: s.billingMethod,
-    durationMonths: s.durationMonths,
-    startMonth: s.startMonth,
-    startYear: s.startYear,
-  }));
-
-  let miscEarnings: MiscEarningForIncome[] = [];
   try {
-    const miscRows = await prisma.miscEarning.findMany({
-      where: { year },
-      select: { year: true, month: true, amountCHF: true, source: true },
-    });
-    miscEarnings = miscRows.map((r) => ({
+    const [tutorRaw, subscriptionRows, miscRows] = await Promise.all([
+      prisma.$queryRaw<
+        {
+          manualQ1Year: number | null;
+          manualQ1M1Chf: number | null;
+          manualQ1M2Chf: number | null;
+          manualQ1M3Chf: number | null;
+        }[]
+      >`SELECT "manualQ1Year", "manualQ1M1Chf", "manualQ1M2Chf", "manualQ1M3Chf" FROM "TutorProfile" WHERE id = 'default' LIMIT 1`,
+      prisma.platformSubscription.findMany({
+        select: {
+          id: true,
+          studentId: true,
+          amountCHF: true,
+          billingMethod: true,
+          durationMonths: true,
+          startMonth: true,
+          startYear: true,
+        },
+      }),
+      prisma.miscEarning.findMany({
+        where: { year },
+        select: { year: true, month: true, amountCHF: true, source: true },
+      }),
+    ]);
+
+    const baseline = getEffectiveManualBaseline(tutorRaw[0] ?? null);
+    const baselineMonths =
+      year === baseline.year ? new Set<number>(baseline.entries.map((e) => e.month)) : new Set<number>();
+    const baselineMonthAmount = baseline.entries.find((e) => e.month === month)?.amountCHF ?? null;
+    const baselineYearTotal =
+      year === baseline.year ? baseline.entries.reduce((s, e) => s + e.amountCHF, 0) : 0;
+
+    const [monthAgg, nonBaselineYearAgg] = await Promise.all([
+      baselineMonths.has(month)
+        ? Promise.resolve({ _sum: { amountCHF: 0 as number | null } })
+        : prisma.session.aggregate({
+            where: { year, month },
+            _sum: { amountCHF: true },
+          }),
+      prisma.session.aggregate({
+        where: {
+          year,
+          ...(baselineMonths.size > 0 ? { month: { notIn: Array.from(baselineMonths) } } : {}),
+        },
+        _sum: { amountCHF: true },
+      }),
+    ]);
+
+    const subscriptions: SubscriptionBillingInput[] = subscriptionRows.map((s) => ({
+      id: s.id,
+      studentId: s.studentId,
+      amountCHF: s.amountCHF,
+      billingMethod: s.billingMethod,
+      durationMonths: s.durationMonths,
+      startMonth: s.startMonth,
+      startYear: s.startYear,
+    }));
+    const miscEarnings: MiscEarningForIncome[] = miscRows.map((r) => ({
       year: r.year,
       month: r.month,
       amountCHF: r.amountCHF,
       source: r.source === "q1_adjustment" ? "q1_adjustment" : "manual",
     }));
+
+    const sessionMonthIncome = baselineMonthAmount ?? (monthAgg._sum.amountCHF ?? 0);
+    const sessionYtdIncome = baselineYearTotal + (nonBaselineYearAgg._sum.amountCHF ?? 0);
+    const monthSubscription = baselineMonths.has(month)
+      ? 0
+      : subscriptionProrationForMonth(subscriptions, year, month);
+    let ytdSubscription = 0;
+    for (let m = 1; m <= 12; m += 1) {
+      if (baselineMonths.has(m)) continue;
+      ytdSubscription += subscriptionProrationForMonth(subscriptions, year, m);
+    }
+    const monthMisc = monthMiscEarningsTotal(miscEarnings, year, month, {
+      includeQ1Adjustment: !baselineMonths.has(month),
+    });
+    const ytdMisc = ytdMiscEarningsTotal(miscEarnings, year, {
+      excludeQ1AdjustmentMonths: baselineMonths,
+    });
+
+    const value: IncomeSummaryPayload = {
+      year,
+      month,
+      monthIncome: sessionMonthIncome + monthSubscription + monthMisc,
+      ytdIncome: sessionYtdIncome + ytdSubscription + ytdMisc,
+    };
+    summaryCache.set(key, { at: Date.now(), value });
+    return NextResponse.json(value);
   } catch {
-    miscEarnings = [];
+    // If DB is temporarily unstable, serve stale cache instead of 500.
+    if (cached) {
+      return NextResponse.json({ ...cached.value, fromCache: true });
+    }
+    return NextResponse.json(
+      { year, month, monthIncome: 0, ytdIncome: 0, error: "Database temporarily unavailable" },
+      { status: 503 }
+    );
   }
-
-  const monthIncome = computeMonthIncome(forIncome, subscriptions, miscEarnings, year, month);
-  const ytdIncome = computeYtdIncome(forIncome, subscriptions, miscEarnings, year);
-
-  return NextResponse.json({ year, month, monthIncome, ytdIncome });
 }

@@ -25,6 +25,8 @@ model Student {
   invoices       Invoice[]
   subscriptions  PlatformSubscription[]
   createdAt      DateTime  @default(now())
+
+  @@index([active, name])
 }
 
 model Session {
@@ -39,6 +41,9 @@ model Session {
   year        Int
   notes       String?
   createdAt   DateTime @default(now())
+
+  @@index([year, month, date])
+  @@index([studentId, year, month])
 }
 
 model Invoice {
@@ -57,6 +62,8 @@ model Invoice {
   createdAt     DateTime  @default(now())
 
   @@unique([studentId, month, year])
+  @@index([year, month, createdAt])
+  @@index([studentId, year, month])
 }
 
 model TutorProfile {
@@ -90,6 +97,9 @@ model PlatformSubscription {
   charges        PlatformCharge[]
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
+
+  @@index([studentId, createdAt])
+  @@index([active, createdAt])
 }
 
 model PlatformCharge {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { SyncButton } from "@/components/SyncButton";
@@ -15,7 +15,7 @@ export default function SyncPage() {
   const [result, setResult] = useState<SyncResponse | null>(null);
   const [sessions, setSessions] = useState<SessionWithStudent[]>([]);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [syncError, setSyncError] = useState("");
 
@@ -38,17 +38,13 @@ export default function SyncPage() {
     }
   }, [month, year]);
 
-  useEffect(() => {
-    void loadData();
-  }, [loadData]);
-
   return (
     <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       <div className="min-w-0 space-y-4">
         {/* Month + Year Picker card */}
         <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
           <h2 className="text-base font-semibold text-gray-900">Kalender Sync</h2>
-          <p className="mt-0.5 text-sm text-gray-500">Wähle Monat und Jahr aus, dann synchronisiere mit Google Kalender.</p>
+          <p className="mt-0.5 text-sm text-gray-500">Wähle Monat und Jahr aus, dann synchronisiere manuell mit Google Kalender.</p>
 
           {/* Month + Year selector row */}
           <div className="mt-4 flex flex-wrap items-center gap-3">

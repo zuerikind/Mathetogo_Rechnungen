@@ -2,6 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+type IncomeSummary = {
+  monthIncome: number;
+  ytdIncome: number;
+};
+
+const SUMMARY_TTL_MS = 15_000;
+const summaryCache = new Map<string, { at: number; value: IncomeSummary }>();
+const inFlight = new Map<string, Promise<IncomeSummary>>();
+
 export function useGlobalIncomeSummary() {
   const now = useMemo(() => new Date(), []);
   const year = now.getFullYear();
@@ -12,15 +21,38 @@ export function useGlobalIncomeSummary() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const key = `${year}-${month}`;
   const load = useCallback(async () => {
     try {
+      const cached = summaryCache.get(key);
+      if (cached && Date.now() - cached.at < SUMMARY_TTL_MS) {
+        setMonthIncome(cached.value.monthIncome);
+        setYtdIncome(cached.value.ytdIncome);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError("");
-      const res = await fetch(`/api/income-summary?year=${year}&month=${month}`);
-      if (!res.ok) throw new Error("income-summary");
-      const body = (await res.json()) as { monthIncome?: number; ytdIncome?: number };
-      setMonthIncome(Number.isFinite(body.monthIncome) ? Number(body.monthIncome) : 0);
-      setYtdIncome(Number.isFinite(body.ytdIncome) ? Number(body.ytdIncome) : 0);
+      let req = inFlight.get(key);
+      if (!req) {
+        req = fetch(`/api/income-summary?year=${year}&month=${month}`)
+          .then(async (res) => {
+            if (!res.ok) throw new Error("income-summary");
+            const body = (await res.json()) as { monthIncome?: number; ytdIncome?: number };
+            return {
+              monthIncome: Number.isFinite(body.monthIncome) ? Number(body.monthIncome) : 0,
+              ytdIncome: Number.isFinite(body.ytdIncome) ? Number(body.ytdIncome) : 0,
+            };
+          })
+          .finally(() => {
+            inFlight.delete(key);
+          });
+        inFlight.set(key, req);
+      }
+      const value = await req;
+      summaryCache.set(key, { at: Date.now(), value });
+      setMonthIncome(value.monthIncome);
+      setYtdIncome(value.ytdIncome);
     } catch {
       setError("Einkommen konnte nicht geladen werden.");
       setMonthIncome(0);
@@ -28,7 +60,7 @@ export function useGlobalIncomeSummary() {
     } finally {
       setLoading(false);
     }
-  }, [month, year]);
+  }, [key, month, year]);
 
   useEffect(() => {
     void load();

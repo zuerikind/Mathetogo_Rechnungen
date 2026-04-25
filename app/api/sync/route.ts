@@ -30,7 +30,12 @@ export async function POST(req: NextRequest) {
   console.log("[sync] access token present, length:", accessToken.length);
 
   const body = await req.json();
-  const { year, month } = body as { year: number; month: number };
+  const { year, month, pruneOrphans } = body as {
+    year: number;
+    month: number;
+    /** Dangerous: delete DB sessions missing in Google result. Defaults OFF for safety. */
+    pruneOrphans?: boolean;
+  };
 
   if (!year || !month || month < 1 || month > 12) {
     return NextResponse.json({ error: "year and month (1-12) required" }, { status: 400 });
@@ -119,7 +124,8 @@ export async function POST(req: NextRequest) {
 
     const keepIds = Array.from(new Set(tasks.map((t) => t.calEventId)));
     const affectedStudentIds = Array.from(new Set(tasks.map((t) => t.studentId)));
-    const shouldPruneOrphans = tasks.length > 0 || events.length === 0;
+    // Safety default: never delete automatically unless explicitly requested.
+    const allowPruneOrphans = pruneOrphans === true;
 
     // Default interactive transaction timeout is too low for a full month of upserts + deleteMany
     // (leads to P2028 "Transaction not found" when Prisma closes the tx mid-loop).
@@ -149,7 +155,7 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        if (!shouldPruneOrphans) {
+        if (!allowPruneOrphans) {
           return { count: 0 };
         }
         // Remove calendar-backed sessions for this month that no longer exist in Google.

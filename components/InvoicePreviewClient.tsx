@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { DashboardShell } from "@/components/DashboardShell";
 import { formatAmount, formatDate, formatDuration, getPeriodLabel } from "@/lib/invoice";
 import {
@@ -37,6 +38,10 @@ type Invoice = {
   id: string;
   sentAt: string | null;
   invoiceNumber?: string | null;
+  pdfPath?: string | null;
+  month?: number;
+  studentId?: string;
+  student?: { name?: string };
 };
 
 type Props = {
@@ -46,9 +51,11 @@ type Props = {
 };
 
 export function InvoicePreviewClient({ studentId, year, month }: Props) {
+  const router = useRouter();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [subscriptions, setSubscriptions] = useState<SubscriptionBillingInput[]>([]);
   const [student, setStudent] = useState<Student | null>(null);
+  const [studentList, setStudentList] = useState<Student[]>([]);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [generatedPdfUrl, setGeneratedPdfUrl] = useState<string | null>(null);
   const [settings, setSettings] = useState<TutorSettings | null>(null);
@@ -65,10 +72,11 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
     void Promise.all([
       fetch(`/api/sessions?studentId=${studentId}&year=${year}&month=${month}`).then((r) => r.json()),
       fetch(`/api/students/${studentId}`).then((r) => r.json()),
-      fetch(`/api/invoices?studentId=${studentId}&year=${year}`).then((r) => r.json()),
+      fetch("/api/students").then((r) => r.json()),
+      fetch(`/api/invoices?year=${year}`).then((r) => r.json()),
       fetch(`/api/subscriptions?studentId=${encodeURIComponent(studentId)}`).then((r) => r.json()),
       fetch("/api/settings").then((r) => (r.ok ? r.json() : null)),
-    ]).then(([sessionData, studentData, invoices, subData, settingsData]) => {
+    ]).then(([sessionData, studentData, studentsData, invoices, subData, settingsData]) => {
       setSessions(Array.isArray(sessionData) ? sessionData : []);
       if (Array.isArray(subData)) {
         setSubscriptions(
@@ -85,8 +93,36 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
       } else {
         setSubscriptions([]);
       }
-      if (studentData && !("error" in studentData)) setStudent(studentData as Student);
-      const existing = (invoices ?? []).find((entry: { month: number }) => entry.month === month);
+      const currentStudent =
+        studentData && !("error" in studentData) ? (studentData as Student) : null;
+      if (currentStudent) setStudent(currentStudent);
+
+      const fromStudents = Array.isArray(studentsData) ? (studentsData as Student[]) : [];
+      const invoiceRows = Array.isArray(invoices) ? (invoices as Invoice[]) : [];
+
+      const mergedStudents = [...fromStudents];
+      const seenIds = new Set(mergedStudents.map((s) => s.id));
+
+      for (const row of invoiceRows) {
+        if (!row.studentId || seenIds.has(row.studentId)) continue;
+        mergedStudents.push({
+          id: row.studentId,
+          name: row.student?.name ?? row.studentId,
+          email: null,
+        });
+        seenIds.add(row.studentId);
+      }
+
+      if (currentStudent && !seenIds.has(currentStudent.id)) {
+        mergedStudents.push(currentStudent);
+      }
+
+      mergedStudents.sort((a, b) => a.name.localeCompare(b.name, "de-CH"));
+      setStudentList(mergedStudents);
+
+      const existing = invoiceRows.find(
+        (entry) => entry.month === month && entry.studentId === studentId
+      );
       if (existing) {
         setInvoice(existing);
         if (existing.pdfPath) setGeneratedPdfUrl(existing.pdfPath as string);
@@ -197,6 +233,13 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
 
   const inputClass = "w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20";
 
+  const nextStudentId = useMemo(() => {
+    if (studentList.length <= 1) return null;
+    const idx = studentList.findIndex((s) => s.id === studentId);
+    if (idx < 0) return studentList[0]?.id ?? null;
+    return studentList[(idx + 1) % studentList.length]?.id ?? null;
+  }, [studentList, studentId]);
+
   return (
     <DashboardShell monthIncome={totals.totalCHF} ytdIncome={totals.totalCHF}>
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,42%)_minmax(0,1fr)]">
@@ -206,6 +249,26 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
 
           {/* Header info */}
           <div className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => router.back()}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:text-gray-800"
+              >
+                ← Zurück
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!nextStudentId) return;
+                  router.push(`/invoice/${nextStudentId}/${year}/${month}`);
+                }}
+                disabled={!nextStudentId}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Nächster Schüler →
+              </button>
+            </div>
             <h2 className="text-base font-semibold text-gray-900">Rechnungsdetails</h2>
             <div className="mt-3 space-y-1 text-sm text-gray-700">
               <p className="font-semibold text-gray-900">{student?.name ?? "..."}</p>

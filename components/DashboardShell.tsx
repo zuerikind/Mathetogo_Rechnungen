@@ -2,9 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef } from "react";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
-import { formatCHF, getCurrentMonthYear } from "@/lib/ui-format";
+import { formatCHF } from "@/lib/ui-format";
 
 type DashboardShellProps = {
   monthIncome: number;
@@ -23,114 +22,9 @@ const navItems = [
   { href: "/settings", label: "Einstellungen", icon: "⚙️" },
 ];
 
-const AUTO_SYNC_MS = 15 * 60 * 1000;
-/** Delay first background sync so pages can load sessions/KPIs first (Google + DB is heavy). */
-const FIRST_AUTO_SYNC_DELAY_MS = 8_000;
-const LOCK_TTL_MS = 2 * 60 * 1000;
-const LAST_SYNC_KEY = "mtg:auto-sync:last";
-const LOCK_KEY = "mtg:auto-sync:lock";
-
 export function DashboardShell({ monthIncome, ytdIncome, incomeLoading = false, children }: DashboardShellProps) {
   const pathname = usePathname();
   const currentPath = pathname ?? "";
-  const tabIdRef = useRef<string>(`tab-${Math.random().toString(36).slice(2)}`);
-
-  useEffect(() => {
-    let mounted = true;
-
-    const releaseLock = () => {
-      try {
-        const raw = window.localStorage.getItem(LOCK_KEY);
-        if (!raw) return;
-        const lock = JSON.parse(raw) as { owner: string };
-        if (lock.owner === tabIdRef.current) {
-          window.localStorage.removeItem(LOCK_KEY);
-        }
-      } catch {
-        // ignore localStorage JSON issues
-      }
-    };
-
-    const tryAcquireLock = (): boolean => {
-      const now = Date.now();
-      try {
-        const raw = window.localStorage.getItem(LOCK_KEY);
-        if (raw) {
-          const lock = JSON.parse(raw) as { owner: string; expiresAt: number };
-          if (lock.expiresAt > now && lock.owner !== tabIdRef.current) return false;
-        }
-        window.localStorage.setItem(
-          LOCK_KEY,
-          JSON.stringify({ owner: tabIdRef.current, expiresAt: now + LOCK_TTL_MS })
-        );
-        return true;
-      } catch {
-        // If localStorage is blocked, still allow sync in this tab.
-        return true;
-      }
-    };
-
-    const shouldRunNow = () => {
-      try {
-        const last = Number(window.localStorage.getItem(LAST_SYNC_KEY) ?? "0");
-        return Date.now() - last >= AUTO_SYNC_MS;
-      } catch {
-        return true;
-      }
-    };
-
-    const syncCurrentMonth = async () => {
-      if (!mounted || document.visibilityState !== "visible") return;
-      if (!shouldRunNow()) return;
-      if (!tryAcquireLock()) return;
-
-      const { year, month } = getCurrentMonthYear();
-      try {
-        const res = await fetch("/api/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ year, month }),
-        });
-        if (res.ok) {
-          try {
-            window.localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
-          } catch {
-            // ignore localStorage write errors
-          }
-        }
-      } catch {
-        // Silent background sync: ignore network errors.
-      } finally {
-        releaseLock();
-      }
-    };
-
-    // Keep invoicing/session data near-real-time while app is open.
-    // Skip /sync: user runs explicit sync there; avoids double Google traffic.
-    // Defer first run so initial /api/sessions + UI are not blocked by /api/sync.
-    const allowAutoSync =
-      currentPath === "/dashboard" ||
-      currentPath.startsWith("/students") ||
-      currentPath.startsWith("/invoices");
-
-    let firstTimer: ReturnType<typeof setTimeout> | undefined;
-    if (allowAutoSync) {
-      firstTimer = setTimeout(() => {
-        void syncCurrentMonth();
-      }, FIRST_AUTO_SYNC_DELAY_MS);
-    }
-
-    const id = setInterval(() => {
-      if (!allowAutoSync) return;
-      void syncCurrentMonth();
-    }, AUTO_SYNC_MS);
-    return () => {
-      mounted = false;
-      if (firstTimer !== undefined) clearTimeout(firstTimer);
-      clearInterval(id);
-      releaseLock();
-    };
-  }, [currentPath]);
 
   return (
     <div className="min-h-screen min-w-0 bg-[#F0F5FF]">

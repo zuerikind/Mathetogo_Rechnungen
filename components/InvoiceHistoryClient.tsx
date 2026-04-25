@@ -92,6 +92,8 @@ export function InvoiceHistoryClient() {
   const [status, setStatus] = useState("");
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(true);
+  const [zipDownloading, setZipDownloading] = useState(false);
+  const [selectedYearYtd, setSelectedYearYtd] = useState<number | null>(null);
 
   const loadInvoices = useCallback(async () => {
     const query = new URLSearchParams();
@@ -122,6 +124,22 @@ export function InvoiceHistoryClient() {
     void loadInvoices();
   }, [loadInvoices]);
 
+  useEffect(() => {
+    const selected = Number(year);
+    if (!Number.isFinite(selected)) {
+      setSelectedYearYtd(null);
+      return;
+    }
+    const currentMonth = new Date().getMonth() + 1;
+    void fetch(`/api/income-summary?year=${selected}&month=${currentMonth}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        const v = body && Number.isFinite(body.ytdIncome) ? Number(body.ytdIncome) : null;
+        setSelectedYearYtd(v);
+      })
+      .catch(() => setSelectedYearYtd(null));
+  }, [year]);
+
   const years = useMemo(() => {
     const current = new Date().getFullYear();
     return [current - 1, current, current + 1];
@@ -150,16 +168,19 @@ export function InvoiceHistoryClient() {
     const dynamicBase = earningsByYear
       .filter((e) => FIXED_YEAR_EARNINGS_CHF[e.year] === undefined)
       .map((e) => ({ ...e, isFixed: false as const, isDashboardAligned: false as const }));
-    const hasCurrentYear = dynamicBase.some((e) => e.year === calendarYear);
+    const selectedYear = Number(year);
+    const referenceYear = Number.isFinite(selectedYear) ? selectedYear : calendarYear;
+    const referenceYtd = selectedYearYtd ?? ytdIncome;
+    const hasCurrentYear = dynamicBase.some((e) => e.year === referenceYear);
     const dynamic = dynamicBase.map((e) =>
-      e.year === calendarYear
-        ? { ...e, totalCHF: ytdIncome, isDashboardAligned: true as const }
+      e.year === referenceYear
+        ? { ...e, totalCHF: referenceYtd, isDashboardAligned: true as const }
         : e
     );
     if (!hasCurrentYear) {
       dynamic.push({
-        year: calendarYear,
-        totalCHF: ytdIncome,
+        year: referenceYear,
+        totalCHF: referenceYtd,
         count: 0,
         isFixed: false as const,
         isDashboardAligned: true as const,
@@ -173,12 +194,53 @@ export function InvoiceHistoryClient() {
       isDashboardAligned: false as const,
     }));
     return [...dynamic, ...fixed].sort((a, b) => b.year - a.year);
-  }, [earningsByYear, calendarYear, ytdIncome]);
+  }, [earningsByYear, calendarYear, ytdIncome, year, selectedYearYtd]);
 
   const hasNarrowFilters = Boolean(month || studentId || status);
 
   const selectClass =
     "w-full min-w-0 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20 sm:w-auto sm:min-w-[8.5rem]";
+
+  const downloadMonthZip = async () => {
+    if (!year || !month) {
+      alert("Bitte Jahr und Monat wählen, um alle Rechnungen des Monats herunterzuladen.");
+      return;
+    }
+
+    setZipDownloading(true);
+    try {
+      const url = `/api/invoices/download?year=${year}&month=${month}`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        let message = "ZIP-Download fehlgeschlagen.";
+        try {
+          const body = (await response.json()) as { error?: string };
+          if (typeof body.error === "string" && body.error.trim().length > 0) {
+            message = body.error;
+          }
+        } catch {
+          const fallback = await response.text();
+          if (fallback.trim().length > 0) message = fallback;
+        }
+        alert(message);
+        return;
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `rechnungen-${year}-${String(month).padStart(2, "0")}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch {
+      alert("ZIP-Download fehlgeschlagen. Bitte erneut versuchen.");
+    } finally {
+      setZipDownloading(false);
+    }
+  };
 
   return (
     <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
@@ -217,17 +279,11 @@ export function InvoiceHistoryClient() {
             </select>
             <button
               type="button"
-              onClick={() => {
-                if (!year || !month) {
-                  alert("Bitte Jahr und Monat wählen, um alle Rechnungen des Monats herunterzuladen.");
-                  return;
-                }
-                const url = `/api/invoices/download?year=${year}&month=${month}`;
-                window.open(url, "_blank");
-              }}
-              className="w-full shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1] sm:w-auto"
+              onClick={() => void downloadMonthZip()}
+              disabled={zipDownloading}
+              className="w-full shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
             >
-              Monat als ZIP
+              {zipDownloading ? "ZIP wird erstellt..." : "Monat als ZIP"}
             </button>
           </div>
         </div>

@@ -22,7 +22,6 @@ type CalendarApiResponse = {
 };
 
 const WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-const AUTO_REFRESH_MS = 15 * 60 * 1000;
 
 function toDayKey(date: Date): string {
   const y = date.getFullYear();
@@ -86,19 +85,6 @@ export default function CalendarPage() {
   useEffect(() => {
     void loadEvents();
   }, [loadEvents]);
-
-  const isCurrentMonthView = useMemo(() => {
-    const d = new Date();
-    return d.getFullYear() === year && d.getMonth() + 1 === month;
-  }, [year, month]);
-
-  useEffect(() => {
-    if (!isCurrentMonthView) return;
-    const intervalId = window.setInterval(() => {
-      void loadEvents();
-    }, AUTO_REFRESH_MS);
-    return () => window.clearInterval(intervalId);
-  }, [isCurrentMonthView, loadEvents]);
 
   const totalHours = useMemo(() => {
     const ms = events.reduce((acc, e) => {
@@ -216,14 +202,8 @@ export default function CalendarPage() {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-            <span
-              className={`rounded-full px-2.5 py-1 font-medium ${
-                isCurrentMonthView
-                  ? "bg-green-50 text-green-700"
-                  : "bg-gray-100 text-gray-600"
-              }`}
-            >
-              {isCurrentMonthView ? "Auto-Refresh aktiv (15min)" : "Auto-Refresh nur im aktuellen Monat"}
+            <span className="rounded-full bg-gray-100 px-2.5 py-1 font-medium text-gray-600">
+              Nur manuell: Kalender laden / Sync-Button
             </span>
             {lastUpdatedAt ? (
               <span className="text-gray-500">
