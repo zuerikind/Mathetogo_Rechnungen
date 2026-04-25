@@ -147,17 +147,33 @@ export function InvoiceHistoryClient() {
   /** Dynamische Jahre aus der Tabelle + feste Archiv-Jahre 2024/2025 (keine Doppelzählung). */
   const yearCards = useMemo(() => {
     const fixedYears = [2025, 2024] as const;
-    const dynamic = earningsByYear
+    const dynamicBase = earningsByYear
       .filter((e) => FIXED_YEAR_EARNINGS_CHF[e.year] === undefined)
-      .map((e) => ({ ...e, isFixed: false as const }));
+      .map((e) => ({ ...e, isFixed: false as const, isDashboardAligned: false as const }));
+    const hasCurrentYear = dynamicBase.some((e) => e.year === calendarYear);
+    const dynamic = dynamicBase.map((e) =>
+      e.year === calendarYear
+        ? { ...e, totalCHF: ytdIncome, isDashboardAligned: true as const }
+        : e
+    );
+    if (!hasCurrentYear) {
+      dynamic.push({
+        year: calendarYear,
+        totalCHF: ytdIncome,
+        count: 0,
+        isFixed: false as const,
+        isDashboardAligned: true as const,
+      });
+    }
     const fixed = fixedYears.map((y) => ({
       year: y,
       totalCHF: FIXED_YEAR_EARNINGS_CHF[y],
       count: null as number | null,
       isFixed: true as const,
+      isDashboardAligned: false as const,
     }));
     return [...dynamic, ...fixed].sort((a, b) => b.year - a.year);
-  }, [earningsByYear]);
+  }, [earningsByYear, calendarYear, ytdIncome]);
 
   const hasNarrowFilters = Boolean(month || studentId || status);
 
@@ -235,7 +251,7 @@ export function InvoiceHistoryClient() {
                 <LoadingSpinner size={24} label="Tabelle …" />
               </div>
             ) : null}
-            {yearCards.map(({ year: y, totalCHF, count, isFixed }) => {
+            {yearCards.map(({ year: y, totalCHF, count, isFixed, isDashboardAligned }) => {
               const isCurrentYear = !isFixed && y === calendarYear;
               return (
                 <div
@@ -257,7 +273,11 @@ export function InvoiceHistoryClient() {
                     {formatCHF(totalCHF)}
                   </p>
                   <p className="mt-1 text-[11px] text-gray-500">
-                    {isFixed ? "Fest hinterlegt (Archiv)" : `${count} ${count === 1 ? "Rechnungszeile" : "Rechnungszeilen"}`}
+                    {isFixed
+                      ? "Fest hinterlegt (Archiv)"
+                      : isDashboardAligned
+                        ? "Aus Dashboard (Kalender + Abos + Q1)"
+                        : `${count} ${count === 1 ? "Rechnungszeile" : "Rechnungszeilen"}`}
                   </p>
                 </div>
               );

@@ -58,6 +58,7 @@ const styles = StyleSheet.create({
     width: 148,
     objectFit: "contain",
     marginBottom: 12,
+    marginLeft: -16,
   },
   brandTitle: {
     fontSize: 11,
@@ -85,21 +86,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "flex-end",
     alignItems: "baseline",
-    marginBottom: 4,
+    marginBottom: 2,
     width: "100%",
   },
   metaLabel: {
-    width: 102,
+    width: 94,
     textAlign: "right",
-    marginRight: 10,
+    marginRight: 8,
     color: TEXT_MUTED,
-    fontSize: 9.5,
+    fontSize: 8.7,
   },
   metaValue: {
-    width: 130,
+    width: 122,
     textAlign: "right",
     fontWeight: "bold",
-    fontSize: 9.5,
+    fontSize: 9,
   },
   recipientBlock: {
     marginTop: 22,
@@ -264,14 +265,11 @@ export function InvoicePDF({
         </View>
 
         <View style={styles.recipientBlock}>
-          <Text style={styles.recipientLabel}>Rechnungsempfänger</Text>
+          <Text style={styles.recipientLabel}>Schülername</Text>
           <Text style={styles.recipientName}>{payload.student.name}</Text>
           {payload.student.email ? (
             <Text style={styles.recipientDetail}>{payload.student.email}</Text>
           ) : null}
-          <Text style={styles.recipientDetail}>
-            Fach: {payload.student.subject} · Währung: {payload.student.currency}
-          </Text>
         </View>
 
         <View style={styles.section}>
@@ -354,11 +352,6 @@ export function InvoicePDF({
             Bei Fragen können Sie sich jederzeit an mich wenden.
           </Text>
           <Text style={{ marginTop: 3, fontSize: 9.5 }}>Vielen Dank für Ihr Vertrauen.</Text>
-          <Text style={styles.legalNote}>
-            Die ausgewiesenen Beträge verstehen sich in Schweizer Franken (CHF). Soweit keine
-            Mehrwertsteuer ausgewiesen ist, unterliegen die Leistungen der Steuerbefreiung nach
-            Art. 10 Abs. 1 MWSTG (nicht steuerbar).
-          </Text>
         </View>
       </Page>
     </Document>
