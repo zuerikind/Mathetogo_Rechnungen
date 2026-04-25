@@ -211,11 +211,38 @@ async function getFirstAvailableRasterImage(
   return undefined;
 }
 
+async function fetchRasterImage(url: string): Promise<RasterImage | undefined> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return undefined;
+    const buf = Buffer.from(await res.arrayBuffer());
+    const meta = readRasterImageMeta(buf);
+    if (!meta) return undefined;
+    return {
+      dataUrl: `data:${meta.mimeType};base64,${buf.toString("base64")}`,
+      mimeType: meta.mimeType,
+      widthPx: meta.widthPx,
+      heightPx: meta.heightPx,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function buildInvoicePdf(payload: InvoicePayload): Promise<Buffer> {
-  const logoSrc = (await getFirstAvailableRasterImage([
+  // Try filesystem first (local dev), then fall back to HTTP (Vercel: public/ is
+  // a static asset root, not guaranteed on the function's filesystem).
+  const baseUrl = process.env.NEXTAUTH_URL?.replace(/\/$/, "") ?? "";
+
+  let logoSrc = (await getFirstAvailableRasterImage([
     "public/mathetogo-logo-clean.png",
     "public/mathetogo-logo.png",
   ]))?.dataUrl;
+  if (!logoSrc && baseUrl) {
+    logoSrc =
+      (await fetchRasterImage(`${baseUrl}/mathetogo-logo-clean.png`))?.dataUrl ??
+      (await fetchRasterImage(`${baseUrl}/mathetogo-logo.png`))?.dataUrl;
+  }
 
   const slip = await getFirstAvailableRasterImage([
     "public/qr-raiffeisen-payment-slip.png",
