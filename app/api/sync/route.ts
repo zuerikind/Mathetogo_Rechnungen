@@ -92,6 +92,17 @@ export async function POST(req: NextRequest) {
     const unmatched: string[] = [];
     type UpsertTask = { calEventId: string; studentId: string; date: Date; durationMin: number; amountCHF: number; notes: string | null };
     const tasks: UpsertTask[] = [];
+    const eventIds = events.map((event) => event.id).filter((id): id is string => typeof id === "string");
+    const existingByEventId = new Map(
+      (
+        await prisma.session.findMany({
+          where: { calEventId: { in: eventIds } },
+          select: { calEventId: true, durationMin: true, amountCHF: true },
+        })
+      )
+        .filter((s): s is { calEventId: string; durationMin: number; amountCHF: number } => typeof s.calEventId === "string")
+        .map((s) => [s.calEventId, s] as const)
+    );
 
     for (const event of events) {
       const title = event.summary ?? "";
@@ -117,7 +128,18 @@ export async function POST(req: NextRequest) {
       const start = new Date(startStr);
       const end = new Date(endStr);
       const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
-      const amountCHF = durationMin * student.ratePerMin;
+      const existingSession = existingByEventId.get(calEventId);
+      let amountCHF = durationMin * student.ratePerMin;
+      if (existingSession) {
+        if (existingSession.durationMin > 0) {
+          // Keep historical session rate on re-syncs so tariff changes with effective dates are not overwritten.
+          const historicalRate = existingSession.amountCHF / existingSession.durationMin;
+          amountCHF = durationMin * historicalRate;
+        } else {
+          amountCHF = existingSession.amountCHF;
+        }
+      }
+      amountCHF = Math.round(amountCHF * 100) / 100;
 
       tasks.push({ calEventId, studentId: student.id, date: start, durationMin, amountCHF, notes: event.description ?? null });
     }
