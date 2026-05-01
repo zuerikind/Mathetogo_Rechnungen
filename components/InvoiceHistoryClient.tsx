@@ -210,12 +210,39 @@ export function InvoiceHistoryClient() {
   const selectClass =
     "w-full min-w-0 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20 sm:w-auto sm:min-w-[8.5rem]";
 
-  const visibleRealRows = useMemo(() => rows.filter((row) => !row.isVirtual), [rows]);
-  const selectedRealRows = useMemo(
-    () => visibleRealRows.filter((row) => selectedIds.has(row.id)),
-    [visibleRealRows, selectedIds]
+  const selectedRows = useMemo(
+    () => rows.filter((row) => selectedIds.has(row.id)),
+    [rows, selectedIds]
   );
-  const selectedCount = selectedRealRows.length;
+  const selectedCount = selectedRows.length;
+
+  const ensurePersistedInvoice = useCallback(async (row: InvoiceRow): Promise<InvoiceRow> => {
+    if (!row.isVirtual) return row;
+    const response = await fetch("/api/invoice/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ studentId: row.studentId, year: row.year, month: row.month }),
+    });
+    const data = (await response.json()) as { error?: string; invoiceId?: string; pdfUrl?: string };
+    if (!response.ok || !data.invoiceId) {
+      throw new Error(data.error ?? "Rechnung konnte nicht erzeugt werden.");
+    }
+    const promoted: InvoiceRow = {
+      ...row,
+      id: data.invoiceId,
+      pdfPath: typeof data.pdfUrl === "string" ? data.pdfUrl : row.pdfPath,
+      isVirtual: false,
+    };
+    setRows((prev) => prev.map((r) => (r.id === row.id ? promoted : r)));
+    setSelectedIds((prev) => {
+      if (!prev.has(row.id)) return prev;
+      const next = new Set(prev);
+      next.delete(row.id);
+      next.add(promoted.id);
+      return next;
+    });
+    return promoted;
+  }, []);
 
   const updateRowStatusLocally = useCallback((invoiceId: string, status: InvoiceStatusUpdate) => {
     const nowIso = new Date().toISOString();
@@ -235,61 +262,73 @@ export function InvoiceHistoryClient() {
     async (invoice: InvoiceRow, status: InvoiceStatusUpdate) => {
       setActionBusyId(invoice.id);
       try {
+        let target = invoice;
+        if (target.isVirtual) {
+          target = await ensurePersistedInvoice(target);
+        }
+
         if (status === "reminder") {
           const response = await fetch("/api/invoice/send", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ invoiceId: invoice.id, forceResend: true }),
+            body: JSON.stringify({ invoiceId: target.id, forceResend: true }),
           });
           const data = await response.json();
           if (!response.ok) {
             alert(data.error ?? "Reminder konnte nicht gesendet werden.");
             return;
           }
-          await fetch(`/api/invoices/${invoice.id}/status`, {
+          await fetch(`/api/invoices/${target.id}/status`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ status: "reminder" }),
           });
-          updateRowStatusLocally(invoice.id, "reminder");
+          updateRowStatusLocally(target.id, "reminder");
           return;
         }
 
-        const response = await fetch(`/api/invoices/${invoice.id}/status`, {
+        const response = await fetch(`/api/invoices/${target.id}/status`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status }),
         });
         const data = await response.json();
-        if (response.ok) updateRowStatusLocally(invoice.id, status);
+        if (response.ok) updateRowStatusLocally(target.id, status);
         else alert(data.error ?? "Status konnte nicht aktualisiert werden.");
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "Status konnte nicht aktualisiert werden.");
       } finally {
         setActionBusyId(null);
       }
     },
-    [updateRowStatusLocally]
+    [ensurePersistedInvoice, updateRowStatusLocally]
   );
 
   const applyBulkStatus = useCallback(
     async (status: Exclude<InvoiceStatusUpdate, "reminder">) => {
-      if (selectedRealRows.length === 0) return;
+      if (selectedRows.length === 0) return;
       setBulkBusy(true);
       try {
         await Promise.all(
-          selectedRealRows.map(async (row) => {
-            const response = await fetch(`/api/invoices/${row.id}/status`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ status }),
-            });
-            if (response.ok) updateRowStatusLocally(row.id, status);
+          selectedRows.map(async (row) => {
+            try {
+              const target = await ensurePersistedInvoice(row);
+              const response = await fetch(`/api/invoices/${target.id}/status`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status }),
+              });
+              if (response.ok) updateRowStatusLocally(target.id, status);
+            } catch {
+              // Continue with other rows; one failure should not block the bulk action.
+            }
           })
         );
       } finally {
         setBulkBusy(false);
       }
     },
-    [selectedRealRows, updateRowStatusLocally]
+    [selectedRows, ensurePersistedInvoice, updateRowStatusLocally]
   );
 
   const downloadMonthZip = async () => {
@@ -443,12 +482,12 @@ export function InvoiceHistoryClient() {
                 type="button"
                 onClick={() => {
                   const allSelected =
-                    visibleRealRows.length > 0 &&
-                    visibleRealRows.every((row) => selectedIds.has(row.id));
+                    rows.length > 0 &&
+                    rows.every((row) => selectedIds.has(row.id));
                   if (allSelected) setSelectedIds(new Set());
-                  else setSelectedIds(new Set(visibleRealRows.map((row) => row.id)));
+                  else setSelectedIds(new Set(rows.map((row) => row.id)));
                 }}
-                disabled={visibleRealRows.length === 0 || bulkBusy}
+                disabled={rows.length === 0 || bulkBusy}
                 className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1] disabled:opacity-40"
               >
                 Alle auswählen
@@ -491,11 +530,11 @@ export function InvoiceHistoryClient() {
                   <input
                     type="checkbox"
                     checked={
-                      visibleRealRows.length > 0 &&
-                      visibleRealRows.every((row) => selectedIds.has(row.id))
+                      rows.length > 0 &&
+                      rows.every((row) => selectedIds.has(row.id))
                     }
                     onChange={(e) => {
-                      if (e.target.checked) setSelectedIds(new Set(visibleRealRows.map((row) => row.id)));
+                      if (e.target.checked) setSelectedIds(new Set(rows.map((row) => row.id)));
                       else setSelectedIds(new Set());
                     }}
                   />
@@ -524,20 +563,18 @@ export function InvoiceHistoryClient() {
                 return (
                   <tr key={invoice.id} className={`transition-colors ${getRowClasses(rowState)}`}>
                     <td className="px-3 py-3 sm:px-5">
-                      {!invoice.isVirtual ? (
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(invoice.id)}
-                          onChange={(e) => {
-                            setSelectedIds((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(invoice.id);
-                              else next.delete(invoice.id);
-                              return next;
-                            });
-                          }}
-                        />
-                      ) : null}
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(invoice.id)}
+                        onChange={(e) => {
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(invoice.id);
+                            else next.delete(invoice.id);
+                            return next;
+                          });
+                        }}
+                      />
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 font-medium text-gray-800 sm:px-5">{getPeriodLabel(invoice.month, invoice.year)}</td>
                     <td className="max-w-[10rem] truncate px-3 py-3 text-gray-700 sm:max-w-none sm:whitespace-normal sm:px-5" title={invoice.student.name}>{invoice.student.name}</td>
