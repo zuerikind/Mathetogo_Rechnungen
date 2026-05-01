@@ -46,8 +46,14 @@ export async function POST(req: NextRequest) {
 
   const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
-  const timeMin = new Date(year, month - 1, 1).toISOString();
-  const timeMax = new Date(year, month, 0, 23, 59, 59).toISOString();
+  // Query a slightly wider range to avoid month-edge misses caused by timezone conversion.
+  // We then strictly filter by local event date below.
+  const rangeStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
+  rangeStart.setDate(rangeStart.getDate() - 1);
+  const rangeEnd = new Date(year, month, 1, 0, 0, 0, 0);
+  rangeEnd.setDate(rangeEnd.getDate() + 1);
+  const timeMin = rangeStart.toISOString();
+  const timeMax = rangeEnd.toISOString();
 
   // Find the "Nachhilfe Plannung" calendar (falls back to primary)
   let calendarId = "primary";
@@ -72,6 +78,7 @@ export async function POST(req: NextRequest) {
       calendarId,
       timeMin,
       timeMax,
+      timeZone: "Europe/Zurich",
       singleEvents: true,
       orderBy: "startTime",
       maxResults: 500,
@@ -90,7 +97,16 @@ export async function POST(req: NextRequest) {
     const students = await prisma.student.findMany({ where: { active: true } });
 
     const unmatched: string[] = [];
-    type UpsertTask = { calEventId: string; studentId: string; date: Date; durationMin: number; amountCHF: number; notes: string | null };
+    type UpsertTask = {
+      calEventId: string;
+      studentId: string;
+      date: Date;
+      durationMin: number;
+      amountCHF: number;
+      notes: string | null;
+      month: number;
+      year: number;
+    };
     const tasks: UpsertTask[] = [];
     const eventIds = events.map((event) => event.id).filter((id): id is string => typeof id === "string");
     const existingByEventId = new Map(
@@ -106,8 +122,8 @@ export async function POST(req: NextRequest) {
 
     for (const event of events) {
       const title = event.summary ?? "";
-      const startStr = event.start?.dateTime;
-      const endStr = event.end?.dateTime;
+      const startStr = event.start?.dateTime ?? null;
+      const endStr = event.end?.dateTime ?? null;
       const calEventId = event.id;
 
       if (!startStr || !endStr || !calEventId) continue;
@@ -127,6 +143,9 @@ export async function POST(req: NextRequest) {
 
       const start = new Date(startStr);
       const end = new Date(endStr);
+      const eventMonth = start.getMonth() + 1;
+      const eventYear = start.getFullYear();
+      if (eventMonth !== month || eventYear !== year) continue;
       const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
       const existingSession = existingByEventId.get(calEventId);
       let amountCHF = durationMin * student.ratePerMin;
@@ -141,7 +160,16 @@ export async function POST(req: NextRequest) {
       }
       amountCHF = Math.round(amountCHF * 100) / 100;
 
-      tasks.push({ calEventId, studentId: student.id, date: start, durationMin, amountCHF, notes: event.description ?? null });
+      tasks.push({
+        calEventId,
+        studentId: student.id,
+        date: start,
+        durationMin,
+        amountCHF,
+        notes: event.description ?? null,
+        month: eventMonth,
+        year: eventYear,
+      });
     }
 
     const keepIds = Array.from(new Set(tasks.map((t) => t.calEventId)));
@@ -160,8 +188,8 @@ export async function POST(req: NextRequest) {
               date: t.date,
               durationMin: t.durationMin,
               amountCHF: t.amountCHF,
-              month,
-              year,
+              month: t.month,
+              year: t.year,
               notes: t.notes,
             },
             create: {
@@ -170,8 +198,8 @@ export async function POST(req: NextRequest) {
               durationMin: t.durationMin,
               amountCHF: t.amountCHF,
               calEventId: t.calEventId,
-              month,
-              year,
+              month: t.month,
+              year: t.year,
               notes: t.notes,
             },
           });

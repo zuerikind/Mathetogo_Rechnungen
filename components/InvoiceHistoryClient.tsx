@@ -25,6 +25,7 @@ type InvoiceRow = {
 type Student = { id: string; name: string };
 
 type InvoiceRowUiState = "paid" | "overdue" | "sent" | "draft";
+type InvoiceStatusUpdate = "sent" | "paid" | "reminder" | "unpaid";
 
 function safeSessionCount(sessionIds: string): number {
   try {
@@ -91,9 +92,11 @@ export function InvoiceHistoryClient() {
   const [studentId, setStudentId] = useState("");
   const [status, setStatus] = useState("");
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [zipDownloading, setZipDownloading] = useState(false);
   const [selectedYearYtd, setSelectedYearYtd] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const loadInvoices = useCallback(async () => {
     const query = new URLSearchParams();
@@ -106,7 +109,13 @@ export function InvoiceHistoryClient() {
       const r = await fetch(`/api/invoices?${query.toString()}`);
       if (!r.ok) throw new Error("load");
       const data = (await r.json()) as unknown;
-      setRows(Array.isArray(data) ? (data as InvoiceRow[]) : []);
+      const nextRows = Array.isArray(data) ? (data as InvoiceRow[]) : [];
+      setRows(nextRows);
+      setSelectedIds((prev) => {
+        if (prev.size === 0) return prev;
+        const existing = new Set(nextRows.map((row) => row.id));
+        return new Set(Array.from(prev).filter((id) => existing.has(id)));
+      });
     } catch {
       setRows([]);
     } finally {
@@ -200,6 +209,88 @@ export function InvoiceHistoryClient() {
 
   const selectClass =
     "w-full min-w-0 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20 sm:w-auto sm:min-w-[8.5rem]";
+
+  const visibleRealRows = useMemo(() => rows.filter((row) => !row.isVirtual), [rows]);
+  const selectedRealRows = useMemo(
+    () => visibleRealRows.filter((row) => selectedIds.has(row.id)),
+    [visibleRealRows, selectedIds]
+  );
+  const selectedCount = selectedRealRows.length;
+
+  const updateRowStatusLocally = useCallback((invoiceId: string, status: InvoiceStatusUpdate) => {
+    const nowIso = new Date().toISOString();
+    setRows((prev) =>
+      prev.map((row) => {
+        if (row.id !== invoiceId) return row;
+        if (status === "paid") return { ...row, sentAt: row.sentAt ?? nowIso, paidAt: nowIso };
+        if (status === "sent") return { ...row, sentAt: nowIso, paidAt: null };
+        if (status === "unpaid") return { ...row, paidAt: null };
+        if (status === "reminder") return { ...row, sentAt: row.sentAt ?? nowIso };
+        return row;
+      })
+    );
+  }, []);
+
+  const updateSingleStatus = useCallback(
+    async (invoice: InvoiceRow, status: InvoiceStatusUpdate) => {
+      setActionBusyId(invoice.id);
+      try {
+        if (status === "reminder") {
+          const response = await fetch("/api/invoice/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ invoiceId: invoice.id, forceResend: true }),
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            alert(data.error ?? "Reminder konnte nicht gesendet werden.");
+            return;
+          }
+          await fetch(`/api/invoices/${invoice.id}/status`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "reminder" }),
+          });
+          updateRowStatusLocally(invoice.id, "reminder");
+          return;
+        }
+
+        const response = await fetch(`/api/invoices/${invoice.id}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        });
+        const data = await response.json();
+        if (response.ok) updateRowStatusLocally(invoice.id, status);
+        else alert(data.error ?? "Status konnte nicht aktualisiert werden.");
+      } finally {
+        setActionBusyId(null);
+      }
+    },
+    [updateRowStatusLocally]
+  );
+
+  const applyBulkStatus = useCallback(
+    async (status: Exclude<InvoiceStatusUpdate, "reminder">) => {
+      if (selectedRealRows.length === 0) return;
+      setBulkBusy(true);
+      try {
+        await Promise.all(
+          selectedRealRows.map(async (row) => {
+            const response = await fetch(`/api/invoices/${row.id}/status`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status }),
+            });
+            if (response.ok) updateRowStatusLocally(row.id, status);
+          })
+        );
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [selectedRealRows, updateRowStatusLocally]
+  );
 
   const downloadMonthZip = async () => {
     if (!year || !month) {
@@ -343,6 +434,51 @@ export function InvoiceHistoryClient() {
 
         {/* Table */}
         <div className="relative min-w-0 overflow-x-auto rounded-2xl border border-blue-100 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50/60 px-3 py-2 sm:px-5">
+            <div className="text-xs text-gray-600">
+              {selectedCount > 0 ? `${selectedCount} ausgewählt` : "Keine Auswahl"}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const allSelected =
+                    visibleRealRows.length > 0 &&
+                    visibleRealRows.every((row) => selectedIds.has(row.id));
+                  if (allSelected) setSelectedIds(new Set());
+                  else setSelectedIds(new Set(visibleRealRows.map((row) => row.id)));
+                }}
+                disabled={visibleRealRows.length === 0 || bulkBusy}
+                className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1] disabled:opacity-40"
+              >
+                Alle auswählen
+              </button>
+              <button
+                type="button"
+                onClick={() => void applyBulkStatus("sent")}
+                disabled={selectedCount === 0 || bulkBusy}
+                className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-amber-300 hover:text-amber-700 disabled:opacity-40"
+              >
+                Als gesendet markieren
+              </button>
+              <button
+                type="button"
+                onClick={() => void applyBulkStatus("paid")}
+                disabled={selectedCount === 0 || bulkBusy}
+                className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:opacity-40"
+              >
+                Als bezahlt markieren
+              </button>
+              <button
+                type="button"
+                onClick={() => void applyBulkStatus("unpaid")}
+                disabled={selectedCount === 0 || bulkBusy}
+                className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-orange-300 hover:text-orange-800 disabled:opacity-40"
+              >
+                Als unbezahlt markieren
+              </button>
+            </div>
+          </div>
           {listLoading ? (
             <div className="flex min-h-[14rem] flex-col items-center justify-center gap-3 py-12">
               <LoadingSpinner size={32} label="Rechnungen werden geladen …" />
@@ -351,6 +487,19 @@ export function InvoiceHistoryClient() {
           <table className={`min-w-[44rem] w-full divide-y divide-gray-100 text-sm sm:min-w-full ${listLoading ? "hidden" : ""}`}>
             <thead>
               <tr className="text-left text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                <th className="whitespace-nowrap px-3 py-3.5 sm:px-5">
+                  <input
+                    type="checkbox"
+                    checked={
+                      visibleRealRows.length > 0 &&
+                      visibleRealRows.every((row) => selectedIds.has(row.id))
+                    }
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedIds(new Set(visibleRealRows.map((row) => row.id)));
+                      else setSelectedIds(new Set());
+                    }}
+                  />
+                </th>
                 <th className="whitespace-nowrap px-3 py-3.5 sm:px-5">Monat</th>
                 <th className="whitespace-nowrap px-3 py-3.5 sm:px-5">Schüler</th>
                 <th className="whitespace-nowrap px-3 py-3.5 sm:px-5">Sessions</th>
@@ -362,7 +511,7 @@ export function InvoiceHistoryClient() {
             <tbody className="divide-y divide-gray-50">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-10 text-center text-sm text-gray-400 sm:px-5">
+                  <td colSpan={7} className="px-3 py-10 text-center text-sm text-gray-400 sm:px-5">
                     Keine Rechnungen gefunden. Sobald Sessions vorhanden sind, erscheinen hier ausstehende Einträge.
                   </td>
                 </tr>
@@ -374,6 +523,22 @@ export function InvoiceHistoryClient() {
                 const sessionCount = safeSessionCount(invoice.sessionIds);
                 return (
                   <tr key={invoice.id} className={`transition-colors ${getRowClasses(rowState)}`}>
+                    <td className="px-3 py-3 sm:px-5">
+                      {!invoice.isVirtual ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(invoice.id)}
+                          onChange={(e) => {
+                            setSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(invoice.id);
+                              else next.delete(invoice.id);
+                              return next;
+                            });
+                          }}
+                        />
+                      ) : null}
+                    </td>
                     <td className="whitespace-nowrap px-3 py-3 font-medium text-gray-800 sm:px-5">{getPeriodLabel(invoice.month, invoice.year)}</td>
                     <td className="max-w-[10rem] truncate px-3 py-3 text-gray-700 sm:max-w-none sm:whitespace-normal sm:px-5" title={invoice.student.name}>{invoice.student.name}</td>
                     <td className="whitespace-nowrap px-3 py-3 text-gray-600 sm:px-5">{sessionCount}</td>
@@ -413,21 +578,7 @@ export function InvoiceHistoryClient() {
                         <button
                           type="button"
                           disabled={Boolean(invoice.isVirtual) || !invoice.pdfPath || Boolean(invoice.sentAt) || isBusy}
-                          onClick={async () => {
-                            setActionBusyId(invoice.id);
-                            try {
-                              const response = await fetch(`/api/invoices/${invoice.id}/status`, {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ status: "sent" }),
-                              });
-                              const data = await response.json();
-                              if (response.ok) loadInvoices();
-                              else alert(data.error ?? "Status konnte nicht aktualisiert werden.");
-                            } finally {
-                              setActionBusyId(null);
-                            }
-                          }}
+                          onClick={() => void updateSingleStatus(invoice, "sent")}
                           className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-amber-300 hover:text-amber-700 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Rechnung gesendet
@@ -435,30 +586,7 @@ export function InvoiceHistoryClient() {
                         <button
                           type="button"
                           disabled={Boolean(invoice.isVirtual) || !invoice.sentAt || Boolean(invoice.paidAt) || isBusy}
-                          onClick={async () => {
-                            setActionBusyId(invoice.id);
-                            try {
-                              const response = await fetch("/api/invoice/send", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ invoiceId: invoice.id, forceResend: true }),
-                              });
-                              const data = await response.json();
-                              if (response.ok) {
-                                await fetch(`/api/invoices/${invoice.id}/status`, {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ status: "reminder" }),
-                                });
-                                loadInvoices();
-                                alert(`Reminder gesendet an ${data.sentTo ?? "Empfänger"}.`);
-                              } else {
-                                alert(data.error ?? "Reminder konnte nicht gesendet werden.");
-                              }
-                            } finally {
-                              setActionBusyId(null);
-                            }
-                          }}
+                          onClick={() => void updateSingleStatus(invoice, "reminder")}
                           className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
                             rowState === "overdue"
                               ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
@@ -470,21 +598,7 @@ export function InvoiceHistoryClient() {
                         <button
                           type="button"
                           disabled={Boolean(invoice.isVirtual) || Boolean(invoice.paidAt) || isBusy}
-                          onClick={async () => {
-                            setActionBusyId(invoice.id);
-                            try {
-                              const response = await fetch(`/api/invoices/${invoice.id}/status`, {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ status: "paid" }),
-                              });
-                              const data = await response.json();
-                              if (response.ok) loadInvoices();
-                              else alert(data.error ?? "Status konnte nicht aktualisiert werden.");
-                            } finally {
-                              setActionBusyId(null);
-                            }
-                          }}
+                          onClick={() => void updateSingleStatus(invoice, "paid")}
                           className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Gezahlt
@@ -492,21 +606,7 @@ export function InvoiceHistoryClient() {
                         <button
                           type="button"
                           disabled={Boolean(invoice.isVirtual) || !invoice.paidAt || isBusy}
-                          onClick={async () => {
-                            setActionBusyId(invoice.id);
-                            try {
-                              const response = await fetch(`/api/invoices/${invoice.id}/status`, {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ status: "unpaid" }),
-                              });
-                              const data = await response.json();
-                              if (response.ok) loadInvoices();
-                              else alert(data.error ?? "Status konnte nicht aktualisiert werden.");
-                            } finally {
-                              setActionBusyId(null);
-                            }
-                          }}
+                          onClick={() => void updateSingleStatus(invoice, "unpaid")}
                           className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-orange-300 hover:text-orange-800 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Nicht bezahlt

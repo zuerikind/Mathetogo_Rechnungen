@@ -18,7 +18,7 @@ export function SyncButton({ year, month, onSynced }: SyncButtonProps) {
       const res = await fetch("/api/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ year, month }),
+        body: JSON.stringify({ year, month, pruneOrphans: true }),
       });
       const json = (await res.json()) as SyncResponse & { error?: string };
       if (!res.ok) {
