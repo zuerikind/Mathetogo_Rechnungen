@@ -15,6 +15,7 @@ type StudentProfile = {
   level: string;
   subject: string;
   bodyText: string;
+  debugNames: string[];
 };
 
 const BASE_URL = "https://www.tutor24.ch";
@@ -68,40 +69,22 @@ async function jsClick(el: import("playwright").ElementHandle) {
 
 // ── AI message personalisation ─────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `Du bist Omid, Mathematik- und Physiklehrer in der Schweiz, ETH-Absolvent, über 12 Jahre Erfahrung, aktuell mehr als 30 aktive Schüler. Du hast eigene Lehrmittel für Gymiprüfung und BM-Vorbereitung entwickelt und die Lernplattform Mathetogo (www.platform.mathetogo.xyz) programmiert.
-
-Schreibe eine Kontaktnachricht in genau 3 Absätzen (max. 170 Wörter). Füge KEINE Verabschiedung ein — sie wird automatisch angehängt.
-
-Absatz 1 — Begrüssung:
-  • Wenn Vorname vorhanden: "Hallo [Vorname],"
-  • Wenn kein Vorname: "Guten Tag," (auf Deutsch) oder "Hello," (auf Englisch)
-
-Absatz 2 — Warum du passend bist (1–2 Sätze, auf das Niveau eingehen):
-  • Maturavorbereitung → "ich habe bereits viele Schüler erfolgreich durch die Maturavorbereitung begleitet und kenne die Prüfungsanforderungen der verschiedenen Kantone genau."
-  • Gymnasium/Gymiprüfung → "ich habe viele Schüler erfolgreich durch die Gymiprüfung begleitet und kenne die typischen Aufgabentypen und Stolpersteine sehr genau."
-  • Universität/ETH → "als ETH-Absolvent kenne ich die universitären Anforderungen aus eigener Erfahrung und begleite regelmässig Studierende durch anspruchsvolle Module."
-  • BM/BMS → "ich habe eigene Lehrmittel für die BM-Vorbereitung entwickelt und kenne die Prüfungsanforderungen auf diesem Niveau sehr genau."
-  • Sekundar/Primar → "ich erkläre den Stoff stufengerecht, geduldig und mit vielen konkreten Beispielen."
-  • Kein Niveau erkannt → Schreibe allgemein über deine Erfahrung auf allen Stufen.
-
-Absatz 3 — Was du anbietest (2–3 Sätze):
-  Unterricht online (Google Meet mit iPad-Erklärungen) oder in Zürich, auf Deutsch oder Englisch. Erwähne kurz die Lernplattform Mathetogo: strukturierte Inhalte, Aufgaben und persönliches Feedback.
-
-Sprache: Deutsch standardmässig — Englisch nur wenn der Inseratstext klar auf Englisch ist.
-Ton: direkt, warm, professionell — keine übertriebenen Lobeshymnen.
-Schreibe NUR die 3 Absätze, keine Erklärungen davor oder danach.`;
-
-function buildUserPrompt(p: StudentProfile): string {
-  return [
-    `Vorname des Schülers: ${p.firstName}`,
-    `Gesuchtes Fach: ${p.subject}`,
-    `Sprache des Inserats: ${p.language === "en" ? "Englisch" : p.language === "fr" ? "Französisch" : "Deutsch"}`,
-    p.level ? `Erkanntes Niveau: ${p.level}` : "Niveau: nicht erkannt",
-    "",
-    "Inseratstext (Kontext für die Nachricht):",
-    p.bodyText,
-  ].join("\n");
-}
+// Hardcoded level-specific sentences injected into the template.
+// OpenAI replaces these with a context-aware version when a key is set.
+const LEVEL_INSERTS: Record<string, string> = {
+  "Maturavorbereitung":
+    "Da du dich auf die Matura vorbereitest, kenne ich die Prüfungsanforderungen der verschiedenen Kantone sehr genau und weiss, worauf es wirklich ankommt.",
+  "Universität/ETH":
+    "Als ETH-Absolvent kenne ich die universitären Anforderungen aus eigener Erfahrung und begleite regelmässig Studierende durch anspruchsvolle Module.",
+  "Gymnasium":
+    "Da du das Gymnasium besuchst, kenne ich die typischen Stolpersteine und Prüfungsanforderungen auf diesem Niveau sehr genau.",
+  "BM/BMS":
+    "Da du die BM anstrebst, habe ich eigene Lehrmittel speziell für die BM-Vorbereitung entwickelt und kenne die Prüfungsanforderungen auf diesem Niveau sehr genau.",
+  "Sekundarschule":
+    "Auf Sekundarstufe erkläre ich den Stoff geduldig und stufengerecht, damit der Übergang zur nächsten Stufe reibungslos klappt.",
+  "Primarschule":
+    "Im Primarschulbereich erkläre ich den Stoff spielerisch und stufengerecht, damit das Fundament für später stark ist.",
+};
 
 async function extractProfile(
   page: import("playwright").Page,
@@ -173,46 +156,77 @@ async function extractProfile(
         firstName = fallbackFirstName;
       }
 
-      return { name, firstName, language, level, subject, bodyText };
+      // Debug: collect h1/h2 text and any element whose class contains "name"
+      // so we can identify the right selectors from real logged-in page output.
+      const debugNames = [
+        ...Array.from(document.querySelectorAll("h1, h2")).map(
+          (el) => `<${el.tagName.toLowerCase()}> "${(el.textContent ?? "").trim().slice(0, 50)}"`
+        ),
+        ...Array.from(document.querySelectorAll("[class*='name'],[class*='Name']")).map(
+          (el) => `[${(el as HTMLElement).className.split(" ").find(c => c.toLowerCase().includes("name"))}] "${(el.textContent ?? "").trim().slice(0, 50)}"`
+        ),
+      ].slice(0, 12);
+
+      return { name, firstName, language, level, subject, bodyText, debugNames };
     },
     { name: displayName, fallbackFirstName, subject }
   );
 }
 
-const CLOSING: Record<"de" | "en" | "fr", string> = {
-  de: "\n\nBei Fragen melde dich gerne per WhatsApp: 078 693 68 98\nWeitere Infos: www.mathetogo.xyz\n\nLiebi Grüess\nOmid",
-  en: "\n\nFeel free to reach out via WhatsApp: 078 693 68 98\nMore info: www.mathetogo.xyz\n\nKind regards\nOmid",
-  fr: "\n\nN'hésitez pas à me contacter via WhatsApp: 078 693 68 98\nPlus d'infos: www.mathetogo.xyz\n\nCordialement\nOmid",
-};
-
-async function generateMessage(
+// Generates one context-aware sentence for the level. Falls back to the static map.
+async function generateLevelInsert(
   profile: StudentProfile,
   pushLog: (s: string) => void
 ): Promise<string> {
+  const staticInsert = profile.level ? (LEVEL_INSERTS[profile.level] ?? "") : "";
+  if (!staticInsert) return "";
+
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    pushLog("ℹ OpenAI-Key fehlt — Template wird verwendet");
-    return MESSAGE_TEMPLATE;
-  }
+  if (!apiKey) return staticInsert;
+
   try {
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey });
     const resp = await client.chat.completions.create({
       model: "gpt-4o-mini",
-      max_tokens: 500,
+      max_tokens: 80,
       temperature: 0.7,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildUserPrompt(profile) },
-      ],
+      messages: [{
+        role: "user",
+        content:
+          `Du bist Omid, ETH-Absolvent, Mathe/Physik-Lehrer in der Schweiz, über 12 Jahre Erfahrung.\n` +
+          `Schreibe EINEN Satz (max. 30 Wörter, Deutsch) warum du für diesen Schüler besonders passend bist.\n` +
+          `Niveau: ${profile.level}\n` +
+          `Inseratstext: ${profile.bodyText.slice(0, 400)}\n\n` +
+          `Regeln: Fang nicht mit "Ich" an. Kein Gruss, kein Abschluss. Nur den einen Satz.`,
+      }],
     });
-    const body = resp.choices[0]?.message?.content?.trim();
-    if (!body) throw new Error("Leere Antwort von OpenAI");
-    return body + CLOSING[profile.language];
+    return resp.choices[0]?.message?.content?.trim() || staticInsert;
   } catch (err) {
-    pushLog(`⚠ OpenAI-Fehler (Template-Fallback): ${err instanceof Error ? err.message : String(err)}`);
-    return MESSAGE_TEMPLATE;
+    pushLog(`⚠ OpenAI: ${err instanceof Error ? err.message : String(err)} — statischer Satz`);
+    return staticInsert;
   }
+}
+
+// Injects personalization into MESSAGE_TEMPLATE — greeting + one level sentence.
+// All original content (12yr experience, platform link, WhatsApp, closing) is preserved.
+async function generateMessage(
+  profile: StudentProfile,
+  pushLog: (s: string) => void
+): Promise<string> {
+  const greeting = profile.firstName ? `Hallo ${profile.firstName},` : "Hallo zusammen,";
+  let message = MESSAGE_TEMPLATE.replace("Hallo zusammen,", greeting);
+
+  const levelInsert = await generateLevelInsert(profile, pushLog);
+  if (levelInsert) {
+    message = message.replace(
+      "Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.",
+      `Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.\n\n${levelInsert}`
+    );
+    pushLog(`Niveau-Satz: "${levelInsert.slice(0, 70)}..."`);
+  }
+
+  return message;
 }
 
 // In-memory job state (this process only — fine for single-user local app)
@@ -419,6 +433,9 @@ export async function runTutor24Messaging(
           result.log.push(
             `${ts()} [${tutor24Id}] Profil: Niveau="${profile.level || "?"}", Sprache=${profile.language}, Name="${profile.firstName || "(unbekannt)"}"`
           );
+          if (profile.debugNames.length > 0) {
+            result.log.push(`${ts()} [${tutor24Id}] DOM-Debug: ${profile.debugNames.join(" | ")}`);
+          }
           const message = await generateMessage(profile, (s) => result.log.push(`${ts()} [${tutor24Id}] ${s}`));
 
           // Debug: visible buttons on profile page
