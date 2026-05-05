@@ -68,23 +68,28 @@ async function jsClick(el: import("playwright").ElementHandle) {
 
 // ── AI message personalisation ─────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `Du bist Omid, ein Mathematik- und Physiklehrer in der Schweiz mit über 12 Jahren Unterrichtserfahrung. Du hast an der ETH Zürich studiert und begleitest aktuell mehr als 30 aktive Schüler auf allen Niveaus. Du hast eigene Lehrmittel für Gymiprüfung, BM-Vorbereitung und verschiedene Stufen entwickelt sowie die Lernplattform Mathetogo (www.platform.mathetogo.xyz) programmiert.
+const SYSTEM_PROMPT = `Du bist Omid, Mathematik- und Physiklehrer in der Schweiz, ETH-Absolvent, über 12 Jahre Erfahrung, aktuell mehr als 30 aktive Schüler. Du hast eigene Lehrmittel für Gymiprüfung und BM-Vorbereitung entwickelt und die Lernplattform Mathetogo (www.platform.mathetogo.xyz) programmiert.
 
-Schreibe eine persönliche Kontaktnachricht auf tutor24.ch an einen Schüler, der nach Nachhilfe sucht.
+Schreibe eine Kontaktnachricht in genau 3 Absätzen (max. 170 Wörter). Füge KEINE Verabschiedung ein — sie wird automatisch angehängt.
 
-Regeln:
-- Schreibe in der Sprache des Schülers (Deutsch oder Englisch — erkennbar am Inseratstext)
-- Sprich den Schüler mit dem Vornamen an (kein "Hallo zusammen")
-- Passe den Inhalt dem erkannten Niveau an:
-    Matura → "ich habe viele Schüler durch die Maturavorbereitung geführt und kenne die Prüfungsanforderungen genau"
-    Gymnasium/Gymiprüfung → "ich habe viele Schüler erfolgreich durch die Gymiprüfung begleitet"
-    Universität/ETH → "als ETH-Absolvent kenne ich die universitären Anforderungen aus eigener Erfahrung"
-    BM/BMS → "ich habe eigene Lehrmittel für die BM-Vorbereitung entwickelt"
-    Sekundar/Primar → "ich erkläre den Stoff stufengerecht und mit viel Geduld"
-- Erwähne die Lernplattform Mathetogo kurz
-- Maximal 220 Wörter
-- Schliesse immer mit: WhatsApp 078 693 68 98 | www.mathetogo.xyz | dann "Liebi Grüess, Omid" (DE) oder "Kind regards, Omid" (EN)
-- Schreibe NUR die Nachricht, keine Metakommentare davor oder danach`;
+Absatz 1 — Begrüssung:
+  • Wenn Vorname vorhanden: "Hallo [Vorname],"
+  • Wenn kein Vorname: "Guten Tag," (auf Deutsch) oder "Hello," (auf Englisch)
+
+Absatz 2 — Warum du passend bist (1–2 Sätze, auf das Niveau eingehen):
+  • Maturavorbereitung → "ich habe bereits viele Schüler erfolgreich durch die Maturavorbereitung begleitet und kenne die Prüfungsanforderungen der verschiedenen Kantone genau."
+  • Gymnasium/Gymiprüfung → "ich habe viele Schüler erfolgreich durch die Gymiprüfung begleitet und kenne die typischen Aufgabentypen und Stolpersteine sehr genau."
+  • Universität/ETH → "als ETH-Absolvent kenne ich die universitären Anforderungen aus eigener Erfahrung und begleite regelmässig Studierende durch anspruchsvolle Module."
+  • BM/BMS → "ich habe eigene Lehrmittel für die BM-Vorbereitung entwickelt und kenne die Prüfungsanforderungen auf diesem Niveau sehr genau."
+  • Sekundar/Primar → "ich erkläre den Stoff stufengerecht, geduldig und mit vielen konkreten Beispielen."
+  • Kein Niveau erkannt → Schreibe allgemein über deine Erfahrung auf allen Stufen.
+
+Absatz 3 — Was du anbietest (2–3 Sätze):
+  Unterricht online (Google Meet mit iPad-Erklärungen) oder in Zürich, auf Deutsch oder Englisch. Erwähne kurz die Lernplattform Mathetogo: strukturierte Inhalte, Aufgaben und persönliches Feedback.
+
+Sprache: Deutsch standardmässig — Englisch nur wenn der Inseratstext klar auf Englisch ist.
+Ton: direkt, warm, professionell — keine übertriebenen Lobeshymnen.
+Schreibe NUR die 3 Absätze, keine Erklärungen davor oder danach.`;
 
 function buildUserPrompt(p: StudentProfile): string {
   return [
@@ -103,9 +108,9 @@ async function extractProfile(
   displayName: string,
   subject: string
 ): Promise<StudentProfile> {
-  const firstName = displayName.split(/\s+/)[0];
+  const fallbackFirstName = displayName.split(/\s+/)[0];
   return page.evaluate(
-    ({ name, firstName, subject }) => {
+    ({ name, fallbackFirstName, subject }) => {
       const main =
         (document.querySelector("main, [role='main'], article, .container") as HTMLElement) ||
         document.body;
@@ -134,11 +139,51 @@ async function extractProfile(
       else if (t.includes("primar"))
         level = "Primarschule";
 
+      // Try to find the student's actual first name from profile card elements.
+      // tutor24 job pages show the requester's name somewhere in the card/header.
+      const NON_NAMES = ["mathematik", "physik", "nachhilfe", "gesucht", "hilfe",
+        "suche", "unterricht", "lehrer", "tutor", "gymnasium", "matura", "prüfung"];
+      const NAME_SELS = [
+        '[class*="consumer"] [class*="name"]', '[class*="poster"] [class*="name"]',
+        '[class*="requester"] [class*="name"]', '[class*="user"] [class*="name"]',
+        '[class*="profile"] h2', '[class*="card"] h2', '[class*="request"] h2',
+        '[class*="consumer"] h2', 'h1', 'h2',
+      ];
+      let firstName = ""; // empty = AI will use generic greeting
+      for (const sel of NAME_SELS) {
+        const el = document.querySelector(sel) as HTMLElement | null;
+        if (!el) continue;
+        const text = (el.textContent ?? "").trim();
+        const firstWord = text.split(/\s+/)[0] ?? "";
+        if (
+          firstWord.length >= 2 &&
+          firstWord.length <= 20 &&
+          /^[A-ZÄÖÜ]/.test(firstWord) &&
+          !NON_NAMES.some((n) => text.toLowerCase().startsWith(n))
+        ) {
+          firstName = firstWord;
+          break;
+        }
+      }
+      // Last resort: if the fallback name from the page title looks like a real name
+      // (e.g. "Anna" from title "Anna sucht Mathe-Nachhilfe"), use it.
+      if (!firstName && fallbackFirstName.length >= 2 && fallbackFirstName.length <= 20 &&
+          /^[A-ZÄÖÜ]/.test(fallbackFirstName) &&
+          !NON_NAMES.some((n) => fallbackFirstName.toLowerCase() === n)) {
+        firstName = fallbackFirstName;
+      }
+
       return { name, firstName, language, level, subject, bodyText };
     },
-    { name: displayName, firstName, subject }
+    { name: displayName, fallbackFirstName, subject }
   );
 }
+
+const CLOSING: Record<"de" | "en" | "fr", string> = {
+  de: "\n\nBei Fragen melde dich gerne per WhatsApp: 078 693 68 98\nWeitere Infos: www.mathetogo.xyz\n\nLiebi Grüess\nOmid",
+  en: "\n\nFeel free to reach out via WhatsApp: 078 693 68 98\nMore info: www.mathetogo.xyz\n\nKind regards\nOmid",
+  fr: "\n\nN'hésitez pas à me contacter via WhatsApp: 078 693 68 98\nPlus d'infos: www.mathetogo.xyz\n\nCordialement\nOmid",
+};
 
 async function generateMessage(
   profile: StudentProfile,
@@ -150,21 +195,20 @@ async function generateMessage(
     return MESSAGE_TEMPLATE;
   }
   try {
-    // Dynamic import so Next.js build doesn't include openai in edge bundles
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey });
     const resp = await client.chat.completions.create({
       model: "gpt-4o-mini",
       max_tokens: 500,
-      temperature: 0.75,
+      temperature: 0.7,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: buildUserPrompt(profile) },
       ],
     });
-    const message = resp.choices[0]?.message?.content?.trim();
-    if (!message) throw new Error("Leere Antwort von OpenAI");
-    return message;
+    const body = resp.choices[0]?.message?.content?.trim();
+    if (!body) throw new Error("Leere Antwort von OpenAI");
+    return body + CLOSING[profile.language];
   } catch (err) {
     pushLog(`⚠ OpenAI-Fehler (Template-Fallback): ${err instanceof Error ? err.message : String(err)}`);
     return MESSAGE_TEMPLATE;
@@ -368,6 +412,15 @@ export async function runTutor24Messaging(
           const pageTitle = await page.title();
           const displayName = pageTitle.split(/[-–|]/)[0].trim() || tutor24Id;
 
+          // Extract profile data and generate message NOW while on the profile page.
+          // Must happen before navigating to the contact form — bodyText and level
+          // detection only work correctly on the job posting page, not the message form.
+          const profile = await extractProfile(page, displayName, subject);
+          result.log.push(
+            `${ts()} [${tutor24Id}] Profil: Niveau="${profile.level || "?"}", Sprache=${profile.language}, Name="${profile.firstName || "(unbekannt)"}"`
+          );
+          const message = await generateMessage(profile, (s) => result.log.push(`${ts()} [${tutor24Id}] ${s}`));
+
           // Debug: visible buttons on profile page
           const debugBtns = await page.evaluate(() =>
             Array.from(document.querySelectorAll("a, button"))
@@ -427,11 +480,6 @@ export async function runTutor24Messaging(
             continue;
           }
 
-          const profile = await extractProfile(page, displayName, subject);
-          result.log.push(
-            `${ts()} [${tutor24Id}] Profil: Niveau="${profile.level || "?"}", Sprache=${profile.language}`
-          );
-          const message = await generateMessage(profile, (s) => result.log.push(`${ts()} [${tutor24Id}] ${s}`));
           await textarea.fill(message);
           await sleep(600);
 
