@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
+import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 
 type Contact = {
   id: string;
@@ -38,6 +39,7 @@ Liebi Grüess
 Omid`;
 
 export default function Tutor24Page() {
+  const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [starting, setStarting] = useState(false);
   const [headless, setHeadless] = useState(false);
@@ -107,7 +109,7 @@ export default function Tutor24Page() {
   const latestLog = result?.log?.at(-1) ?? "";
 
   return (
-    <DashboardShell monthIncome={0} ytdIncome={0}>
+    <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       <div className="space-y-4">
 
         {/* Control panel */}

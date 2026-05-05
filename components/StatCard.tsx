@@ -6,14 +6,17 @@ type StatCardProps = {
   subValue?: string;
   trend?: number;
   trendLabel?: string;
-  accent?: "blue" | "lilac";
+  accent?: "blue" | "lilac" | "rose";
 };
 
 export function StatCard({ label, value, subValue, trend, trendLabel, accent = "blue" }: StatCardProps) {
   const hasTrend = trend !== undefined && !isNaN(trend) && isFinite(trend);
-  const accentBg = accent === "blue" ? "bg-[#EBF4FF]" : "bg-[#F3F0FF]";
-  const accentText = accent === "blue" ? "text-[#4A7FC1]" : "text-[#7B6CB5]";
-  const accentBorder = accent === "blue" ? "border-[#C7DDF5]" : "border-[#D9D3F0]";
+  const accentBg =
+    accent === "blue" ? "bg-[#EBF4FF]" : accent === "lilac" ? "bg-[#F3F0FF]" : "bg-[#FFF1F6]";
+  const accentText =
+    accent === "blue" ? "text-[#4A7FC1]" : accent === "lilac" ? "text-[#7B6CB5]" : "text-[#C2185B]";
+  const accentBorder =
+    accent === "blue" ? "border-[#C7DDF5]" : accent === "lilac" ? "border-[#D9D3F0]" : "border-[#F7C8DA]";
 
   return (
     <div className={`min-w-0 h-full rounded-2xl border ${accentBorder} ${accentBg} p-5 transition-shadow hover:shadow-md flex flex-col`}>

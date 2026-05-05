@@ -179,7 +179,50 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const realRows = invoices.map((invoice) => ({ ...invoice, isVirtual: false as const }));
+  const effectiveTotals = new Map<string, number>();
+  for (const row of sessionRows) {
+    const key = `${row.studentId}-${row.year}-${row.month}`;
+    effectiveTotals.set(key, (effectiveTotals.get(key) ?? 0) + row.amountCHF);
+  }
+  if (studentIdsForSubs.length > 0) {
+    const platformSubs = await prisma.platformSubscription.findMany({
+      where: { studentId: { in: studentIdsForSubs } },
+      select: {
+        id: true,
+        studentId: true,
+        amountCHF: true,
+        billingMethod: true,
+        durationMonths: true,
+        startMonth: true,
+        startYear: true,
+      },
+    });
+    const keys = new Set<string>([
+      ...Array.from(effectiveTotals.keys()),
+      ...invoices.map((i) => `${i.studentId}-${i.year}-${i.month}`),
+    ]);
+    for (const key of Array.from(keys)) {
+      const [sid, yRaw, mRaw] = key.split("-");
+      const y = Number(yRaw);
+      const m = Number(mRaw);
+      const sub = getSubscriptionInvoiceLines(
+        platformSubs.filter((s) => s.studentId === sid),
+        y,
+        m
+      ).reduce((acc, l) => acc + l.amountCHF, 0);
+      effectiveTotals.set(key, (effectiveTotals.get(key) ?? 0) + sub);
+    }
+  }
+
+  const realRows = invoices.map((invoice) => {
+    const key = `${invoice.studentId}-${invoice.year}-${invoice.month}`;
+    const nextTotal = effectiveTotals.get(key);
+    return {
+      ...invoice,
+      totalCHF: typeof nextTotal === "number" ? Math.round(nextTotal * 100) / 100 : invoice.totalCHF,
+      isVirtual: false as const,
+    };
+  });
   const virtualRows = Array.from(virtualMap.values());
 
   const merged = [...realRows, ...virtualRows].sort((a, b) => {

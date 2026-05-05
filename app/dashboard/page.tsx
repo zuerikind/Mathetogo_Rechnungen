@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
+import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { MonthlyChart } from "@/components/MonthlyChart";
 import { SessionTable, type SubscriptionAnalysisTableRow } from "@/components/SessionTable";
 import { StatCard } from "@/components/StatCard";
@@ -19,6 +20,8 @@ import {
   computeMonthIncome,
   computeYtdIncome,
 } from "@/lib/income-summary";
+import type { DanceEarningForIncome } from "@/lib/dance-earnings";
+import { monthDanceEarningsTotal, ytdDanceEarningsTotal } from "@/lib/dance-earnings";
 import type { MiscEarningForIncome } from "@/lib/misc-earnings";
 import {
   subscriptionProrationByStudentForMonth,
@@ -64,6 +67,8 @@ function medianPerHour(rows: SessionWithStudent[]): number {
 }
 
 export default function DashboardPage() {
+  const { monthIncome: globalMonthIncome, ytdIncome: globalYtdIncome, loading: globalIncomeLoading } =
+    useGlobalIncomeSummary();
   const now = getCurrentMonthYear();
 
   // ── Diagram / KPI filter (independent) ──────────────────────────────
@@ -78,6 +83,7 @@ export default function DashboardPage() {
   const [sessions, setSessions] = useState<SessionWithStudent[]>([]);
   const [subscriptions, setSubscriptions] = useState<SubscriptionAnalyticsRow[]>([]);
   const [miscEarnings, setMiscEarnings] = useState<MiscEarningForIncome[]>([]);
+  const [danceEarnings, setDanceEarnings] = useState<DanceEarningForIncome[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -91,10 +97,11 @@ export default function DashboardPage() {
     try {
       if (isInitial) setLoading(true); else setRefreshing(true);
       setError("");
-      const [res, subRes, settingsRes] = await Promise.all([
+      const [res, subRes, settingsRes, danceRes] = await Promise.all([
         fetch(`/api/sessions?year=${year}`),
         fetch(`/api/subscriptions/analytics?year=${year}`),
         fetch(`/api/settings?miscYear=${year}`),
+        fetch(`/api/dance-earnings?year=${year}`),
       ]);
       if (!res.ok) throw new Error();
       setSessions((await res.json()) as SessionWithStudent[]);
@@ -109,6 +116,12 @@ export default function DashboardPage() {
         setMiscEarnings(Array.isArray(settingsBody.miscEarnings) ? settingsBody.miscEarnings : []);
       } else {
         setMiscEarnings([]);
+      }
+      if (danceRes.ok) {
+        const danceBody = (await danceRes.json()) as { rows?: DanceEarningForIncome[] };
+        setDanceEarnings(Array.isArray(danceBody.rows) ? danceBody.rows : []);
+      } else {
+        setDanceEarnings([]);
       }
     } catch {
       setError("Fehler beim Laden der Daten.");
@@ -164,17 +177,25 @@ export default function DashboardPage() {
   const prevMonthSessions = useMemo(() => sessions.filter((s) => s.month === prevMonth), [sessions, prevMonth]);
   const currentStats = useMemo(() => {
     const base = calcStats(currentMonthSessions);
-    const income = computeMonthIncome(currentMonthSessions, subscriptionBilling, miscEarnings, year, month);
+    const income = computeMonthIncome(currentMonthSessions, subscriptionBilling, miscEarnings, danceEarnings, year, month);
     return { ...base, income };
-  }, [currentMonthSessions, subscriptionBilling, miscEarnings, year, month]);
+  }, [currentMonthSessions, subscriptionBilling, miscEarnings, danceEarnings, year, month]);
   const prevStats = useMemo(() => {
     const base = calcStats(prevMonthSessions);
-    const income = computeMonthIncome(prevMonthSessions, subscriptionBilling, miscEarnings, year, prevMonth);
+    const income = computeMonthIncome(prevMonthSessions, subscriptionBilling, miscEarnings, danceEarnings, year, prevMonth);
     return { ...base, income };
-  }, [prevMonthSessions, subscriptionBilling, miscEarnings, year, prevMonth]);
+  }, [prevMonthSessions, subscriptionBilling, miscEarnings, danceEarnings, year, prevMonth]);
   const ytdIncome = useMemo(
-    () => computeYtdIncome(sessions, subscriptionBilling, miscEarnings, year),
-    [sessions, subscriptionBilling, miscEarnings, year]
+    () => computeYtdIncome(sessions, subscriptionBilling, miscEarnings, danceEarnings, year, month),
+    [sessions, subscriptionBilling, miscEarnings, danceEarnings, year, month]
+  );
+  const monthDanceIncome = useMemo(
+    () => monthDanceEarningsTotal(danceEarnings, year, month),
+    [danceEarnings, year, month]
+  );
+  const ytdDanceIncome = useMemo(
+    () => ytdDanceEarningsTotal(danceEarnings, year),
+    [danceEarnings, year]
   );
 
   const chartData = useMemo(() =>
@@ -184,13 +205,17 @@ export default function DashboardPage() {
       return {
         month: m.value,
         label: m.label.slice(0, 3),
-        income: computeMonthIncome(sessions, subscriptionBilling, miscEarnings, year, m.value),
+        income: computeMonthIncome(sessions, subscriptionBilling, miscEarnings, danceEarnings, year, m.value),
+        danceIncome: monthDanceEarningsTotal(danceEarnings, year, m.value),
+        teachingIncome:
+          computeMonthIncome(sessions, subscriptionBilling, miscEarnings, danceEarnings, year, m.value) -
+          monthDanceEarningsTotal(danceEarnings, year, m.value),
         sessions: realMs.length,
         hours: realMs.reduce((s, r) => s + r.durationMin, 0) / 60,
         medianPerHour: medianPerHour(realMs),
       };
     }),
-  [sessions, subscriptionBilling, miscEarnings, year]);
+  [sessions, subscriptionBilling, miscEarnings, danceEarnings, year]);
 
   const breakdownSessions = useMemo(
     () =>
@@ -286,9 +311,9 @@ export default function DashboardPage() {
 
   return (
     <DashboardShell
-      monthIncome={currentStats.income}
-      ytdIncome={ytdIncome}
-      incomeLoading={loading || refreshing}
+      monthIncome={globalMonthIncome}
+      ytdIncome={globalYtdIncome}
+      incomeLoading={globalIncomeLoading || loading || refreshing}
     >
       <div className="min-w-0 space-y-5">
 
@@ -367,7 +392,7 @@ export default function DashboardPage() {
         ) : (
           <>
             {/* KPI Cards — driven by `month` filter */}
-            <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <section className="grid grid-cols-2 gap-4 md:grid-cols-5">
               <div className="min-w-0">
                 <StatCard label="Einkommen (Monat)" value={formatCHF(currentStats.income)} subValue={`${currentMonthRealSessions.length} Sessions`} trend={trend(currentStats.income, prevStats.income)} trendLabel="Vormonat" />
               </div>
@@ -379,6 +404,14 @@ export default function DashboardPage() {
               </div>
               <div className="min-w-0">
                 <StatCard label="Aktive Schüler" value={String(currentStats.students)} subValue={`Ø ${formatCHF(currentStats.avgPerHour)} / h`} trend={trend(currentStats.students, prevStats.students)} trendLabel="Vormonat" accent="lilac" />
+              </div>
+              <div className="min-w-0">
+                <StatCard
+                  label="Dance Income"
+                  value={formatCHF(monthDanceIncome)}
+                  subValue={`YTD: ${formatCHF(ytdDanceIncome)}`}
+                  accent="rose"
+                />
               </div>
             </section>
 

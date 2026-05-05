@@ -10,12 +10,10 @@ export type Tutor24Result = {
 
 type StudentProfile = {
   name: string;
-  firstName: string;
   language: "de" | "en" | "fr";
   level: string;
   subject: string;
   bodyText: string;
-  debugNames: string[];
 };
 
 const BASE_URL = "https://www.tutor24.ch";
@@ -91,9 +89,8 @@ async function extractProfile(
   displayName: string,
   subject: string
 ): Promise<StudentProfile> {
-  const fallbackFirstName = displayName.split(/\s+/)[0];
   return page.evaluate(
-    ({ name, fallbackFirstName, subject }) => {
+    ({ name, subject }) => {
       const main =
         (document.querySelector("main, [role='main'], article, .container") as HTMLElement) ||
         document.body;
@@ -122,54 +119,9 @@ async function extractProfile(
       else if (t.includes("primar"))
         level = "Primarschule";
 
-      // Try to find the student's actual first name from profile card elements.
-      // tutor24 job pages show the requester's name somewhere in the card/header.
-      const NON_NAMES = ["mathematik", "physik", "nachhilfe", "gesucht", "hilfe",
-        "suche", "unterricht", "lehrer", "tutor", "gymnasium", "matura", "prüfung"];
-      const NAME_SELS = [
-        '[class*="consumer"] [class*="name"]', '[class*="poster"] [class*="name"]',
-        '[class*="requester"] [class*="name"]', '[class*="user"] [class*="name"]',
-        '[class*="profile"] h2', '[class*="card"] h2', '[class*="request"] h2',
-        '[class*="consumer"] h2', 'h1', 'h2',
-      ];
-      let firstName = ""; // empty = AI will use generic greeting
-      for (const sel of NAME_SELS) {
-        const el = document.querySelector(sel) as HTMLElement | null;
-        if (!el) continue;
-        const text = (el.textContent ?? "").trim();
-        const firstWord = text.split(/\s+/)[0] ?? "";
-        if (
-          firstWord.length >= 2 &&
-          firstWord.length <= 20 &&
-          /^[A-ZÄÖÜ]/.test(firstWord) &&
-          !NON_NAMES.some((n) => text.toLowerCase().startsWith(n))
-        ) {
-          firstName = firstWord;
-          break;
-        }
-      }
-      // Last resort: if the fallback name from the page title looks like a real name
-      // (e.g. "Anna" from title "Anna sucht Mathe-Nachhilfe"), use it.
-      if (!firstName && fallbackFirstName.length >= 2 && fallbackFirstName.length <= 20 &&
-          /^[A-ZÄÖÜ]/.test(fallbackFirstName) &&
-          !NON_NAMES.some((n) => fallbackFirstName.toLowerCase() === n)) {
-        firstName = fallbackFirstName;
-      }
-
-      // Debug: collect h1/h2 text and any element whose class contains "name"
-      // so we can identify the right selectors from real logged-in page output.
-      const debugNames = [
-        ...Array.from(document.querySelectorAll("h1, h2")).map(
-          (el) => `<${el.tagName.toLowerCase()}> "${(el.textContent ?? "").trim().slice(0, 50)}"`
-        ),
-        ...Array.from(document.querySelectorAll("[class*='name'],[class*='Name']")).map(
-          (el) => `[${(el as HTMLElement).className.split(" ").find(c => c.toLowerCase().includes("name"))}] "${(el.textContent ?? "").trim().slice(0, 50)}"`
-        ),
-      ].slice(0, 12);
-
-      return { name, firstName, language, level, subject, bodyText, debugNames };
+      return { name, language, level, subject, bodyText };
     },
-    { name: displayName, fallbackFirstName, subject }
+    { name: displayName, subject }
   );
 }
 
@@ -214,8 +166,7 @@ async function generateMessage(
   profile: StudentProfile,
   pushLog: (s: string) => void
 ): Promise<string> {
-  const greeting = profile.firstName ? `Hallo ${profile.firstName},` : "Hallo zusammen,";
-  let message = MESSAGE_TEMPLATE.replace("Hallo zusammen,", greeting);
+  let message = MESSAGE_TEMPLATE;
 
   const levelInsert = await generateLevelInsert(profile, pushLog);
   if (levelInsert) {
@@ -275,7 +226,7 @@ export async function runTutor24Messaging(
     await page.fill('input[type="email"], input[name="user[email]"]', email);
     await page.fill('input[type="password"], input[name="user[password]"]', password);
     await Promise.all([
-      page.waitForNavigation({ waitUntil: "networkidle", timeout: 20000 }),
+      page.waitForNavigation({ waitUntil: "load", timeout: 20000 }),
       page.click('input[type="submit"], button[type="submit"]'),
     ]);
 
@@ -292,7 +243,7 @@ export async function runTutor24Messaging(
       // Submit tutor24's own search form and capture the URL it redirects to.
       // This is the only reliable way to get the correctly-filtered URL — we cannot
       // safely construct it ourselves because tutor24 may use subject IDs, not text.
-      await page.goto(SEARCH_BASE, { waitUntil: "networkidle", timeout: 20000 });
+      await page.goto(SEARCH_BASE, { waitUntil: "load", timeout: 20000 });
       await sleep(1000);
 
       let subjectBaseUrl = searchUrl(subject, 1); // fallback if form submission fails
@@ -359,7 +310,7 @@ export async function runTutor24Messaging(
       const submitBtn = await findVisible(page, 'button[type="submit"], input[type="submit"], button:has-text("Suchen"), button:has-text("Search")');
       if (submitBtn) {
         await Promise.all([
-          page.waitForNavigation({ waitUntil: "networkidle", timeout: 20000 }).catch(() => {}),
+          page.waitForNavigation({ waitUntil: "load", timeout: 20000 }).catch(() => {}),
           jsClick(submitBtn),
         ]);
         await sleep(500);
@@ -384,7 +335,7 @@ export async function runTutor24Messaging(
           ? subjectBaseUrl.replace(/([?&])page=\d+/, `$1page=${pageNum}`)
           : subjectBaseUrl + (subjectBaseUrl.includes("?") ? "&" : "?") + `page=${pageNum}`;
 
-        await page.goto(listingUrl, { waitUntil: "networkidle", timeout: 20000 });
+        await page.goto(listingUrl, { waitUntil: "load", timeout: 20000 });
         await sleep(1200);
 
       // Collect student links — trust the server-side URL filter; no card text check
@@ -420,7 +371,7 @@ export async function runTutor24Messaging(
           const existing = await prisma.tutor24Contact.findUnique({ where: { tutor24Id } });
           if (existing) { result.skipped++; continue; }
 
-          await page.goto(href, { waitUntil: "networkidle", timeout: 20000 });
+          await page.goto(href, { waitUntil: "load", timeout: 20000 });
           await sleep(800);
 
           const pageTitle = await page.title();
@@ -431,11 +382,8 @@ export async function runTutor24Messaging(
           // detection only work correctly on the job posting page, not the message form.
           const profile = await extractProfile(page, displayName, subject);
           result.log.push(
-            `${ts()} [${tutor24Id}] Profil: Niveau="${profile.level || "?"}", Sprache=${profile.language}, Name="${profile.firstName || "(unbekannt)"}"`
+            `${ts()} [${tutor24Id}] Profil: Niveau="${profile.level || "?"}", Sprache=${profile.language}`
           );
-          if (profile.debugNames.length > 0) {
-            result.log.push(`${ts()} [${tutor24Id}] DOM-Debug: ${profile.debugNames.join(" | ")}`);
-          }
           const message = await generateMessage(profile, (s) => result.log.push(`${ts()} [${tutor24Id}] ${s}`));
 
           // Debug: visible buttons on profile page
@@ -483,7 +431,7 @@ export async function runTutor24Messaging(
           result.log.push(`${ts()} [${tutor24Id}] Kontakt-Button href=${btnHref ?? "(click)"}`);
           if (btnHref) {
             const dest = btnHref.startsWith("http") ? btnHref : `${BASE_URL}${btnHref}`;
-            await page.goto(dest, { waitUntil: "networkidle", timeout: 20000 });
+            await page.goto(dest, { waitUntil: "load", timeout: 20000 });
           } else {
             await jsClick(msgBtn);
             await sleep(1500);

@@ -139,8 +139,9 @@ export function InvoiceHistoryClient() {
       setSelectedYearYtd(null);
       return;
     }
-    const currentMonth = new Date().getMonth() + 1;
-    void fetch(`/api/income-summary?year=${selected}&month=${currentMonth}`)
+    const now = new Date();
+    const throughMonth = selected === now.getFullYear() ? now.getMonth() + 1 : 12;
+    void fetch(`/api/income-summary?year=${selected}&month=${throughMonth}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
         const v = body && Number.isFinite(body.ytdIncome) ? Number(body.ytdIncome) : null;

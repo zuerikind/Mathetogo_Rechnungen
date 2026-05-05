@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { monthDanceEarningsTotal, ytdDanceEarningsTotal, type DanceEarningForIncome } from "@/lib/dance-earnings";
 import { getEffectiveManualBaseline } from "@/lib/manual-revenue";
 import { monthMiscEarningsTotal, ytdMiscEarningsTotal, type MiscEarningForIncome } from "@/lib/misc-earnings";
 import { prisma } from "@/lib/prisma";
@@ -18,6 +19,15 @@ const summaryCache = new Map<string, { at: number; value: IncomeSummaryPayload }
 
 function cacheKey(year: number, month: number) {
   return `${year}-${month}`;
+}
+
+function isMissingTableError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "P2021"
+  );
 }
 
 export async function GET(req: NextRequest) {
@@ -45,7 +55,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [tutorRaw, subscriptionRows, miscRows] = await Promise.all([
+    const [tutorRaw, subscriptionRows, miscRows, danceRows] = await Promise.all([
       prisma.$queryRaw<
         {
           manualQ1Year: number | null;
@@ -69,6 +79,15 @@ export async function GET(req: NextRequest) {
         where: { year },
         select: { year: true, month: true, amountCHF: true, source: true },
       }),
+      prisma.danceEarning
+        .findMany({
+          where: { year },
+          select: { year: true, month: true, amountCHF: true },
+        })
+        .catch((err) => {
+          if (isMissingTableError(err)) return [];
+          throw err;
+        }),
     ]);
 
     const baseline = getEffectiveManualBaseline(tutorRaw[0] ?? null);
@@ -109,6 +128,11 @@ export async function GET(req: NextRequest) {
       amountCHF: r.amountCHF,
       source: r.source === "q1_adjustment" ? "q1_adjustment" : "manual",
     }));
+    const danceEarnings: DanceEarningForIncome[] = danceRows.map((r) => ({
+      year: r.year,
+      month: r.month,
+      amountCHF: r.amountCHF,
+    }));
 
     const sessionMonthIncome = baselineMonthAmount ?? (monthAgg._sum.amountCHF ?? 0);
     const sessionYtdIncome = baselineYearTotal + (nonBaselineYearAgg._sum.amountCHF ?? 0);
@@ -116,7 +140,7 @@ export async function GET(req: NextRequest) {
       ? 0
       : subscriptionProrationForMonth(subscriptions, year, month);
     let ytdSubscription = 0;
-    for (let m = 1; m <= 12; m += 1) {
+    for (let m = 1; m <= month; m += 1) {
       if (baselineMonths.has(m)) continue;
       ytdSubscription += subscriptionProrationForMonth(subscriptions, year, m);
     }
@@ -126,12 +150,14 @@ export async function GET(req: NextRequest) {
     const ytdMisc = ytdMiscEarningsTotal(miscEarnings, year, {
       excludeQ1AdjustmentMonths: baselineMonths,
     });
+    const monthDance = monthDanceEarningsTotal(danceEarnings, year, month);
+    const ytdDance = ytdDanceEarningsTotal(danceEarnings, year);
 
     const value: IncomeSummaryPayload = {
       year,
       month,
-      monthIncome: sessionMonthIncome + monthSubscription + monthMisc,
-      ytdIncome: sessionYtdIncome + ytdSubscription + ytdMisc,
+      monthIncome: sessionMonthIncome + monthSubscription + monthMisc + monthDance,
+      ytdIncome: sessionYtdIncome + ytdSubscription + ytdMisc + ytdDance,
     };
     summaryCache.set(key, { at: Date.now(), value });
     return NextResponse.json(value);

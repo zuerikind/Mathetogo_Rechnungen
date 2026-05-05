@@ -18,6 +18,8 @@ export type ChartPoint = {
   month: number;
   label: string;
   income: number;
+  danceIncome: number;
+  teachingIncome: number;
   sessions: number;
   hours: number;
   medianPerHour: number;
@@ -41,6 +43,18 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payl
           <span className="text-gray-500">Einkommen</span>
           <span className="font-semibold text-[#4A7FC1]">{formatCHF(d.income)}</span>
         </div>
+        {d.danceIncome > 0 && (
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-500">Tanz</span>
+            <span className="font-medium text-[#C2185B]">{formatCHF(d.danceIncome)}</span>
+          </div>
+        )}
+        {d.teachingIncome > 0 && (
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-500">Nachhilfe</span>
+            <span className="font-medium text-gray-700">{formatCHF(d.teachingIncome)}</span>
+          </div>
+        )}
         <div className="flex justify-between gap-4">
           <span className="text-gray-500">Sessions</span>
           <span className="font-medium text-gray-700">{d.sessions}</span>
@@ -134,15 +148,25 @@ export function MonthlyChart({ data, selectedMonth, onMonthSelect }: Props) {
               />
             )}
             <Bar
-              dataKey="income"
+              dataKey="teachingIncome"
               radius={[5, 5, 0, 0]}
               onClick={handleClick}
               style={{ cursor: "pointer" }}
+              stackId="income"
             >
               {data.map((d) => (
                 <Cell
                   key={d.month}
                   fill={selectedMonth === d.month ? "#0a5240" : TEAL}
+                  opacity={selectedMonth !== null && selectedMonth !== d.month ? 0.35 : 1}
+                />
+              ))}
+            </Bar>
+            <Bar dataKey="danceIncome" stackId="income" radius={[5, 5, 0, 0]} onClick={handleClick} style={{ cursor: "pointer" }}>
+              {data.map((d) => (
+                <Cell
+                  key={`dance-${d.month}`}
+                  fill={selectedMonth === d.month ? "#A3154C" : "#E91E63"}
                   opacity={selectedMonth !== null && selectedMonth !== d.month ? 0.35 : 1}
                 />
               ))}

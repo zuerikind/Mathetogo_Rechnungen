@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardShell } from "@/components/DashboardShell";
+import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { formatAmount, formatDate, formatDuration, getPeriodLabel } from "@/lib/invoice";
 import {
   buildWhatsAppUrl,
@@ -51,6 +52,7 @@ type Props = {
 };
 
 export function InvoicePreviewClient({ studentId, year, month }: Props) {
+  const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
   const router = useRouter();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [subscriptions, setSubscriptions] = useState<SubscriptionBillingInput[]>([]);
@@ -241,7 +243,7 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
   }, [studentList, studentId]);
 
   return (
-    <DashboardShell monthIncome={totals.totalCHF} ytdIncome={totals.totalCHF}>
+    <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,42%)_minmax(0,1fr)]">
 
         {/* Left panel: details + actions */}
