@@ -307,7 +307,7 @@ export async function runTutor24Messaging(
           const msgBtn = await findVisible(page, BTN_SEL);
           if (!msgBtn) {
             result.log.push(`${ts()} [${tutor24Id}] kein Kontakt-Button — übersprungen`);
-            result.errors.push(`No contact button: ${tutor24Id} (${displayName})`);
+            result.skipped++;
             continue; // next student, no page reload needed
           }
 
@@ -352,8 +352,28 @@ export async function runTutor24Messaging(
           }
 
           result.log.push(`${ts()} [${tutor24Id}] Sende...`);
+          const preSendUrl = page.url();
           await jsClick(submitBtn);
-          await sleep(2000);
+          await sleep(2500);
+
+          // Verify send succeeded: URL must have changed (redirect after submit) OR
+          // a visible success element must appear. Tutor24 always redirects to the
+          // conversation/messages page on success.
+          const postSendUrl = page.url();
+          const urlChanged = postSendUrl !== preSendUrl;
+          const successEl = await findVisible(
+            page,
+            '[class*="success"], [class*="alert-success"], [class*="notice--success"], ' +
+            'div:has-text("Nachricht gesendet"), div:has-text("erfolgreich gesendet"), ' +
+            'div:has-text("Danke"), p:has-text("Nachricht gesendet")'
+          );
+          const sendConfirmed = urlChanged || !!successEl;
+
+          if (!sendConfirmed) {
+            result.log.push(`${ts()} [${tutor24Id}] ⚠ Kein Erfolgsindikator nach Absenden — nicht gespeichert (URL: ${postSendUrl})`);
+            result.errors.push(`Send unconfirmed: ${tutor24Id} (${displayName})`);
+            continue;
+          }
 
           await prisma.tutor24Contact.create({ data: { tutor24Id, name: displayName, profileUrl: href } });
           result.messaged++;

@@ -173,22 +173,24 @@ export default function Tutor24Page() {
             </div>
           )}
 
-          <button
-            onClick={handleStart}
-            disabled={isRunning || starting}
-            className="rounded-xl bg-[#4A7FC1] px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-[#3a6fb1] disabled:opacity-50"
-          >
-            {isRunning ? "Läuft..." : starting ? "Startet..." : "Automation starten"}
-          </button>
-
-          {isRunning && (
+          <div className="flex items-center gap-3">
             <button
-              onClick={handleStop}
-              className="rounded-xl border border-red-200 bg-red-50 px-5 py-2.5 text-sm font-semibold text-red-600 transition-all hover:bg-red-100"
+              onClick={handleStart}
+              disabled={isRunning || starting}
+              className="rounded-xl bg-[#4A7FC1] px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-[#3a6fb1] disabled:opacity-50"
             >
-              Stoppen
+              {isRunning ? "Läuft..." : starting ? "Startet..." : "Automation starten"}
             </button>
-          )}
+
+            {isRunning && (
+              <button
+                onClick={handleStop}
+                className="rounded-xl border border-red-200 bg-red-50 px-5 py-2.5 text-sm font-semibold text-red-600 transition-all hover:bg-red-100"
+              >
+                Stoppen
+              </button>
+            )}
+          </div>
 
           {isRunning && (
             <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5">
