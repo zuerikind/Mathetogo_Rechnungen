@@ -8,6 +8,15 @@ export type Tutor24Result = {
   newContacts: { name: string; tutor24Id: string; profileUrl: string }[];
 };
 
+type StudentProfile = {
+  name: string;
+  firstName: string;
+  language: "de" | "en" | "fr";
+  level: string;
+  subject: string;
+  bodyText: string;
+};
+
 const BASE_URL = "https://www.tutor24.ch";
 const SEARCH_BASE = `${BASE_URL}/de/students/search`;
 
@@ -55,6 +64,111 @@ async function findVisible(page: import("playwright").Page, selector: string) {
 /** Click using native JS — bypasses ALL Playwright visibility/stability checks. */
 async function jsClick(el: import("playwright").ElementHandle) {
   await el.evaluate((node) => (node as HTMLElement).click());
+}
+
+// ── AI message personalisation ─────────────────────────────────────────────
+
+const SYSTEM_PROMPT = `Du bist Omid, ein Mathematik- und Physiklehrer in der Schweiz mit über 12 Jahren Unterrichtserfahrung. Du hast an der ETH Zürich studiert und begleitest aktuell mehr als 30 aktive Schüler auf allen Niveaus. Du hast eigene Lehrmittel für Gymiprüfung, BM-Vorbereitung und verschiedene Stufen entwickelt sowie die Lernplattform Mathetogo (www.platform.mathetogo.xyz) programmiert.
+
+Schreibe eine persönliche Kontaktnachricht auf tutor24.ch an einen Schüler, der nach Nachhilfe sucht.
+
+Regeln:
+- Schreibe in der Sprache des Schülers (Deutsch oder Englisch — erkennbar am Inseratstext)
+- Sprich den Schüler mit dem Vornamen an (kein "Hallo zusammen")
+- Passe den Inhalt dem erkannten Niveau an:
+    Matura → "ich habe viele Schüler durch die Maturavorbereitung geführt und kenne die Prüfungsanforderungen genau"
+    Gymnasium/Gymiprüfung → "ich habe viele Schüler erfolgreich durch die Gymiprüfung begleitet"
+    Universität/ETH → "als ETH-Absolvent kenne ich die universitären Anforderungen aus eigener Erfahrung"
+    BM/BMS → "ich habe eigene Lehrmittel für die BM-Vorbereitung entwickelt"
+    Sekundar/Primar → "ich erkläre den Stoff stufengerecht und mit viel Geduld"
+- Erwähne die Lernplattform Mathetogo kurz
+- Maximal 220 Wörter
+- Schliesse immer mit: WhatsApp 078 693 68 98 | www.mathetogo.xyz | dann "Liebi Grüess, Omid" (DE) oder "Kind regards, Omid" (EN)
+- Schreibe NUR die Nachricht, keine Metakommentare davor oder danach`;
+
+function buildUserPrompt(p: StudentProfile): string {
+  return [
+    `Vorname des Schülers: ${p.firstName}`,
+    `Gesuchtes Fach: ${p.subject}`,
+    `Sprache des Inserats: ${p.language === "en" ? "Englisch" : p.language === "fr" ? "Französisch" : "Deutsch"}`,
+    p.level ? `Erkanntes Niveau: ${p.level}` : "Niveau: nicht erkannt",
+    "",
+    "Inseratstext (Kontext für die Nachricht):",
+    p.bodyText,
+  ].join("\n");
+}
+
+async function extractProfile(
+  page: import("playwright").Page,
+  displayName: string,
+  subject: string
+): Promise<StudentProfile> {
+  const firstName = displayName.split(/\s+/)[0];
+  return page.evaluate(
+    ({ name, firstName, subject }) => {
+      const main =
+        (document.querySelector("main, [role='main'], article, .container") as HTMLElement) ||
+        document.body;
+      const rawText = (main.textContent ?? "").replace(/\s+/g, " ").trim();
+      const bodyText = rawText.slice(0, 700);
+
+      const langAttr = (document.documentElement.lang ?? "de").toLowerCase();
+      const language: "de" | "en" | "fr" = langAttr.startsWith("en")
+        ? "en"
+        : langAttr.startsWith("fr")
+        ? "fr"
+        : "de";
+
+      const t = rawText.toLowerCase();
+      let level = "";
+      if (t.includes("maturaprüf") || t.includes("maturavorbereitung") || t.includes("matura"))
+        level = "Maturavorbereitung";
+      else if (t.includes("eth") || t.includes("universität") || t.includes("hochschule"))
+        level = "Universität/ETH";
+      else if (t.includes("gymnasium") || t.includes("kantonsschule") || t.includes("gymi"))
+        level = "Gymnasium";
+      else if (t.includes("berufsmatura") || t.includes("bms") || t.includes("bm-") || t.includes("berufsschule"))
+        level = "BM/BMS";
+      else if (t.includes("sekundar") || t.includes("oberstufe"))
+        level = "Sekundarschule";
+      else if (t.includes("primar"))
+        level = "Primarschule";
+
+      return { name, firstName, language, level, subject, bodyText };
+    },
+    { name: displayName, firstName, subject }
+  );
+}
+
+async function generateMessage(
+  profile: StudentProfile,
+  pushLog: (s: string) => void
+): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    pushLog("ℹ OpenAI-Key fehlt — Template wird verwendet");
+    return MESSAGE_TEMPLATE;
+  }
+  try {
+    // Dynamic import so Next.js build doesn't include openai in edge bundles
+    const { default: OpenAI } = await import("openai");
+    const client = new OpenAI({ apiKey });
+    const resp = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 500,
+      temperature: 0.75,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildUserPrompt(profile) },
+      ],
+    });
+    const message = resp.choices[0]?.message?.content?.trim();
+    if (!message) throw new Error("Leere Antwort von OpenAI");
+    return message;
+  } catch (err) {
+    pushLog(`⚠ OpenAI-Fehler (Template-Fallback): ${err instanceof Error ? err.message : String(err)}`);
+    return MESSAGE_TEMPLATE;
+  }
 }
 
 // In-memory job state (this process only — fine for single-user local app)
@@ -313,7 +427,12 @@ export async function runTutor24Messaging(
             continue;
           }
 
-          await textarea.fill(MESSAGE_TEMPLATE);
+          const profile = await extractProfile(page, displayName, subject);
+          result.log.push(
+            `${ts()} [${tutor24Id}] Profil: Niveau="${profile.level || "?"}", Sprache=${profile.language}`
+          );
+          const message = await generateMessage(profile, (s) => result.log.push(`${ts()} [${tutor24Id}] ${s}`));
+          await textarea.fill(message);
           await sleep(600);
 
           // Find visible submit button
