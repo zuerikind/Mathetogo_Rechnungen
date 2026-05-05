@@ -215,38 +215,22 @@ export async function runTutor24Messaging(
         await page.goto(listingUrl, { waitUntil: "networkidle", timeout: 20000 });
         await sleep(1200);
 
-      // Collect student links — only keep entries whose card text mentions the subject
-      // (safety net in case the URL filter is not perfectly applied by tutor24)
-      const { links, skippedWrongSubject } = await page.evaluate((subj: string) => {
+      // Collect student links — trust the server-side URL filter; no card text check
+      const links = await page.evaluate(() => {
         const anchors = Array.from(document.querySelectorAll("a[href]")) as HTMLAnchorElement[];
         const seen = new Set<string>();
         const links: { href: string; id: string }[] = [];
-        let skippedWrongSubject = 0;
         for (const a of anchors) {
           const m = a.pathname.match(/^\/(de|en|fr)\/(students|requests|jobs|gesuche)\/(\d+)/);
           if (!m) continue;
           const id = m[3];
           if (seen.has(id)) continue;
           seen.add(id);
-          // Check the surrounding card for subject text
-          const card = a.closest(
-            "[class*='card'], [class*='item'], [class*='result'], [class*='listing'], article, li"
-          ) as HTMLElement | null;
-          if (card) {
-            const cardText = card.textContent?.toLowerCase() ?? "";
-            if (!cardText.includes(subj.toLowerCase())) {
-              skippedWrongSubject++;
-              continue; // this card doesn't mention the subject — skip
-            }
-          }
           links.push({ href: a.href, id });
         }
-        return { links, skippedWrongSubject };
-      }, subject);
+        return links;
+      });
 
-      if (skippedWrongSubject > 0) {
-        result.log.push(`${ts()} Seite ${pageNum}: ${skippedWrongSubject} Einträge anderes Fach übersprungen`);
-      }
       if (links.length === 0) {
         result.log.push(`${ts()} Seite ${pageNum}: keine passenden Gesuche — Ende`);
         break;
