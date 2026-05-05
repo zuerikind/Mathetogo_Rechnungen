@@ -13,6 +13,12 @@ enum MiscEarningSource {
   q1_adjustment
 }
 
+enum CurrencyCode {
+  CHF
+  EUR
+  MXN
+}
+
 model Student {
   id         String    @id @default(cuid())
   name       String    @unique
@@ -126,4 +132,39 @@ model MiscEarning {
   updatedAt DateTime          @updatedAt
 
   @@unique([year, month, source])
+}
+
+model Tutor24Contact {
+  id         String   @id @default(cuid())
+  tutor24Id  String   @unique
+  name       String
+  profileUrl String?
+  messagedAt DateTime @default(now())
+}
+
+model FxRateSnapshot {
+  id         String   @id @default("default")
+  chfPerEur  Float
+  chfPerMxn  Float
+  source     String?
+  fetchedAt  DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model DanceEarning {
+  id             String       @id @default(cuid())
+  date           DateTime
+  payerName      String
+  amountOriginal Float
+  currency       CurrencyCode
+  chfRate        Float
+  amountCHF      Float
+  year           Int
+  month          Int
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([year, month, date])
 }

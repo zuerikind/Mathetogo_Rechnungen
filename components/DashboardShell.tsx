@@ -17,8 +17,10 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: "📊" },
   { href: "/students", label: "Schüler", icon: "👩‍🎓" },
   { href: "/invoices", label: "Rechnungen", icon: "🧾" },
+  { href: "/dance", label: "Dance", icon: "💃" },
   { href: "/calendar", label: "Google Kalender", icon: "📅" },
   { href: "/sync", label: "Kalender Sync", icon: "🔄" },
+  { href: "/tutor24", label: "Tutor24", icon: "✉️" },
   { href: "/settings", label: "Einstellungen", icon: "⚙️" },
 ];
 
