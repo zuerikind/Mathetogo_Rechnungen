@@ -1,14 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 
 const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
+  prisma: ReturnType<typeof makePrismaClient> | undefined;
 };
 
-/**
- * Ensure sane Prisma/pgbouncer defaults for local responsiveness.
- * We explicitly override very low connection limits (e.g. `connection_limit=1`)
- * which serialize all requests and cause frequent P2024 timeouts.
- */
 function databaseUrlWithPoolSettings(url: string | undefined): string | undefined {
   if (!url) return url;
   const defaultConnectionLimit = process.env.NODE_ENV === "production" ? "5" : "10";
@@ -25,7 +20,6 @@ function databaseUrlWithPoolSettings(url: string | undefined): string | undefine
     );
     return parsed.toString();
   } catch {
-    // Fallback for unusual URL formats: append conservative defaults if missing.
     const joiner = url.includes("?") ? "&" : "?";
     let out = url;
     if (!out.includes("connection_limit=")) out += `${joiner}connection_limit=${defaultConnectionLimit}`;
@@ -34,14 +28,37 @@ function databaseUrlWithPoolSettings(url: string | undefined): string | undefine
   }
 }
 
-const resolvedDbUrl = databaseUrlWithPoolSettings(process.env.DATABASE_URL);
-
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
+function makePrismaClient() {
+  const resolvedDbUrl = databaseUrlWithPoolSettings(process.env.DATABASE_URL);
+  const base = new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
     ...(resolvedDbUrl ? { datasources: { db: { url: resolvedDbUrl } } } : {}),
   });
+
+  return base.$extends({
+    query: {
+      $allModels: {
+        async $allOperations({ args, query }) {
+          try {
+            return await query(args);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const isConnReset =
+              msg.includes("ConnectionReset") ||
+              msg.includes("10054") ||
+              msg.includes("ECONNRESET");
+            if (!isConnReset) throw err;
+            await base.$disconnect();
+            await new Promise((r) => setTimeout(r, 500));
+            return query(args);
+          }
+        },
+      },
+    },
+  });
+}
+
+export const prisma = globalForPrisma.prisma ?? makePrismaClient();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;

@@ -11,9 +11,9 @@ export type Tutor24Result = {
 type StudentProfile = {
   name: string;
   language: "de" | "en" | "fr";
-  level: string;
   subject: string;
   bodyText: string;
+  pageTitle: string;
 };
 
 const BASE_URL = "https://www.tutor24.ch";
@@ -28,7 +28,7 @@ const MESSAGE_TEMPLATE = `Hallo zusammen,
 
 gerne unterstütze ich dich in Mathematik und der Physik, entweder online oder in Zürich, auf Deutsch oder Englisch. Ich unterrichte seit über 12 Jahren, habe an der ETH studiert und begleite aktuell mehr als 30 aktive Schüler, die meisten auf Gymi- oder Universitätsniveau. Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.
 
-Für meinen Unterricht habe ich eigene Lehrmittel für die Gymivorbereitung, BM-Vorbereitung sowie verschiedene Gymi- und BM-Stufen entwickelt. Zusätzlich habe ich die Lernplattform Mathetogo programmiert (www.platform.mathetogo.xyz). Dort arbeitest du mit klar strukturierten Inhalten, löst gezielte Aufgaben, hältst deinen Lösungsweg fest und erhältst persönliches Feedback. Ergänzende Quizzes helfen dir, deinen Lernstand realistisch einzuschätzen und gezielt Fortschritte zu machen.
+{{LEVEL_INSERT}}Für meinen Unterricht habe ich eigene Lehrmittel für die Gymivorbereitung, BM-Vorbereitung sowie verschiedene Gymi- und BM-Stufen entwickelt. Zusätzlich habe ich die Lernplattform Mathetogo programmiert (www.platform.mathetogo.xyz). Dort arbeitest du mit klar strukturierten Inhalten, löst gezielte Aufgaben, hältst deinen Lösungsweg fest und erhältst persönliches Feedback. Ergänzende Quizzes helfen dir, deinen Lernstand realistisch einzuschätzen und gezielt Fortschritte zu machen.
 
 Online-Lektionen finden über Google Meet statt. Ich erkläre den Stoff verständlich und visuell mit dem iPad, und nach jeder Lektion erhältst du die bearbeiteten Unterlagen, damit du alles nochmals in Ruhe nachvollziehen kannst.
 
@@ -67,36 +67,13 @@ async function jsClick(el: import("playwright").ElementHandle) {
 
 // ── AI message personalisation ─────────────────────────────────────────────
 
-// Hardcoded level-specific sentences injected into the template.
-// OpenAI replaces these with a context-aware version when a key is set.
-const LEVEL_INSERTS: Record<string, string> = {
-  "Maturavorbereitung":
-    "Da du dich auf die Matura vorbereitest, kenne ich die Prüfungsanforderungen der verschiedenen Kantone sehr genau und weiss, worauf es wirklich ankommt.",
-  "Universität/ETH":
-    "Als ETH-Absolvent kenne ich die universitären Anforderungen aus eigener Erfahrung und begleite regelmässig Studierende durch anspruchsvolle Module.",
-  "Gymnasium":
-    "Da du das Gymnasium besuchst, kenne ich die typischen Stolpersteine und Prüfungsanforderungen auf diesem Niveau sehr genau.",
-  "BM/BMS":
-    "Da du die BM anstrebst, habe ich eigene Lehrmittel speziell für die BM-Vorbereitung entwickelt und kenne die Prüfungsanforderungen auf diesem Niveau sehr genau.",
-  "Sekundarschule":
-    "Auf Sekundarstufe erkläre ich den Stoff geduldig und stufengerecht, damit der Übergang zur nächsten Stufe reibungslos klappt.",
-  "Primarschule":
-    "Im Primarschulbereich erkläre ich den Stoff spielerisch und stufengerecht, damit das Fundament für später stark ist.",
-};
-
 async function extractProfile(
   page: import("playwright").Page,
   displayName: string,
   subject: string
 ): Promise<StudentProfile> {
   return page.evaluate(
-    ({ name, subject }) => {
-      const main =
-        (document.querySelector("main, [role='main'], article, .container") as HTMLElement) ||
-        document.body;
-      const rawText = (main.textContent ?? "").replace(/\s+/g, " ").trim();
-      const bodyText = rawText.slice(0, 700);
-
+    ({ name, subject, title }) => {
       const langAttr = (document.documentElement.lang ?? "de").toLowerCase();
       const language: "de" | "en" | "fr" = langAttr.startsWith("en")
         ? "en"
@@ -104,79 +81,66 @@ async function extractProfile(
         ? "fr"
         : "de";
 
-      const t = rawText.toLowerCase();
-      let level = "";
-      if (t.includes("maturaprüf") || t.includes("maturavorbereitung") || t.includes("matura"))
-        level = "Maturavorbereitung";
-      else if (t.includes("eth") || t.includes("universität") || t.includes("hochschule"))
-        level = "Universität/ETH";
-      else if (t.includes("gymnasium") || t.includes("kantonsschule") || t.includes("gymi"))
-        level = "Gymnasium";
-      else if (t.includes("berufsmatura") || t.includes("bms") || t.includes("bm-") || t.includes("berufsschule"))
-        level = "BM/BMS";
-      else if (t.includes("sekundar") || t.includes("oberstufe"))
-        level = "Sekundarschule";
-      else if (t.includes("primar"))
-        level = "Primarschule";
+      // Collect text from paragraph/list elements — these contain the student's
+      // actual description, not navigation or boilerplate.
+      const BOILERPLATE = ["cookie", "agb", "datenschutz", "impressum", "sitemap", "nutzungsbedingungen"];
+      const candidates = Array.from(document.querySelectorAll("p, li"))
+        .map((el) => (el.textContent ?? "").replace(/\s+/g, " ").trim())
+        .filter((t) => t.length > 25 && t.length < 600)
+        .filter((t) => !BOILERPLATE.some((w) => t.toLowerCase().includes(w)));
 
-      return { name, language, level, subject, bodyText };
+      const bodyText = candidates.join(" ").slice(0, 500);
+      return { name, language, subject, bodyText, pageTitle: title };
     },
-    { name: displayName, subject }
+    { name: displayName, subject, title: displayName }
   );
 }
 
-// Generates one context-aware sentence for the level. Falls back to the static map.
-async function generateLevelInsert(
+// Generates a short personalised paragraph about what the student needs and how
+// Omid can help. Falls back to a generic paragraph if OpenAI is unavailable.
+async function generatePersonalParagraph(
   profile: StudentProfile,
   pushLog: (s: string) => void
 ): Promise<string> {
-  const staticInsert = profile.level ? (LEVEL_INSERTS[profile.level] ?? "") : "";
-  if (!staticInsert) return "";
+  const fallback =
+    "Gerne helfe ich dir dabei, den Stoff strukturiert zu erarbeiten und gezielt die relevanten Themen zu festigen.";
 
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return staticInsert;
+  if (!apiKey) return fallback;
 
   try {
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey });
+    const context = profile.bodyText.trim() || profile.pageTitle;
     const resp = await client.chat.completions.create({
       model: "gpt-4o-mini",
-      max_tokens: 80,
+      max_tokens: 120,
       temperature: 0.7,
       messages: [{
         role: "user",
         content:
-          `Du bist Omid, ETH-Absolvent, Mathe/Physik-Lehrer in der Schweiz, über 12 Jahre Erfahrung.\n` +
-          `Schreibe EINEN Satz (max. 30 Wörter, Deutsch) warum du für diesen Schüler besonders passend bist.\n` +
-          `Niveau: ${profile.level}\n` +
-          `Inseratstext: ${profile.bodyText.slice(0, 400)}\n\n` +
-          `Regeln: Fang nicht mit "Ich" an. Kein Gruss, kein Abschluss. Nur den einen Satz.`,
+          `Du bist Omid, Mathe/Physik-Lehrer in der Schweiz (ETH-Absolvent, über 12 Jahre Erfahrung).\n` +
+          `Schreibe einen kurzen Absatz (2–3 Sätze, max. 60 Wörter, Deutsch) für eine Kontaktanfrage.\n` +
+          `Der Absatz soll: (1) kurz wiederholen was der Schüler braucht, (2) konkret erklären wie du dabei helfen kannst.\n` +
+          `Gesuch-Titel: ${profile.pageTitle}\n` +
+          `Gesuchstext: ${context.slice(0, 400)}\n\n` +
+          `Regeln: Keine Anrede. Kein Abschluss. Nur der Absatz. Fang nicht mit "Ich" an.`,
       }],
     });
-    return resp.choices[0]?.message?.content?.trim() || staticInsert;
+    return resp.choices[0]?.message?.content?.trim() || fallback;
   } catch (err) {
-    pushLog(`⚠ OpenAI: ${err instanceof Error ? err.message : String(err)} — statischer Satz`);
-    return staticInsert;
+    pushLog(`⚠ OpenAI: ${err instanceof Error ? err.message : String(err)} — Fallback`);
+    return fallback;
   }
 }
 
-// Injects personalization into MESSAGE_TEMPLATE — greeting + one level sentence.
-// All original content (12yr experience, platform link, WhatsApp, closing) is preserved.
 async function generateMessage(
   profile: StudentProfile,
   pushLog: (s: string) => void
 ): Promise<string> {
-  let message = MESSAGE_TEMPLATE;
-
-  const levelInsert = await generateLevelInsert(profile, pushLog);
-  if (levelInsert) {
-    message = message.replace(
-      "Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.",
-      `Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.\n\n${levelInsert}`
-    );
-    pushLog(`Niveau-Satz: "${levelInsert.slice(0, 70)}..."`);
-  }
-
+  const paragraph = await generatePersonalParagraph(profile, pushLog);
+  const message = MESSAGE_TEMPLATE.replace("{{LEVEL_INSERT}}", `${paragraph}\n\n`);
+  pushLog(`Absatz: "${paragraph.slice(0, 100)}..." | ${message.length} Zeichen total`);
   return message;
 }
 
@@ -377,37 +341,25 @@ export async function runTutor24Messaging(
           const pageTitle = await page.title();
           const displayName = pageTitle.split(/[-–|]/)[0].trim() || tutor24Id;
 
-          // Extract profile data and generate message NOW while on the profile page.
-          // Must happen before navigating to the contact form — bodyText and level
-          // detection only work correctly on the job posting page, not the message form.
-          const profile = await extractProfile(page, displayName, subject);
-          result.log.push(
-            `${ts()} [${tutor24Id}] Profil: Niveau="${profile.level || "?"}", Sprache=${profile.language}`
-          );
-          const message = await generateMessage(profile, (s) => result.log.push(`${ts()} [${tutor24Id}] ${s}`));
-
-          // Debug: visible buttons on profile page
-          const debugBtns = await page.evaluate(() =>
-            Array.from(document.querySelectorAll("a, button"))
-              .filter((el) => (el as HTMLElement).offsetParent !== null)
-              .map((el) => (el as HTMLElement).innerText?.trim().slice(0, 40))
-              .filter((t) => t && t.length > 1)
-              .slice(0, 20)
-          );
-          result.log.push(`${ts()} [${tutor24Id}] ${displayName} — Buttons: ${debugBtns.map((t) => `"${t}"`).join(", ")}`);
-
-          // If tutor24 shows "Konversation öffnen", a conversation already exists —
-          // skip cleanly rather than trying to send another message.
+          // Check for existing tutor24 conversation BEFORE the expensive profile/OpenAI step.
           const existingConvo = await findVisible(
             page,
             'a:has-text("Konversation öffnen"), button:has-text("Konversation öffnen"), ' +
             'a:has-text("Gespräch öffnen"), button:has-text("Gespräch öffnen")'
           );
           if (existingConvo) {
-            result.log.push(`${ts()} [${tutor24Id}] ${displayName} — Konversation bereits vorhanden, übersprungen`);
+            result.log.push(`${ts()} [${tutor24Id}] Konversation bereits vorhanden — übersprungen`);
             result.skipped++;
             continue;
           }
+
+          // Extract profile and generate personalised message while on the profile page.
+          // Must happen before navigating to the contact form.
+          const profile = await extractProfile(page, displayName, subject);
+          result.log.push(
+            `${ts()} [${tutor24Id}] bodyText="${profile.bodyText.slice(0, 100) || "(leer)"}"`
+          );
+          const message = await generateMessage(profile, (s) => result.log.push(`${ts()} [${tutor24Id}] ${s}`));
 
           // Find visible contact button — exclude broad "message" href match to avoid
           // accidentally matching existing-conversation links.
