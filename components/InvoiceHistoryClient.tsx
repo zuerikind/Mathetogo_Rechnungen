@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
-import { formatAmount, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice";
+import { formatAmount, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice-format";
 import { formatCHF } from "@/lib/ui-format";
 
 type InvoiceRow = {

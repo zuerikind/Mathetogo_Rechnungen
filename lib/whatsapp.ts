@@ -1,4 +1,4 @@
-import { formatAmount, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice";
+import { formatAmount, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice-format";
 
 export type WhatsAppTemplateValues = {
   studentName: string;

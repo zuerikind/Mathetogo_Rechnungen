@@ -21,7 +21,7 @@ const SEARCH_BASE = `${BASE_URL}/de/students/search`;
 
 function searchUrl(subject: string, pageNum: number) {
   const q = encodeURIComponent(subject);
-  return `${SEARCH_BASE}?q%5Bsubject_cont%5D=${q}&page=${pageNum}`;
+  return `${SEARCH_BASE}?q%5Bsubject_cont%5D=${q}&q%5Bradius%5D=100&page=${pageNum}`;
 }
 
 const MESSAGE_TEMPLATE = `Hallo zusammen,
@@ -119,12 +119,27 @@ async function generatePersonalParagraph(
       messages: [{
         role: "user",
         content:
-          `Du bist Omid, Mathe/Physik-Lehrer in der Schweiz (ETH-Absolvent, über 12 Jahre Erfahrung).\n` +
-          `Schreibe einen kurzen Absatz (2–3 Sätze, max. 60 Wörter, Deutsch) für eine Kontaktanfrage.\n` +
-          `Der Absatz soll: (1) kurz wiederholen was der Schüler braucht, (2) konkret erklären wie du dabei helfen kannst.\n` +
-          `Gesuch-Titel: ${profile.pageTitle}\n` +
-          `Gesuchstext: ${context.slice(0, 400)}\n\n` +
-          `Regeln: Keine Anrede. Kein Abschluss. Nur der Absatz. Fang nicht mit "Ich" an.`,
+          `Du bist Omid, Mathematik- und Physik-Lehrer in der Schweiz. Du unterrichtest NUR Mathematik und Physik.\n\n` +
+          `Gesuch: ${profile.pageTitle} | ${context.slice(0, 400)}\n\n` +
+          `Schreibe 1–2 Sätze (max. 40 Wörter, Deutsch) als persönlichen Einstieg in eine Kontaktanfrage.\n\n` +
+          `Die Nachricht enthält danach bereits folgende Informationen — diese darfst du NICHT nochmals erwähnen:\n` +
+          `- ETH-Studium\n` +
+          `- 12 Jahre Unterrichtserfahrung\n` +
+          `- 30+ aktive Schüler\n` +
+          `- Eigene Lehrmittel für Gymi- und BM-Vorbereitung\n` +
+          `- Lernplattform Mathetogo\n` +
+          `- Online-Unterricht via Google Meet\n` +
+          `- Unterricht auf Deutsch und Englisch\n\n` +
+          `Was du schreiben sollst:\n` +
+          `Prüfe ob das Gesuch ein konkretes Ziel erwähnt (Gymi, Matura, BM, Passerelle, Aufnahmeprüfung, Uni etc.). Falls ja, schreibe einen Satz der zeigt dass du das gesehen hast und warum du dafür der richtige bist — ohne etwas aus der obigen Liste zu wiederholen. Falls kein konkretes Ziel erkennbar ist, schreibe einen direkten, persönlichen Satz warum du gerne helfen würdest.\n\n` +
+          `Regeln:\n` +
+          `- Nie die Situation des Schülers beschreiben oder zusammenfassen.\n` +
+          `- Nicht mit "Ich" anfangen.\n` +
+          `- Keine Anrede, kein Abschluss.\n` +
+          `- Keine Ortsangaben, kein "online" oder "vor Ort".\n` +
+          `- Keine anderen Fächer als Mathematik und Physik.\n` +
+          `- Keine langen Bindestriche (— oder –).\n` +
+          `- Professionell, direkt, menschlich — kein Marketingdeutsch.`,
       }],
     });
     return resp.choices[0]?.message?.content?.trim() || fallback;
@@ -134,13 +149,50 @@ async function generatePersonalParagraph(
   }
 }
 
+async function reviewMessage(
+  fullMessage: string,
+  pushLog: (s: string) => void
+): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return fullMessage;
+
+  try {
+    const { default: OpenAI } = await import("openai");
+    const client = new OpenAI({ apiKey });
+    const resp = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 1200,
+      temperature: 0.3,
+      messages: [{
+        role: "user",
+        content:
+          `Du bist Lektor für Omid, einen Mathematik- und Physik-Lehrer in der Schweiz.\n` +
+          `Prüfe die folgende Nachricht und korrigiere sie nur dort wo nötig, sodass sie:\n` +
+          `- Als Ganzes natürlich, professionell und persönlich klingt\n` +
+          `- Keinen abrupten Übergang zwischen dem persönlichen Einstieg und dem Rest hat\n` +
+          `- Nirgends wie KI-Text oder Marketingsprache klingt\n` +
+          `- Keine langen Bindestriche (— oder –) enthält\n` +
+          `- Nur Mathematik und Physik erwähnt, nie andere Fächer\n\n` +
+          `Gib NUR die korrigierte Nachricht zurück, ohne Kommentar, ohne Erklärung.\n\n` +
+          `Nachricht:\n${fullMessage}`,
+      }],
+    });
+    return resp.choices[0]?.message?.content?.trim() || fullMessage;
+  } catch (err) {
+    pushLog(`⚠ Review-Schritt: ${err instanceof Error ? err.message : String(err)} — Original behalten`);
+    return fullMessage;
+  }
+}
+
 async function generateMessage(
   profile: StudentProfile,
   pushLog: (s: string) => void
 ): Promise<string> {
   const paragraph = await generatePersonalParagraph(profile, pushLog);
-  const message = MESSAGE_TEMPLATE.replace("{{LEVEL_INSERT}}", `${paragraph}\n\n`);
-  pushLog(`Absatz: "${paragraph.slice(0, 100)}..." | ${message.length} Zeichen total`);
+  const assembled = MESSAGE_TEMPLATE.replace("{{LEVEL_INSERT}}", `${paragraph}\n\n`);
+  pushLog(`Absatz: "${paragraph.slice(0, 100)}..." | ${assembled.length} Zeichen — Review läuft...`);
+  const message = await reviewMessage(assembled, pushLog);
+  pushLog(`Review abgeschlossen | ${message.length} Zeichen total`);
   return message;
 }
 
@@ -269,6 +321,22 @@ export async function runTutor24Messaging(
       if (!formFilled) {
         result.log.push(`${ts()} ⚠ Kein Suchfeld gefunden — Fallback auf URL-Parameter`);
       }
+
+      // Set radius slider to maximum (100km)
+      const radiusSet = await page.evaluate(() => {
+        const SLIDER_SEL = [
+          'input[type="range"][name*="radius"]', 'input[type="range"][id*="radius"]',
+          'input[type="range"][class*="radius"]', 'input[type="range"]',
+        ].join(", ");
+        const slider = document.querySelector(SLIDER_SEL) as HTMLInputElement | null;
+        if (!slider) return false;
+        const max = slider.max || "100";
+        slider.value = max;
+        slider.dispatchEvent(new Event("input", { bubbles: true }));
+        slider.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      });
+      result.log.push(radiusSet ? `${ts()} Radius-Slider auf Maximum gesetzt` : `${ts()} Kein Radius-Slider gefunden`);
 
       // Submit form and capture the URL tutor24 redirects to
       const submitBtn = await findVisible(page, 'button[type="submit"], input[type="submit"], button:has-text("Suchen"), button:has-text("Search")');

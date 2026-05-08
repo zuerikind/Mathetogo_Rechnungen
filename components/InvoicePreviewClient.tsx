@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
-import { formatAmount, formatDate, formatDuration, getPeriodLabel } from "@/lib/invoice";
+import { formatAmount, formatDate, formatDuration, getPeriodLabel } from "@/lib/invoice-format";
 import {
   buildWhatsAppUrl,
   buildWhatsAppValues,
