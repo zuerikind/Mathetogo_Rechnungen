@@ -12,16 +12,20 @@ export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const contacts = await prisma.tutor24Contact.findMany({
-    orderBy: { messagedAt: "desc" },
-    take: 200,
-  });
+  const [contacts, contactTotal] = await Promise.all([
+    prisma.tutor24Contact.findMany({
+      orderBy: { messagedAt: "desc" },
+      take: 200,
+    }),
+    prisma.tutor24Contact.count(),
+  ]);
 
   return NextResponse.json({
     running: jobState.running,
     startedAt: jobState.startedAt,
     result: jobState.result,
     contacts,
+    contactTotal,
   });
 }
 

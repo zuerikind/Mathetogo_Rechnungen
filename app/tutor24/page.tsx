@@ -27,6 +27,7 @@ type StatusResponse = {
   startedAt: string | null;
   result: JobResult | null;
   contacts: Contact[];
+  contactTotal?: number;
 };
 
 const MESSAGE_PREVIEW = `Hallo zusammen,
@@ -310,7 +311,14 @@ export default function Tutor24Page() {
           <div className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
             <h2 className="mb-3 font-semibold text-gray-900">
               Bereits kontaktiert —{" "}
-              <span className="text-[#4A7FC1]">{status.contacts.length} Schüler</span>
+              <span className="text-[#4A7FC1]">
+                {status.contactTotal ?? status.contacts.length} Schüler
+              </span>
+              {(status.contactTotal ?? status.contacts.length) > status.contacts.length && (
+                <span className="ml-1 text-sm font-normal text-gray-400">
+                  (neueste {status.contacts.length} in der Liste)
+                </span>
+              )}
             </h2>
             <div className="max-h-80 overflow-y-auto">
               <table className="w-full text-sm">
