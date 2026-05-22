@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import {
+  monthAdditionalEarningsTotal,
+  ytdAdditionalEarningsTotal,
+  type AdditionalEarningForIncome,
+} from "@/lib/additional-earnings";
 import { monthDanceEarningsTotal, ytdDanceEarningsTotal, type DanceEarningForIncome } from "@/lib/dance-earnings";
 import { getEffectiveManualBaseline } from "@/lib/manual-revenue";
 import { monthMiscEarningsTotal, ytdMiscEarningsTotal, type MiscEarningForIncome } from "@/lib/misc-earnings";
@@ -55,7 +60,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [tutorRaw, subscriptionRows, miscRows, danceRows] = await Promise.all([
+    const [tutorRaw, subscriptionRows, miscRows, danceRows, additionalRows] = await Promise.all([
       prisma.$queryRaw<
         {
           manualQ1Year: number | null;
@@ -80,6 +85,15 @@ export async function GET(req: NextRequest) {
         select: { year: true, month: true, amountCHF: true, source: true },
       }),
       prisma.danceEarning
+        .findMany({
+          where: { year },
+          select: { year: true, month: true, amountCHF: true },
+        })
+        .catch((err) => {
+          if (isMissingTableError(err)) return [];
+          throw err;
+        }),
+      prisma.additionalEarning
         .findMany({
           where: { year },
           select: { year: true, month: true, amountCHF: true },
@@ -133,6 +147,13 @@ export async function GET(req: NextRequest) {
       month: r.month,
       amountCHF: r.amountCHF,
     }));
+    const additionalEarnings: AdditionalEarningForIncome[] = additionalRows.map((r) => ({
+      id: "",
+      year: r.year,
+      month: r.month,
+      name: "",
+      amountCHF: r.amountCHF,
+    }));
 
     const sessionMonthIncome = baselineMonthAmount ?? (monthAgg._sum.amountCHF ?? 0);
     const sessionYtdIncome = baselineYearTotal + (nonBaselineYearAgg._sum.amountCHF ?? 0);
@@ -152,12 +173,15 @@ export async function GET(req: NextRequest) {
     });
     const monthDance = monthDanceEarningsTotal(danceEarnings, year, month);
     const ytdDance = ytdDanceEarningsTotal(danceEarnings, year);
+    const monthAdditional = monthAdditionalEarningsTotal(additionalEarnings, year, month);
+    const ytdAdditional = ytdAdditionalEarningsTotal(additionalEarnings, year);
 
     const value: IncomeSummaryPayload = {
       year,
       month,
-      monthIncome: sessionMonthIncome + monthSubscription + monthMisc + monthDance,
-      ytdIncome: sessionYtdIncome + ytdSubscription + ytdMisc + ytdDance,
+      monthIncome:
+        sessionMonthIncome + monthSubscription + monthMisc + monthDance + monthAdditional,
+      ytdIncome: sessionYtdIncome + ytdSubscription + ytdMisc + ytdDance + ytdAdditional,
     };
     summaryCache.set(key, { at: Date.now(), value });
     return NextResponse.json(value);

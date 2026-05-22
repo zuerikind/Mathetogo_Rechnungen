@@ -22,7 +22,9 @@ import {
 } from "@/lib/income-summary";
 import type { DanceEarningForIncome } from "@/lib/dance-earnings";
 import { monthDanceEarningsTotal, ytdDanceEarningsTotal } from "@/lib/dance-earnings";
+import type { AdditionalEarningForIncome } from "@/lib/additional-earnings";
 import type { MiscEarningForIncome } from "@/lib/misc-earnings";
+import { AdditionalEarningsSection } from "@/components/AdditionalEarningsSection";
 import {
   subscriptionProrationByStudentForMonth,
   type SubscriptionBillingInput,
@@ -67,8 +69,11 @@ function medianPerHour(rows: SessionWithStudent[]): number {
 }
 
 export default function DashboardPage() {
-  const { monthIncome: globalMonthIncome, ytdIncome: globalYtdIncome, loading: globalIncomeLoading } =
-    useGlobalIncomeSummary();
+  const {
+    monthIncome: globalMonthIncome,
+    ytdIncome: globalYtdIncome,
+    loading: globalIncomeLoading,
+  } = useGlobalIncomeSummary();
   const now = getCurrentMonthYear();
 
   // ── Diagram / KPI filter (independent) ──────────────────────────────
@@ -84,6 +89,7 @@ export default function DashboardPage() {
   const [subscriptions, setSubscriptions] = useState<SubscriptionAnalyticsRow[]>([]);
   const [miscEarnings, setMiscEarnings] = useState<MiscEarningForIncome[]>([]);
   const [danceEarnings, setDanceEarnings] = useState<DanceEarningForIncome[]>([]);
+  const [additionalEarnings, setAdditionalEarnings] = useState<AdditionalEarningForIncome[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -97,11 +103,12 @@ export default function DashboardPage() {
     try {
       if (isInitial) setLoading(true); else setRefreshing(true);
       setError("");
-      const [res, subRes, settingsRes, danceRes] = await Promise.all([
+      const [res, subRes, settingsRes, danceRes, additionalRes] = await Promise.all([
         fetch(`/api/sessions?year=${year}`),
         fetch(`/api/subscriptions/analytics?year=${year}`),
         fetch(`/api/settings?miscYear=${year}`),
         fetch(`/api/dance-earnings?year=${year}`),
+        fetch(`/api/additional-earnings?year=${year}`),
       ]);
       if (!res.ok) throw new Error();
       setSessions((await res.json()) as SessionWithStudent[]);
@@ -123,6 +130,12 @@ export default function DashboardPage() {
       } else {
         setDanceEarnings([]);
       }
+      if (additionalRes.ok) {
+        const additionalBody = (await additionalRes.json()) as { rows?: AdditionalEarningForIncome[] };
+        setAdditionalEarnings(Array.isArray(additionalBody.rows) ? additionalBody.rows : []);
+      } else {
+        setAdditionalEarnings([]);
+      }
     } catch {
       setError("Fehler beim Laden der Daten.");
     } finally {
@@ -137,7 +150,10 @@ export default function DashboardPage() {
     isInitialLoad.current = false;
     void loadSessions(initial);
   }, [loadSessions]);
-  useEffect(() => { setSelectedMonth(null); setSelectedStudent(null); }, [year]);
+  useEffect(() => {
+    setSelectedMonth(null);
+    setSelectedStudent(null);
+  }, [year, month]);
 
   const subscriptionBilling = useMemo<SubscriptionBillingInput[]>(
     () =>
@@ -177,17 +193,58 @@ export default function DashboardPage() {
   const prevMonthSessions = useMemo(() => sessions.filter((s) => s.month === prevMonth), [sessions, prevMonth]);
   const currentStats = useMemo(() => {
     const base = calcStats(currentMonthSessions);
-    const income = computeMonthIncome(currentMonthSessions, subscriptionBilling, miscEarnings, danceEarnings, year, month);
+    const income = computeMonthIncome(
+      currentMonthSessions,
+      subscriptionBilling,
+      miscEarnings,
+      danceEarnings,
+      additionalEarnings,
+      year,
+      month
+    );
     return { ...base, income };
-  }, [currentMonthSessions, subscriptionBilling, miscEarnings, danceEarnings, year, month]);
+  }, [
+    currentMonthSessions,
+    subscriptionBilling,
+    miscEarnings,
+    danceEarnings,
+    additionalEarnings,
+    year,
+    month,
+  ]);
   const prevStats = useMemo(() => {
     const base = calcStats(prevMonthSessions);
-    const income = computeMonthIncome(prevMonthSessions, subscriptionBilling, miscEarnings, danceEarnings, year, prevMonth);
+    const income = computeMonthIncome(
+      prevMonthSessions,
+      subscriptionBilling,
+      miscEarnings,
+      danceEarnings,
+      additionalEarnings,
+      year,
+      prevMonth
+    );
     return { ...base, income };
-  }, [prevMonthSessions, subscriptionBilling, miscEarnings, danceEarnings, year, prevMonth]);
+  }, [
+    prevMonthSessions,
+    subscriptionBilling,
+    miscEarnings,
+    danceEarnings,
+    additionalEarnings,
+    year,
+    prevMonth,
+  ]);
   const ytdIncome = useMemo(
-    () => computeYtdIncome(sessions, subscriptionBilling, miscEarnings, danceEarnings, year, month),
-    [sessions, subscriptionBilling, miscEarnings, danceEarnings, year, month]
+    () =>
+      computeYtdIncome(
+        sessions,
+        subscriptionBilling,
+        miscEarnings,
+        danceEarnings,
+        additionalEarnings,
+        year,
+        month
+      ),
+    [sessions, subscriptionBilling, miscEarnings, danceEarnings, additionalEarnings, year, month]
   );
   const monthDanceIncome = useMemo(
     () => monthDanceEarningsTotal(danceEarnings, year, month),
@@ -205,17 +262,32 @@ export default function DashboardPage() {
       return {
         month: m.value,
         label: m.label.slice(0, 3),
-        income: computeMonthIncome(sessions, subscriptionBilling, miscEarnings, danceEarnings, year, m.value),
+        income: computeMonthIncome(
+          sessions,
+          subscriptionBilling,
+          miscEarnings,
+          danceEarnings,
+          additionalEarnings,
+          year,
+          m.value
+        ),
         danceIncome: monthDanceEarningsTotal(danceEarnings, year, m.value),
         teachingIncome:
-          computeMonthIncome(sessions, subscriptionBilling, miscEarnings, danceEarnings, year, m.value) -
-          monthDanceEarningsTotal(danceEarnings, year, m.value),
+          computeMonthIncome(
+            sessions,
+            subscriptionBilling,
+            miscEarnings,
+            danceEarnings,
+            additionalEarnings,
+            year,
+            m.value
+          ) - monthDanceEarningsTotal(danceEarnings, year, m.value),
         sessions: realMs.length,
         hours: realMs.reduce((s, r) => s + r.durationMin, 0) / 60,
         medianPerHour: medianPerHour(realMs),
       };
     }),
-  [sessions, subscriptionBilling, miscEarnings, danceEarnings, year]);
+  [sessions, subscriptionBilling, miscEarnings, danceEarnings, additionalEarnings, year]);
 
   const breakdownSessions = useMemo(
     () =>
@@ -414,6 +486,12 @@ export default function DashboardPage() {
                 />
               </div>
             </section>
+
+            <AdditionalEarningsSection
+              year={year}
+              month={month}
+              rows={additionalEarnings}
+            />
 
             {/* Charts — year + month filters together */}
             <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">

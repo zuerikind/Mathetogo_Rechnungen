@@ -168,3 +168,15 @@ model DanceEarning {
 
   @@index([year, month, date])
 }
+
+model AdditionalEarning {
+  id        String   @id @default(cuid())
+  year      Int
+  month     Int
+  name      String
+  amountCHF Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([year, month])
+}

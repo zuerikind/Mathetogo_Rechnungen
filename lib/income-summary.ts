@@ -1,3 +1,8 @@
+import {
+  monthAdditionalEarningsTotal,
+  ytdAdditionalEarningsTotal,
+  type AdditionalEarningForIncome,
+} from "@/lib/additional-earnings";
 import { subscriptionProrationForMonth, type SubscriptionBillingInput } from "@/lib/subscription-billing";
 import { monthDanceEarningsTotal, ytdDanceEarningsTotal, type DanceEarningForIncome } from "@/lib/dance-earnings";
 import {
@@ -20,6 +25,7 @@ export function computeMonthIncome(
   subscriptions: SubscriptionBillingInput[],
   miscEarnings: MiscEarningForIncome[],
   danceEarnings: DanceEarningForIncome[],
+  additionalEarnings: AdditionalEarningForIncome[],
   year: number,
   month: number
 ): number {
@@ -35,7 +41,8 @@ export function computeMonthIncome(
     includeQ1Adjustment: !hasManualOverride,
   });
   const danceIncome = monthDanceEarningsTotal(danceEarnings, year, month);
-  return sessionIncome + subIncome + miscIncome + danceIncome;
+  const additionalIncome = monthAdditionalEarningsTotal(additionalEarnings, year, month);
+  return sessionIncome + subIncome + miscIncome + danceIncome + additionalIncome;
 }
 
 export function computeYtdIncome(
@@ -43,6 +50,7 @@ export function computeYtdIncome(
   subscriptions: SubscriptionBillingInput[],
   miscEarnings: MiscEarningForIncome[],
   danceEarnings: DanceEarningForIncome[],
+  additionalEarnings: AdditionalEarningForIncome[],
   year: number,
   throughMonth: number
 ): number {
@@ -65,5 +73,6 @@ export function computeYtdIncome(
     excludeQ1AdjustmentMonths: manualMonths,
   });
   const danceIncome = ytdDanceEarningsTotal(danceEarnings, year);
-  return sessionIncome + subscriptionIncome + miscIncome + danceIncome;
+  const additionalIncome = ytdAdditionalEarningsTotal(additionalEarnings, year);
+  return sessionIncome + subscriptionIncome + miscIncome + danceIncome + additionalIncome;
 }

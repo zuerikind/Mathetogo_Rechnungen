@@ -67,93 +67,286 @@ async function jsClick(el: import("playwright").ElementHandle) {
 
 // ── AI message personalisation ─────────────────────────────────────────────
 
+type ExtractedProfile = Omit<StudentProfile, "language"> & { htmlLang: StudentProfile["language"] };
+
 async function extractProfile(
   page: import("playwright").Page,
   displayName: string,
-  subject: string
-): Promise<StudentProfile> {
+  subject: string,
+  listingTitle: string
+): Promise<ExtractedProfile> {
   return page.evaluate(
     ({ name, subject, title }) => {
       const langAttr = (document.documentElement.lang ?? "de").toLowerCase();
-      const language: "de" | "en" | "fr" = langAttr.startsWith("en")
+      const htmlLang: "de" | "en" | "fr" = langAttr.startsWith("en")
         ? "en"
         : langAttr.startsWith("fr")
         ? "fr"
         : "de";
 
-      // Collect text from paragraph/list elements — these contain the student's
-      // actual description, not navigation or boilerplate.
-      const BOILERPLATE = ["cookie", "agb", "datenschutz", "impressum", "sitemap", "nutzungsbedingungen"];
-      const candidates = Array.from(document.querySelectorAll("p, li"))
+      const SKIP = [
+        "cookie",
+        "agb",
+        "datenschutz",
+        "impressum",
+        "sitemap",
+        "nutzungsbedingungen",
+        "je schneller sie sich bewerben",
+        "ihre chancen auf den job",
+        "umso höher sind ihre chancen",
+        "bewerben sie sich",
+        "tutor24.ch",
+        "ähnliche gesuche",
+        "weitere gesuche",
+      ];
+      const isSkipped = (t: string) => {
+        const low = t.toLowerCase();
+        return SKIP.some((w) => low.includes(w));
+      };
+
+      const candidates = Array.from(document.querySelectorAll("p, li, .description, [class*='description']"))
         .map((el) => (el.textContent ?? "").replace(/\s+/g, " ").trim())
         .filter((t) => t.length > 25 && t.length < 600)
-        .filter((t) => !BOILERPLATE.some((w) => t.toLowerCase().includes(w)));
+        .filter((t) => !isSkipped(t));
 
       const bodyText = candidates.join(" ").slice(0, 500);
-      return { name, language, subject, bodyText, pageTitle: title };
+      return { name, htmlLang, subject, bodyText, pageTitle: title };
     },
-    { name: displayName, subject, title: displayName }
+    { name: displayName, subject, title: listingTitle }
   );
 }
 
-// Generates a short personalised paragraph about what the student needs and how
-// Omid can help. Falls back to a generic paragraph if OpenAI is unavailable.
-async function generatePersonalParagraph(
-  profile: StudentProfile,
-  pushLog: (s: string) => void
-): Promise<string> {
-  const fallback =
-    "Gerne helfe ich dir dabei, den Stoff strukturiert zu erarbeiten und gezielt die relevanten Themen zu festigen.";
+const FALLBACK_PARAGRAPH =
+  "Gerne helfe ich dir dabei, den Stoff strukturiert zu erarbeiten und gezielt die relevanten Themen zu festigen.";
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return fallback;
+const LANG_LABEL: Record<StudentProfile["language"], string> = {
+  de: "Deutsch",
+  en: "English",
+  fr: "French",
+};
 
+/** Only /en/ and /fr/ paths imply listing language — /de/ is the default site locale. */
+function localeFromPageUrl(pageUrl: string): StudentProfile["language"] | null {
+  const m = pageUrl.match(/tutor24\.ch\/(en|fr)(?:\/|$)/i);
+  if (!m) return null;
+  return m[1].toLowerCase() as StudentProfile["language"];
+}
+
+const SITE_BOILERPLATE_RE =
+  /je schneller sie sich bewerben|ihre chancen auf den job|umso höher sind ihre chancen/i;
+
+function isSiteBoilerplate(text: string): boolean {
+  return SITE_BOILERPLATE_RE.test(text);
+}
+
+function scoreTextLanguage(text: string): { de: number; en: number; fr: number } {
+  const s = text.toLowerCase();
+  const count = (re: RegExp) => (s.match(re) ?? []).length;
+
+  const en =
+    count(
+      /\b(the|and|for|with|you|your|student|tutor|math|mathematics|physics|wanted|needed|help|lessons|hour|school|primary|secondary|university|looking|searching|tutoring|weekly|online|experience)\b/g
+    ) +
+    count(/\b(tutor wanted|wanted for|need a tutor|math tutor|looking for|searching for|hourly rate)\b/g);
+
+  const de =
+    count(
+      /\b(der|die|das|und|ich|wir|suche|gesucht|schüler|schülerin|nachhilfe|prüfung|stunde|gymnasium|mathematik|physik|lehrer|lehrerin|auftrag|anfrage)\b/g
+    ) +
+    count(/\b(nachhilfelehrer|gesucht in|ich suche|wir suchen|bitte melden)\b/g);
+
+  const fr =
+    count(/\b(le|la|les|des|je|nous|cherche|recherche|élève|professeur|mathématiques|physique|cours|besoin|soutien)\b/g) +
+    count(/\b(je recherche|cherche un|recherche un prof)\b/g);
+
+  return { de, en, fr };
+}
+
+function pickLanguage(scores: { de: number; en: number; fr: number }): StudentProfile["language"] | null {
+  const { de, en, fr } = scores;
+  const max = Math.max(de, en, fr);
+  if (max < 2) return null;
+  if (en === max && en >= de && en >= fr) return "en";
+  if (fr === max && fr > de && fr >= en) return "fr";
+  if (de === max) return "de";
+  return null;
+}
+
+function detectLanguageFromText(listingTitle: string, bodyText: string): StudentProfile["language"] | null {
+  const title = listingTitle.trim();
+  const body = isSiteBoilerplate(bodyText) ? "" : bodyText.trim();
+
+  const fromTitle = title ? pickLanguage(scoreTextLanguage(title)) : null;
+  if (fromTitle) return fromTitle;
+
+  const combined = `${title} ${body}`.trim();
+  if (!combined) return null;
+  return pickLanguage(scoreTextLanguage(combined));
+}
+
+function resolveTargetLanguage(
+  pageUrl: string,
+  htmlLang: StudentProfile["language"],
+  listingTitle: string,
+  bodyText: string
+): { language: StudentProfile["language"]; source: string } {
+  const fromText = detectLanguageFromText(listingTitle, bodyText);
+  if (fromText) return { language: fromText, source: "Titel/Text" };
+
+  const fromUrl = localeFromPageUrl(pageUrl);
+  if (fromUrl) return { language: fromUrl, source: "URL" };
+
+  return { language: htmlLang, source: "HTML" };
+}
+
+function profileContextForAi(profile: StudentProfile): string {
+  const body = profile.bodyText.trim();
+  const title = profile.pageTitle.trim();
+  if (!body || isSiteBoilerplate(body)) return title;
+  return `${title}\n${body}`;
+}
+
+const GERMAN_MESSAGE_MARKERS = [
+  /^Hallo zusammen/m,
+  /gerne unterstütze ich dich in Mathematik/i,
+  /Liebi Grüess/i,
+  /Für meinen Unterricht habe ich eigene Lehrmittel/i,
+];
+
+function stillLooksGerman(message: string): boolean {
+  return GERMAN_MESSAGE_MARKERS.some((re) => re.test(message));
+}
+
+function parseMessageJson(raw: string): string | null {
   try {
-    const { default: OpenAI } = await import("openai");
-    const client = new OpenAI({ apiKey });
-    const context = profile.bodyText.trim() || profile.pageTitle;
-    const resp = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_tokens: 120,
-      temperature: 0.7,
-      messages: [
-        {
-          role: "system",
-          content:
-            `Du bist Omid, Mathematik- und Physik-Lehrer in der Schweiz. Du unterrichtest ausschliesslich Mathematik und Physik, keine anderen Fächer.\n` +
-            `Du schreibst persönliche Einstiegssätze für Kontaktanfragen an potenzielle Schüler auf tutor24.ch.\n` +
-            `Stil: direkt, professionell, menschlich. Kein Marketingdeutsch, keine emotionalen Floskeln, keine langen Bindestriche (— oder –).`,
-        },
-        {
-          role: "user",
-          content:
-            `Gesuch: "${profile.pageTitle}"\n` +
-            `Beschreibung: ${context.slice(0, 400)}\n\n` +
-            `Schreibe 1–2 Sätze (max. 40 Wörter) als Einstieg in meine Kontaktanfrage.\n\n` +
-            `WENN das Gesuch ein konkretes Prüfungs- oder Stufenziel erwähnt (Gymi, Matura, BM, Passerelle, Aufnahmeprüfung, Uni, usw.):\n` +
-            `→ Nenne dieses Ziel und erkläre in einem Satz konkret warum ich dafür besonders geeignet bin. Beispiel: "Gerade die Gymivorbereitung ist mein Spezialgebiet, und ich habe schon viele Schüler erfolgreich durch diese Prüfung begleitet."\n\n` +
-            `WENN kein solches Ziel erkennbar ist:\n` +
-            `→ Schreibe einen Satz der zeigt, dass ich den spezifischen Bedarf gesehen habe, und erkläre kurz wie ich gezielt helfen kann. Beispiel: "Genau solche Lücken in den Grundlagen lassen sich mit dem richtigen Ansatz schnell und nachhaltig schliessen."\n\n` +
-            `Nicht erwähnen (steht bereits in der Nachricht): ETH-Studium, 12 Jahre Erfahrung, 30+ Schüler, eigene Lehrmittel, Mathetogo, Google Meet, Deutsch/Englisch.\n` +
-            `Nicht: Situation des Schülers zusammenfassen, mit "Ich" anfangen, Ortsangaben, andere Fächer.`,
-        },
-      ],
-    });
-    return resp.choices[0]?.message?.content?.trim() || fallback;
-  } catch (err) {
-    pushLog(`⚠ OpenAI: ${err instanceof Error ? err.message : String(err)} — Fallback`);
-    return fallback;
+    const parsed = JSON.parse(raw) as { message?: unknown };
+    return typeof parsed.message === "string" ? parsed.message.trim() : null;
+  } catch {
+    const block = raw.match(/\{[\s\S]*\}/);
+    if (!block) return null;
+    try {
+      const parsed = JSON.parse(block[0]) as { message?: unknown };
+      return typeof parsed.message === "string" ? parsed.message.trim() : null;
+    } catch {
+      return null;
+    }
   }
 }
 
+function buildFallbackMessage(): string {
+  return MESSAGE_TEMPLATE.replace("{{LEVEL_INSERT}}", `${FALLBACK_PARAGRAPH}\n\n`);
+}
+
+async function translateFullMessage(
+  client: import("openai").default,
+  message: string,
+  targetLang: "en" | "fr"
+): Promise<string> {
+  const targetLabel = LANG_LABEL[targetLang];
+  const resp = await client.chat.completions.create({
+    model: "gpt-4o-mini",
+    max_tokens: 2000,
+    temperature: 0.3,
+    messages: [
+      {
+        role: "system",
+        content:
+          `You translate tutoring outreach messages into ${targetLabel}. ` +
+          `Preserve meaning, structure, facts, URLs, phone number 078 693 68 98, and tone. ` +
+          `Output only the translated message — no preamble.`,
+      },
+      { role: "user", content: message },
+    ],
+  });
+  return resp.choices[0]?.message?.content?.trim() ?? message;
+}
+
+// Personalised intro + full message (code picks language; model writes/translates in one call).
 async function generateMessage(
   profile: StudentProfile,
   pushLog: (s: string) => void
 ): Promise<string> {
-  const paragraph = await generatePersonalParagraph(profile, pushLog);
-  const message = MESSAGE_TEMPLATE.replace("{{LEVEL_INSERT}}", `${paragraph}\n\n`);
-  pushLog(`Absatz: "${paragraph.slice(0, 100)}..." | ${message.length} Zeichen total`);
-  return message;
+  const targetLang = profile.language;
+  let message = buildFallbackMessage();
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    if (targetLang !== "de") {
+      pushLog("⚠ Kein OPENAI_API_KEY — Fallback bleibt Deutsch");
+    }
+    return message;
+  }
+
+  try {
+    const { default: OpenAI } = await import("openai");
+    const client = new OpenAI({ apiKey });
+    const context = profileContextForAi(profile);
+    const targetLabel = LANG_LABEL[targetLang];
+    const languageRule =
+      targetLang === "de"
+        ? `Write the entire "message" in German (Swiss standard).`
+        : `The listing is in ${targetLabel}. Write the entire "message" in ${targetLabel} only — do not leave any German sentences. ` +
+          `The template below is German reference content: translate every part into ${targetLabel}, including greeting and sign-off.`;
+
+    const resp = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 2000,
+      temperature: 0.5,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            `You are Omid, a math and physics tutor in Switzerland (math and physics only).\n` +
+            `You write complete tutor24.ch outreach messages.\n` +
+            `Style: direct, professional, human. No marketing fluff, no em dashes.\n` +
+            `TARGET LANGUAGE: ${targetLabel} (${targetLang}). ${languageRule}\n` +
+            `Respond with JSON only: {"message":"<full outreach text>"}`,
+        },
+        {
+          role: "user",
+          content:
+            `Listing title: "${profile.pageTitle}"\n` +
+            `Description: ${context.slice(0, 400)}\n\n` +
+            `Step 1 — personalised opening (1–2 sentences, max 40 words) for {{LEVEL_INSERT}}:\n` +
+            `IF the listing mentions a concrete exam/school goal (Gymi, Matura, BM, Passerelle, university entrance, etc.):\n` +
+            `→ Name that goal and one sentence on why Omid is a strong fit.\n` +
+            `ELSE:\n` +
+            `→ One sentence showing you read their need and how Omid can help specifically.\n` +
+            `Do NOT mention: ETH, 12 years experience, 30+ students, own materials, Mathetogo platform, Google Meet, languages offered.\n` +
+            `Do NOT: recap their situation, start with "I", mention location, other subjects.\n\n` +
+            `Step 2 — insert opening into template, output full message in ${targetLabel}:\n` +
+            MESSAGE_TEMPLATE,
+        },
+      ],
+    });
+
+    const raw = resp.choices[0]?.message?.content?.trim() ?? "";
+    const parsed = parseMessageJson(raw);
+    if (parsed) message = parsed;
+    else if (raw && !raw.startsWith("{")) message = raw;
+    else pushLog("⚠ JSON-Antwort ungültig — Fallback");
+
+    if (targetLang !== "de" && stillLooksGerman(message)) {
+      pushLog(`⚠ Nachricht noch auf Deutsch — Übersetzung nach ${targetLabel}`);
+      message = await translateFullMessage(client, message, targetLang);
+    }
+
+    pushLog(`Zielsprache: ${targetLabel} | "${message.slice(0, 80)}..." | ${message.length} Zeichen`);
+    return message;
+  } catch (err) {
+    pushLog(`⚠ OpenAI: ${err instanceof Error ? err.message : String(err)} — Fallback`);
+    if (targetLang !== "de") {
+      try {
+        const { default: OpenAI } = await import("openai");
+        const client = new OpenAI({ apiKey });
+        return await translateFullMessage(client, message, targetLang);
+      } catch {
+        /* keep German fallback */
+      }
+    }
+    return message;
+  }
 }
 
 // In-memory job state (this process only — fine for single-user local app)
@@ -366,8 +559,9 @@ export async function runTutor24Messaging(
           await page.goto(href, { waitUntil: "load", timeout: 20000 });
           await sleep(800);
 
-          const pageTitle = await page.title();
-          const displayName = pageTitle.split(/[-–|]/)[0].trim() || tutor24Id;
+          const listingTitle = await page.title();
+          const displayName = listingTitle.split(/[-–|]/)[0].trim() || tutor24Id;
+          const pageUrl = page.url();
 
           // Check for existing tutor24 conversation BEFORE the expensive profile/OpenAI step.
           const existingConvo = await findVisible(
@@ -383,9 +577,23 @@ export async function runTutor24Messaging(
 
           // Extract profile and generate personalised message while on the profile page.
           // Must happen before navigating to the contact form.
-          const profile = await extractProfile(page, displayName, subject);
+          const extracted = await extractProfile(page, displayName, subject, listingTitle);
+          const { language, source } = resolveTargetLanguage(
+            pageUrl,
+            extracted.htmlLang,
+            extracted.pageTitle,
+            extracted.bodyText
+          );
+          const profile: StudentProfile = {
+            name: extracted.name,
+            subject: extracted.subject,
+            bodyText: extracted.bodyText,
+            pageTitle: extracted.pageTitle,
+            language,
+          };
           result.log.push(
-            `${ts()} [${tutor24Id}] bodyText="${profile.bodyText.slice(0, 100) || "(leer)"}"`
+            `${ts()} [${tutor24Id}] Sprache=${language} (${source}, URL=${pageUrl.match(/\/(de|en|fr)\//)?.[1] ?? "?"}) ` +
+              `bodyText="${profile.bodyText.slice(0, 80) || "(leer)"}"`
           );
           const message = await generateMessage(profile, (s) => result.log.push(`${ts()} [${tutor24Id}] ${s}`));
 

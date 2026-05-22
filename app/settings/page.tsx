@@ -76,12 +76,24 @@ export default function SettingsPage() {
   const [miscLabel, setMiscLabel] = useState("");
   const [miscEditId, setMiscEditId] = useState<string | null>(null);
   const [miscSaving, setMiscSaving] = useState(false);
+  const [additionalYear, setAdditionalYear] = useState(new Date().getFullYear());
+  const [additionalEarnings, setAdditionalEarnings] = useState<
+    Array<{ id: string; year: number; month: number; name: string; amountCHF: number }>
+  >([]);
+  const [additionalMonth, setAdditionalMonth] = useState(1);
+  const [additionalName, setAdditionalName] = useState("");
+  const [additionalAmount, setAdditionalAmount] = useState("");
+  const [additionalEditId, setAdditionalEditId] = useState<string | null>(null);
+  const [additionalSaving, setAdditionalSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setMessage("");
     try {
-      const settingsRes = await fetch(`/api/settings?miscYear=${miscYear}`);
+      const [settingsRes, additionalRes] = await Promise.all([
+        fetch(`/api/settings?miscYear=${miscYear}`),
+        fetch(`/api/additional-earnings?year=${additionalYear}`),
+      ]);
       if (!settingsRes.ok) throw new Error("Settings load failed");
       const data = (await settingsRes.json()) as SettingsApi;
       setForm({
@@ -102,13 +114,20 @@ export default function SettingsPage() {
       setMiscYear(data.miscYear);
       setMiscEarnings(data.miscEarnings ?? []);
       setQ1Reconciliation(data.q1Reconciliation ?? []);
-
+      if (additionalRes.ok) {
+        const additionalBody = (await additionalRes.json()) as {
+          rows?: Array<{ id: string; year: number; month: number; name: string; amountCHF: number }>;
+        };
+        setAdditionalEarnings(Array.isArray(additionalBody.rows) ? additionalBody.rows : []);
+      } else {
+        setAdditionalEarnings([]);
+      }
     } catch {
       setMessage("Fehler beim Laden der Einstellungen.");
     } finally {
       setLoading(false);
     }
-  }, [miscYear]);
+  }, [miscYear, additionalYear]);
 
   useEffect(() => {
     void load();
@@ -240,6 +259,80 @@ export default function SettingsPage() {
     setMiscMonth(row.month);
     setMiscAmount(String(row.amountCHF));
     setMiscLabel(row.label ?? "");
+  };
+
+  const saveAdditionalEarning = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMessage("");
+    const amount = parseAmount(additionalAmount);
+    const name = additionalName.trim();
+    if (!name) {
+      setMessage("Bitte einen Namen fuer das Zusatzeinkommen eingeben.");
+      return;
+    }
+    if (!Number.isFinite(amount)) {
+      setMessage("Bitte gueltigen Betrag fuer Zusatzeinkommen eingeben.");
+      return;
+    }
+    setAdditionalSaving(true);
+    try {
+      const url = additionalEditId
+        ? `/api/additional-earnings/${additionalEditId}`
+        : "/api/additional-earnings";
+      const method = additionalEditId ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          year: additionalYear,
+          month: additionalMonth,
+          name,
+          amountCHF: amount,
+        }),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setMessage(err.error ?? "Speichern fehlgeschlagen.");
+        return;
+      }
+      setMessage("Zusatzeinkommen gespeichert.");
+      setAdditionalEditId(null);
+      setAdditionalName("");
+      setAdditionalAmount("");
+      setAdditionalMonth(1);
+      void load();
+      void refreshIncome();
+    } finally {
+      setAdditionalSaving(false);
+    }
+  };
+
+  const editAdditionalEarning = (row: (typeof additionalEarnings)[number]) => {
+    setAdditionalEditId(row.id);
+    setAdditionalYear(row.year);
+    setAdditionalMonth(row.month);
+    setAdditionalName(row.name);
+    setAdditionalAmount(String(row.amountCHF));
+  };
+
+  const deleteAdditionalEarning = async (id: string) => {
+    if (!window.confirm("Dieses Zusatzeinkommen loeschen?")) return;
+    setMessage("");
+    setAdditionalSaving(true);
+    try {
+      const res = await fetch(`/api/additional-earnings/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setMessage(err.error ?? "Loeschen fehlgeschlagen.");
+        return;
+      }
+      setMessage("Zusatzeinkommen geloescht.");
+      if (additionalEditId === id) setAdditionalEditId(null);
+      void load();
+      void refreshIncome();
+    } finally {
+      setAdditionalSaving(false);
+    }
   };
 
   const deleteMiscEarning = async (id: string) => {
@@ -486,6 +579,112 @@ export default function SettingsPage() {
                     <td className="px-3 py-2 text-right font-medium">{r.deltaCHF.toFixed(2)}</td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="min-w-0 rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
+          <h2 className="text-lg font-semibold text-gray-900">Zusatzeinkommen</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Mehrere benannte Einnahmen pro Monat. Erscheinen im Dashboard unter «Zusatzeinkommen»
+            (eingeklappt) und fliessen in Monats- und Jahres-KPIs ein.
+          </p>
+          <form
+            onSubmit={saveAdditionalEarning}
+            className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-6"
+          >
+            <input
+              value={additionalYear}
+              onChange={(e) =>
+                setAdditionalYear(Math.floor(Number(e.target.value) || new Date().getFullYear()))
+              }
+              inputMode="numeric"
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+              placeholder="Jahr"
+            />
+            <select
+              value={additionalMonth}
+              onChange={(e) => setAdditionalMonth(Number(e.target.value))}
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+            >
+              {monthOptions.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <input
+              value={additionalName}
+              onChange={(e) => setAdditionalName(e.target.value)}
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm md:col-span-2"
+              placeholder="Name (z. B. Workshop)"
+              required
+            />
+            <input
+              value={additionalAmount}
+              onChange={(e) => setAdditionalAmount(e.target.value)}
+              inputMode="decimal"
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+              placeholder="Betrag CHF"
+            />
+            <button
+              type="submit"
+              disabled={additionalSaving}
+              className="rounded-md bg-[#4A7FC1] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {additionalSaving ? "Speichere…" : additionalEditId ? "Update" : "Hinzufuegen"}
+            </button>
+          </form>
+
+          <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100">
+            <table className="w-full min-w-[28rem] text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                  <th className="px-3 py-2">Monat</th>
+                  <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2 text-right">CHF</th>
+                  <th className="px-3 py-2 text-right">Aktion</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {additionalEarnings.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-3 text-gray-400">
+                      Keine Zusatzeinkommen fuer {additionalYear}.
+                    </td>
+                  </tr>
+                ) : (
+                  additionalEarnings.map((row) => (
+                    <tr key={row.id}>
+                      <td className="px-3 py-2">
+                        {monthOptions.find((m) => m.value === row.month)?.label ?? row.month}
+                      </td>
+                      <td className="px-3 py-2">{row.name}</td>
+                      <td className="px-3 py-2 text-right font-medium text-[#4A7FC1]">
+                        {row.amountCHF.toFixed(2)}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => editAdditionalEarning(row)}
+                            className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-600"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void deleteAdditionalEarning(row.id)}
+                            className="rounded border border-red-200 px-2 py-1 text-xs text-red-600"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
