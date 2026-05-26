@@ -18,30 +18,30 @@ export function AdditionalEarningsSection({ year, month, rows }: Props) {
   }
 
   return (
-    <section className="rounded-2xl border border-blue-100 bg-white shadow-sm">
+    <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
       <details className="group">
         <summary className="cursor-pointer list-none px-4 py-3 sm:px-5 [&::-webkit-details-marker]:hidden">
           <div className="flex items-center justify-between gap-3">
-            <span className="text-sm font-semibold text-gray-900">Zusatzeinkommen</span>
-            <span className="text-sm font-bold text-[#4A7FC1]">{formatCHF(total)}</span>
+            <span className="text-sm font-semibold text-slate-900">Zusatzeinkommen</span>
+            <span className="text-sm font-semibold tabular-nums text-slate-900">{formatCHF(total)}</span>
           </div>
-          <p className="mt-0.5 text-xs text-gray-400">
+          <p className="mt-0.5 text-xs text-slate-500">
             {monthRows.length} {monthRows.length === 1 ? "Eintrag" : "Einträge"} · zum Aufklappen klicken
           </p>
         </summary>
-        <div className="border-t border-gray-100 px-4 pb-4 pt-3 sm:px-5">
-          <ul className="divide-y divide-gray-50">
+        <div className="border-t border-slate-100 px-4 pb-4 pt-3 sm:px-5">
+          <ul className="divide-y divide-slate-100">
             {monthRows.map((row) => (
               <li
                 key={row.id}
                 className="flex flex-wrap items-center justify-between gap-2 py-2.5"
               >
-                <p className="min-w-0 font-medium text-gray-900">{row.name}</p>
-                <span className="font-semibold text-[#4A7FC1]">{formatCHF(row.amountCHF)}</span>
+                <p className="min-w-0 font-medium text-slate-800">{row.name}</p>
+                <span className="font-semibold tabular-nums text-slate-900">{formatCHF(row.amountCHF)}</span>
               </li>
             ))}
           </ul>
-          <p className="mt-3 text-xs text-gray-400">
+          <p className="mt-3 text-xs text-slate-500">
             Bearbeiten und hinzufügen unter Einstellungen.
           </p>
         </div>

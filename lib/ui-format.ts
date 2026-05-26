@@ -1,7 +1,29 @@
+/** Primary brand — links, buttons, focus rings */
 export const TEAL = "#4A7FC1";
 export const LILAC = "#7B6CB5";
 export const BLUE_BG = "#EBF4FF";
 export const LILAC_BG = "#F3F0FF";
+
+/**
+ * Dashboard charts — lebendig, aber an Markenfarbe TEAL (#4A7FC1) gebunden.
+ * Teaching = Blau, Dance = Rose, Zusatz = Amber, Ersparnis = Smaragd.
+ */
+export const CHART_TEACHING = "#3568A8";
+export const CHART_TEACHING_DIM = TEAL;
+export const CHART_DANCE = "#CB4B7A";
+export const CHART_DANCE_DIM = "#E8659A";
+export const CHART_ADDITIONAL = "#D4920A";
+export const CHART_ADDITIONAL_DIM = "#F0A830";
+export const CHART_EXPENSE = "#EA580C";
+export const CHART_EXPENSE_DIM = "#FB923C";
+export const CHART_SAVINGS = "#059669";
+export const CHART_SAVINGS_DIM = "#10B981";
+export const CHART_SAVINGS_NEG = "#EF4444";
+/** Kumulierte Linie — Indigo, harmoniert mit Blau und Grün */
+export const CHART_CUMULATIVE = "#6366F1";
+
+/** @deprecated Use CHART_ADDITIONAL */
+export const AMBER = CHART_ADDITIONAL;
 
 export const monthOptions = [
   { value: 1, label: "Januar" },

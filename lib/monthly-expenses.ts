@@ -1,27 +1,27 @@
-export type AdditionalEarningForIncome = {
+export type MonthlyExpenseForIncome = {
   id: string;
   year: number;
   month: number;
-  name: string;
   amountCHF: number;
+  notes?: string | null;
 };
 
-function isSameMonth(row: AdditionalEarningForIncome, year: number, month: number): boolean {
+function isSameMonth(row: MonthlyExpenseForIncome, year: number, month: number): boolean {
   return row.year === year && row.month === month;
 }
 
-export function monthAdditionalEarningsTotal(
-  rows: AdditionalEarningForIncome[],
+export function monthExpenseTotal(
+  rows: MonthlyExpenseForIncome[],
   year: number,
   month: number
 ): number {
   return rows.filter((r) => isSameMonth(r, year, month)).reduce((acc, r) => acc + r.amountCHF, 0);
 }
 
-export function ytdAdditionalEarningsTotal(
-  rows: AdditionalEarningForIncome[],
+export function ytdExpenseTotal(
+  rows: MonthlyExpenseForIncome[],
   year: number,
-  throughMonth = 12
+  throughMonth: number
 ): number {
   return rows
     .filter((r) => r.year === year && r.month >= 1 && r.month <= throughMonth)

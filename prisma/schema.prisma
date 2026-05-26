@@ -180,3 +180,15 @@ model AdditionalEarning {
 
   @@index([year, month])
 }
+
+model MonthlyExpense {
+  id        String   @id @default(cuid())
+  year      Int
+  month     Int
+  amountCHF Float
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([year, month])
+}

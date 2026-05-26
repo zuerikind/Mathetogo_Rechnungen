@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { MonthlyChart } from "@/components/MonthlyChart";
+import { SavingsChart, type SavingsPoint } from "@/components/SavingsChart";
 import { SessionTable, type SubscriptionAnalysisTableRow } from "@/components/SessionTable";
 import { StatCard } from "@/components/StatCard";
 import { StudentBreakdown } from "@/components/StudentBreakdown";
@@ -23,7 +24,13 @@ import {
 import type { DanceEarningForIncome } from "@/lib/dance-earnings";
 import { monthDanceEarningsTotal, ytdDanceEarningsTotal } from "@/lib/dance-earnings";
 import type { AdditionalEarningForIncome } from "@/lib/additional-earnings";
+import {
+  monthAdditionalEarningsTotal,
+  ytdAdditionalEarningsTotal,
+} from "@/lib/additional-earnings";
 import type { MiscEarningForIncome } from "@/lib/misc-earnings";
+import type { MonthlyExpenseForIncome } from "@/lib/monthly-expenses";
+import { monthExpenseTotal, ytdExpenseTotal } from "@/lib/monthly-expenses";
 import { AdditionalEarningsSection } from "@/components/AdditionalEarningsSection";
 import {
   subscriptionProrationByStudentForMonth,
@@ -68,6 +75,11 @@ function medianPerHour(rows: SessionWithStudent[]): number {
     : hourlyRates[mid];
 }
 
+function ytdThroughLabel(throughMonth: number): string {
+  const name = monthOptions.find((m) => m.value === throughMonth)?.label.slice(0, 3) ?? String(throughMonth);
+  return `YTD (Jan–${name})`;
+}
+
 export default function DashboardPage() {
   const {
     monthIncome: globalMonthIncome,
@@ -90,6 +102,7 @@ export default function DashboardPage() {
   const [miscEarnings, setMiscEarnings] = useState<MiscEarningForIncome[]>([]);
   const [danceEarnings, setDanceEarnings] = useState<DanceEarningForIncome[]>([]);
   const [additionalEarnings, setAdditionalEarnings] = useState<AdditionalEarningForIncome[]>([]);
+  const [monthlyExpenses, setMonthlyExpenses] = useState<MonthlyExpenseForIncome[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -103,12 +116,13 @@ export default function DashboardPage() {
     try {
       if (isInitial) setLoading(true); else setRefreshing(true);
       setError("");
-      const [res, subRes, settingsRes, danceRes, additionalRes] = await Promise.all([
+      const [res, subRes, settingsRes, danceRes, additionalRes, expensesRes] = await Promise.all([
         fetch(`/api/sessions?year=${year}`),
         fetch(`/api/subscriptions/analytics?year=${year}`),
         fetch(`/api/settings?miscYear=${year}`),
         fetch(`/api/dance-earnings?year=${year}`),
         fetch(`/api/additional-earnings?year=${year}`),
+        fetch(`/api/monthly-expenses?year=${year}`),
       ]);
       if (!res.ok) throw new Error();
       setSessions((await res.json()) as SessionWithStudent[]);
@@ -135,6 +149,12 @@ export default function DashboardPage() {
         setAdditionalEarnings(Array.isArray(additionalBody.rows) ? additionalBody.rows : []);
       } else {
         setAdditionalEarnings([]);
+      }
+      if (expensesRes.ok) {
+        const expensesBody = (await expensesRes.json()) as { rows?: MonthlyExpenseForIncome[] };
+        setMonthlyExpenses(Array.isArray(expensesBody.rows) ? expensesBody.rows : []);
+      } else {
+        setMonthlyExpenses([]);
       }
     } catch {
       setError("Fehler beim Laden der Daten.");
@@ -251,43 +271,68 @@ export default function DashboardPage() {
     [danceEarnings, year, month]
   );
   const ytdDanceIncome = useMemo(
-    () => ytdDanceEarningsTotal(danceEarnings, year),
-    [danceEarnings, year]
+    () => ytdDanceEarningsTotal(danceEarnings, year, month),
+    [danceEarnings, year, month]
+  );
+  const ytdSavings = useMemo(
+    () => ytdIncome - ytdExpenseTotal(monthlyExpenses, year, month),
+    [ytdIncome, monthlyExpenses, year, month]
   );
 
   const chartData = useMemo(() =>
     monthOptions.map((m) => {
       const ms = sessions.filter((s) => s.month === m.value);
       const realMs = ms.filter((s) => !isManualBaselineSession(s));
+      const totalIncome = computeMonthIncome(
+        sessions,
+        subscriptionBilling,
+        miscEarnings,
+        danceEarnings,
+        additionalEarnings,
+        year,
+        m.value
+      );
+      const danceIncome = monthDanceEarningsTotal(danceEarnings, year, m.value);
+      const additionalIncome = monthAdditionalEarningsTotal(additionalEarnings, year, m.value);
       return {
         month: m.value,
         label: m.label.slice(0, 3),
-        income: computeMonthIncome(
-          sessions,
-          subscriptionBilling,
-          miscEarnings,
-          danceEarnings,
-          additionalEarnings,
-          year,
-          m.value
-        ),
-        danceIncome: monthDanceEarningsTotal(danceEarnings, year, m.value),
-        teachingIncome:
-          computeMonthIncome(
-            sessions,
-            subscriptionBilling,
-            miscEarnings,
-            danceEarnings,
-            additionalEarnings,
-            year,
-            m.value
-          ) - monthDanceEarningsTotal(danceEarnings, year, m.value),
+        income: totalIncome,
+        danceIncome,
+        additionalIncome,
+        teachingIncome: totalIncome - danceIncome - additionalIncome,
         sessions: realMs.length,
         hours: realMs.reduce((s, r) => s + r.durationMin, 0) / 60,
         medianPerHour: medianPerHour(realMs),
       };
     }),
   [sessions, subscriptionBilling, miscEarnings, danceEarnings, additionalEarnings, year]);
+
+  const savingsChartData = useMemo((): SavingsPoint[] => {
+    let cumulative = 0;
+    return monthOptions.map((m) => {
+      const income = computeMonthIncome(
+        sessions,
+        subscriptionBilling,
+        miscEarnings,
+        danceEarnings,
+        additionalEarnings,
+        year,
+        m.value
+      );
+      const expense = monthExpenseTotal(monthlyExpenses, year, m.value);
+      const savings = income - expense;
+      cumulative += savings;
+      return {
+        month: m.value,
+        label: m.label.slice(0, 3),
+        income,
+        expense,
+        savings,
+        cumulativeSavings: cumulative,
+      };
+    });
+  }, [sessions, subscriptionBilling, miscEarnings, danceEarnings, additionalEarnings, monthlyExpenses, year]);
 
   const breakdownSessions = useMemo(
     () =>
@@ -379,7 +424,7 @@ export default function DashboardPage() {
   };
 
   const selectClass =
-    "rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700 outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20";
+    "rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200";
 
   return (
     <DashboardShell
@@ -393,13 +438,13 @@ export default function DashboardPage() {
         <div className="flex min-w-0 items-center gap-2">
           <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
           {refreshing && (
-            <span className="h-4 w-4 rounded-full border-2 border-[#4A7FC1] border-t-transparent animate-spin" />
+            <span className="h-4 w-4 rounded-full border-2 border-slate-600 border-t-transparent animate-spin" />
           )}
         </div>
 
         {/* Sync bar — has its own independent month + year */}
-        <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
-          <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Kalender synchronisieren</p>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Kalender synchronisieren</p>
           <div className="flex flex-wrap items-end gap-3 sm:gap-4">
 
             {/* Sync month */}
@@ -423,7 +468,7 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   onClick={() => setSyncYear((y) => y - 1)}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition hover:bg-white hover:text-[#4A7FC1]"
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-800"
                 >
                   ‹
                 </button>
@@ -431,7 +476,7 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   onClick={() => setSyncYear((y) => y + 1)}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition hover:bg-white hover:text-[#4A7FC1]"
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-800"
                 >
                   ›
                 </button>
@@ -445,7 +490,7 @@ export default function DashboardPage() {
             </div>
 
             {toast && (
-              <span className="max-w-full self-end break-words rounded-xl bg-[#EBF4FF] px-3 py-1.5 text-sm font-medium text-[#4A7FC1] sm:max-w-[min(100%,28rem)]">{toast}</span>
+              <span className="max-w-full self-end break-words rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-800 sm:max-w-[min(100%,28rem)]">{toast}</span>
             )}
           </div>
         </div>
@@ -456,33 +501,72 @@ export default function DashboardPage() {
             <button onClick={() => void loadSessions()} className="underline font-medium">Erneut versuchen</button>
           </div>
         ) : loading ? (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-28 animate-pulse rounded-2xl border border-blue-100 bg-white" />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-24 animate-pulse rounded-xl border border-slate-200 bg-slate-100" />
             ))}
           </div>
         ) : (
           <>
-            {/* KPI Cards — driven by `month` filter */}
-            <section className="grid grid-cols-2 gap-4 md:grid-cols-5">
+            <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <div className="min-w-0">
-                <StatCard label="Einkommen (Monat)" value={formatCHF(currentStats.income)} subValue={`${currentMonthRealSessions.length} Sessions`} trend={trend(currentStats.income, prevStats.income)} trendLabel="Vormonat" />
-              </div>
-              <div className="min-w-0">
-                <StatCard label="Jahreseinkommen" value={formatCHF(ytdIncome)} subValue={`${realSessions.length} Sessions total`} accent="lilac" />
-              </div>
-              <div className="min-w-0">
-                <StatCard label="Stunden (Monat)" value={`${currentStats.hours.toFixed(1)}h`} subValue={formatDuration(currentStats.minutes)} trend={trend(currentStats.hours, prevStats.hours)} trendLabel="Vormonat" />
-              </div>
-              <div className="min-w-0">
-                <StatCard label="Aktive Schüler" value={String(currentStats.students)} subValue={`Ø ${formatCHF(currentStats.avgPerHour)} / h`} trend={trend(currentStats.students, prevStats.students)} trendLabel="Vormonat" accent="lilac" />
+                <StatCard
+                  compact
+                  accent="blue"
+                  label="Einkommen (Monat)"
+                  value={formatCHF(currentStats.income)}
+                  subValue={`${currentMonthRealSessions.length} Sessions`}
+                  trend={trend(currentStats.income, prevStats.income)}
+                  trendLabel="Vormonat"
+                />
               </div>
               <div className="min-w-0">
                 <StatCard
+                  compact
+                  accent="lilac"
+                  label="Jahreseinkommen"
+                  value={formatCHF(ytdIncome)}
+                  subValue={`${realSessions.length} Sessions total`}
+                />
+              </div>
+              <div className="min-w-0">
+                <StatCard
+                  compact
+                  accent="rose"
                   label="Dance Income"
                   value={formatCHF(monthDanceIncome)}
-                  subValue={`YTD: ${formatCHF(ytdDanceIncome)}`}
-                  accent="rose"
+                  subValue={`${ytdThroughLabel(month)}: ${formatCHF(ytdDanceIncome)}`}
+                />
+              </div>
+              <div className="min-w-0">
+                <StatCard
+                  compact
+                  accent="green"
+                  label="Gespart (Jahr)"
+                  value={formatCHF(ytdSavings)}
+                  subValue={ytdThroughLabel(month)}
+                />
+              </div>
+              <div className="min-w-0">
+                <StatCard
+                  compact
+                  accent="sky"
+                  label="Stunden (Monat)"
+                  value={`${currentStats.hours.toFixed(1)}h`}
+                  subValue={formatDuration(currentStats.minutes)}
+                  trend={trend(currentStats.hours, prevStats.hours)}
+                  trendLabel="Vormonat"
+                />
+              </div>
+              <div className="min-w-0">
+                <StatCard
+                  compact
+                  accent="violet"
+                  label="Aktive Schüler"
+                  value={String(currentStats.students)}
+                  subValue={`Ø ${formatCHF(currentStats.avgPerHour)} / h`}
+                  trend={trend(currentStats.students, prevStats.students)}
+                  trendLabel="Vormonat"
                 />
               </div>
             </section>
@@ -494,9 +578,9 @@ export default function DashboardPage() {
             />
 
             {/* Charts — year + month filters together */}
-            <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <h2 className="text-sm font-semibold text-gray-700">Jahresübersicht</h2>
+                <h2 className="text-sm font-semibold text-slate-800">Jahresübersicht</h2>
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   {/* Month filter */}
                   <select
@@ -515,10 +599,10 @@ export default function DashboardPage() {
                     <button
                       key={y}
                       onClick={() => setYear(y)}
-                      className={`rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+                      className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
                         year === y
-                          ? "bg-[#4A7FC1] text-white shadow-sm"
-                          : "border border-gray-200 bg-gray-50 text-gray-600 hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
+                          ? "bg-slate-800 text-white shadow-sm"
+                          : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
                       }`}
                     >
                       {y}
@@ -539,20 +623,27 @@ export default function DashboardPage() {
                   />
                 </div>
               </div>
+              <div className="mt-4 min-w-0">
+                <SavingsChart
+                  data={savingsChartData}
+                  selectedMonth={selectedMonth}
+                  onMonthSelect={setSelectedMonth}
+                />
+              </div>
             </section>
 
             {/* Sessions table */}
-            <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h2 className="min-w-0 text-sm font-semibold text-gray-900">
+                <h2 className="min-w-0 text-sm font-semibold text-slate-900">
                   Sessions
                   {selectedMonth !== null && (
-                    <span className="ml-1.5 font-normal text-[#4A7FC1]">
+                    <span className="ml-1.5 font-normal text-slate-600">
                       · {monthOptions.find((m) => m.value === selectedMonth)?.label}
                     </span>
                   )}
                   {selectedStudent && (
-                    <span className="ml-1.5 font-normal text-[#4A7FC1]">
+                    <span className="ml-1.5 font-normal text-slate-600">
                       · {normStudentDisplayName(selectedStudent)}
                     </span>
                   )}

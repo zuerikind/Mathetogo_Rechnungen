@@ -10,8 +10,12 @@ export function monthDanceEarningsTotal(rows: DanceEarningForIncome[], year: num
     .reduce((acc, r) => acc + r.amountCHF, 0);
 }
 
-export function ytdDanceEarningsTotal(rows: DanceEarningForIncome[], year: number): number {
+export function ytdDanceEarningsTotal(
+  rows: DanceEarningForIncome[],
+  year: number,
+  throughMonth = 12
+): number {
   return rows
-    .filter((r) => r.year === year)
+    .filter((r) => r.year === year && r.month >= 1 && r.month <= throughMonth)
     .reduce((acc, r) => acc + r.amountCHF, 0);
 }

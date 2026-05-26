@@ -170,11 +170,12 @@ export async function GET(req: NextRequest) {
     });
     const ytdMisc = ytdMiscEarningsTotal(miscEarnings, year, {
       excludeQ1AdjustmentMonths: baselineMonths,
+      throughMonth: month,
     });
     const monthDance = monthDanceEarningsTotal(danceEarnings, year, month);
-    const ytdDance = ytdDanceEarningsTotal(danceEarnings, year);
+    const ytdDance = ytdDanceEarningsTotal(danceEarnings, year, month);
     const monthAdditional = monthAdditionalEarningsTotal(additionalEarnings, year, month);
-    const ytdAdditional = ytdAdditionalEarningsTotal(additionalEarnings, year);
+    const ytdAdditional = ytdAdditionalEarningsTotal(additionalEarnings, year, month);
 
     const value: IncomeSummaryPayload = {
       year,

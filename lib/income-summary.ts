@@ -57,8 +57,8 @@ export function computeYtdIncome(
   const manualMonths = manualOverrideMonths(sessions);
   let sessionIncome = 0;
   for (const s of sessions) {
+    if (s.month > throughMonth) continue;
     if (manualMonths.has(s.month)) {
-      // Manual Q1 month: only count synthetic baseline, skip real imported sessions
       if (isManualBaselineSession(s)) sessionIncome += s.amountCHF;
     } else {
       sessionIncome += s.amountCHF;
@@ -71,8 +71,9 @@ export function computeYtdIncome(
   }
   const miscIncome = ytdMiscEarningsTotal(miscEarnings, year, {
     excludeQ1AdjustmentMonths: manualMonths,
+    throughMonth,
   });
-  const danceIncome = ytdDanceEarningsTotal(danceEarnings, year);
-  const additionalIncome = ytdAdditionalEarningsTotal(additionalEarnings, year);
+  const danceIncome = ytdDanceEarningsTotal(danceEarnings, year, throughMonth);
+  const additionalIncome = ytdAdditionalEarningsTotal(additionalEarnings, year, throughMonth);
   return sessionIncome + subscriptionIncome + miscIncome + danceIncome + additionalIncome;
 }

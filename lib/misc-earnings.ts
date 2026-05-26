@@ -25,12 +25,13 @@ export function monthMiscEarningsTotal(
 export function ytdMiscEarningsTotal(
   rows: MiscEarningForIncome[],
   year: number,
-  opts?: { excludeQ1AdjustmentMonths?: Set<number> }
+  opts?: { excludeQ1AdjustmentMonths?: Set<number>; throughMonth?: number }
 ): number {
   const excluded = opts?.excludeQ1AdjustmentMonths ?? new Set<number>();
+  const throughMonth = opts?.throughMonth ?? 12;
   let total = 0;
   for (const r of rows) {
-    if (r.year !== year) continue;
+    if (r.year !== year || r.month > throughMonth) continue;
     if (r.source === "q1_adjustment" && excluded.has(r.month)) continue;
     total += r.amountCHF;
   }

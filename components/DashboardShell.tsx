@@ -29,10 +29,10 @@ export function DashboardShell({ monthIncome, ytdIncome, incomeLoading = false, 
   const currentPath = pathname ?? "";
 
   return (
-    <div className="min-h-screen min-w-0 bg-[#F0F5FF]">
+    <div className="min-h-screen min-w-0 bg-slate-100/80">
       <div className="mx-auto min-w-0 max-w-7xl space-y-4 px-3 py-4 sm:space-y-5 sm:px-5 sm:py-5">
-        <nav className="rounded-2xl border border-blue-100 bg-white p-3 shadow-sm">
-          <p className="mb-3 px-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Navigation</p>
+        <nav className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-sm">
+          <p className="mb-3 px-2 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Navigation</p>
           <ul className="flex flex-wrap gap-1.5">
             {navItems.map((item) => {
               const active = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
@@ -40,15 +40,15 @@ export function DashboardShell({ monthIncome, ytdIncome, incomeLoading = false, 
                 <li key={item.href}>
                   <Link
                     href={item.href}
-                    className={`flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-all ${
+                    className={`flex min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-all ${
                       active
-                        ? "bg-[#EBF4FF] font-semibold text-[#4A7FC1]"
-                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                        ? "bg-slate-100 font-semibold text-slate-900 ring-1 ring-slate-200"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                     }`}
                   >
                     <span className="shrink-0 text-base">{item.icon}</span>
                     <span className="min-w-0 leading-snug">{item.label}</span>
-                    {active && <span className="ml-1 h-1.5 w-1.5 rounded-full bg-[#4A7FC1]" />}
+                    {active && <span className="ml-1 h-1.5 w-1.5 rounded-full bg-slate-700" />}
                   </Link>
                 </li>
               );
@@ -57,23 +57,23 @@ export function DashboardShell({ monthIncome, ytdIncome, incomeLoading = false, 
         </nav>
 
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-[#4A7FC1]">Dieser Monat</p>
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Dieser Monat</p>
             <div className="mt-0.5 min-h-[1.75rem]">
               {incomeLoading ? (
                 <LoadingSpinner size={22} label="Laden …" />
               ) : (
-                <p className="text-lg font-bold text-[#4A7FC1]">{formatCHF(monthIncome)}</p>
+                <p className="text-lg font-bold text-slate-900 tabular-nums">{formatCHF(monthIncome)}</p>
               )}
             </div>
           </div>
-          <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-[#7B6CB5]">Jahr gesamt</p>
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Jahr gesamt</p>
             <div className="mt-0.5 min-h-[1.75rem]">
               {incomeLoading ? (
                 <LoadingSpinner size={22} label="Laden …" />
               ) : (
-                <p className="text-lg font-bold text-[#7B6CB5]">{formatCHF(ytdIncome)}</p>
+                <p className="text-lg font-bold text-slate-900 tabular-nums">{formatCHF(ytdIncome)}</p>
               )}
             </div>
           </div>

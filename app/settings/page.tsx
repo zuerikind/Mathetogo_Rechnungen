@@ -85,14 +85,24 @@ export default function SettingsPage() {
   const [additionalAmount, setAdditionalAmount] = useState("");
   const [additionalEditId, setAdditionalEditId] = useState<string | null>(null);
   const [additionalSaving, setAdditionalSaving] = useState(false);
+  const [expenseYear, setExpenseYear] = useState(new Date().getFullYear());
+  const [monthlyExpenses, setMonthlyExpenses] = useState<
+    Array<{ id: string; year: number; month: number; amountCHF: number; notes?: string | null }>
+  >([]);
+  const [expenseMonth, setExpenseMonth] = useState(1);
+  const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenseNotes, setExpenseNotes] = useState("");
+  const [expenseEditId, setExpenseEditId] = useState<string | null>(null);
+  const [expenseSaving, setExpenseSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setMessage("");
     try {
-      const [settingsRes, additionalRes] = await Promise.all([
+      const [settingsRes, additionalRes, expensesRes] = await Promise.all([
         fetch(`/api/settings?miscYear=${miscYear}`),
         fetch(`/api/additional-earnings?year=${additionalYear}`),
+        fetch(`/api/monthly-expenses?year=${expenseYear}`),
       ]);
       if (!settingsRes.ok) throw new Error("Settings load failed");
       const data = (await settingsRes.json()) as SettingsApi;
@@ -122,12 +132,24 @@ export default function SettingsPage() {
       } else {
         setAdditionalEarnings([]);
       }
+      if (expensesRes.ok) {
+        const expensesBody = (await expensesRes.json()) as {
+          rows?: Array<{ id: string; year: number; month: number; amountCHF: number; notes?: string | null }>;
+          error?: string;
+        };
+        setMonthlyExpenses(Array.isArray(expensesBody.rows) ? expensesBody.rows : []);
+        if (expensesBody.error) setMessage(expensesBody.error);
+      } else {
+        setMonthlyExpenses([]);
+        const errBody = (await expensesRes.json().catch(() => ({}))) as { error?: string };
+        if (errBody.error) setMessage(errBody.error);
+      }
     } catch {
       setMessage("Fehler beim Laden der Einstellungen.");
     } finally {
       setLoading(false);
     }
-  }, [miscYear, additionalYear]);
+  }, [miscYear, additionalYear, expenseYear]);
 
   useEffect(() => {
     void load();
@@ -313,6 +335,72 @@ export default function SettingsPage() {
     setAdditionalMonth(row.month);
     setAdditionalName(row.name);
     setAdditionalAmount(String(row.amountCHF));
+  };
+
+  const saveMonthlyExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMessage("");
+    const amount = parseAmount(expenseAmount);
+    if (!Number.isFinite(amount)) {
+      setMessage("Bitte gueltigen Betrag fuer Monatsausgaben eingeben.");
+      return;
+    }
+    setExpenseSaving(true);
+    try {
+      const url = expenseEditId
+        ? `/api/monthly-expenses/${expenseEditId}`
+        : "/api/monthly-expenses";
+      const method = expenseEditId ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          year: expenseYear,
+          month: expenseMonth,
+          amountCHF: amount,
+          notes: expenseNotes,
+        }),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setMessage(err.error ?? "Speichern fehlgeschlagen.");
+        return;
+      }
+      setMessage("Monatsausgaben gespeichert.");
+      setExpenseEditId(null);
+      setExpenseAmount("");
+      setExpenseNotes("");
+      setExpenseMonth(1);
+      void load();
+    } finally {
+      setExpenseSaving(false);
+    }
+  };
+
+  const editMonthlyExpense = (row: (typeof monthlyExpenses)[number]) => {
+    setExpenseEditId(row.id);
+    setExpenseYear(row.year);
+    setExpenseMonth(row.month);
+    setExpenseAmount(String(row.amountCHF));
+    setExpenseNotes(row.notes ?? "");
+  };
+
+  const deleteMonthlyExpense = async (id: string) => {
+    if (!window.confirm("Diese Monatsausgaben loeschen?")) return;
+    setMessage("");
+    setExpenseSaving(true);
+    try {
+      const res = await fetch(`/api/monthly-expenses/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setMessage(err.error ?? "Loeschen fehlgeschlagen.");
+        return;
+      }
+      setMessage("Monatsausgaben geloescht.");
+      void load();
+    } finally {
+      setExpenseSaving(false);
+    }
   };
 
   const deleteAdditionalEarning = async (id: string) => {
@@ -584,7 +672,7 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="min-w-0 rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
+        <section className="min-w-0 rounded-2xl border border-amber-100 bg-white p-4 shadow-sm sm:p-5">
           <h2 className="text-lg font-semibold text-gray-900">Zusatzeinkommen</h2>
           <p className="mt-1 text-sm text-gray-500">
             Mehrere benannte Einnahmen pro Monat. Erscheinen im Dashboard unter «Zusatzeinkommen»
@@ -661,7 +749,7 @@ export default function SettingsPage() {
                         {monthOptions.find((m) => m.value === row.month)?.label ?? row.month}
                       </td>
                       <td className="px-3 py-2">{row.name}</td>
-                      <td className="px-3 py-2 text-right font-medium text-[#4A7FC1]">
+                      <td className="px-3 py-2 text-right font-medium text-[#D97706]">
                         {row.amountCHF.toFixed(2)}
                       </td>
                       <td className="px-3 py-2 text-right">
@@ -676,6 +764,112 @@ export default function SettingsPage() {
                           <button
                             type="button"
                             onClick={() => void deleteAdditionalEarning(row.id)}
+                            className="rounded border border-red-200 px-2 py-1 text-xs text-red-600"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="min-w-0 rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm sm:p-5">
+          <h2 className="text-lg font-semibold text-gray-900">Monatsausgaben</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Manuell erfasste Ausgaben pro Monat. Im Dashboard werden daraus «Gespart (Monat)»
+            und «Gespart (Jahr)» berechnet (Einkommen minus Ausgaben).
+          </p>
+          <form
+            onSubmit={saveMonthlyExpense}
+            className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-6"
+          >
+            <input
+              value={expenseYear}
+              onChange={(e) =>
+                setExpenseYear(Math.floor(Number(e.target.value) || new Date().getFullYear()))
+              }
+              inputMode="numeric"
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+              placeholder="Jahr"
+            />
+            <select
+              value={expenseMonth}
+              onChange={(e) => setExpenseMonth(Number(e.target.value))}
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+            >
+              {monthOptions.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <input
+              value={expenseAmount}
+              onChange={(e) => setExpenseAmount(e.target.value)}
+              inputMode="decimal"
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+              placeholder="Ausgaben CHF"
+              required
+            />
+            <input
+              value={expenseNotes}
+              onChange={(e) => setExpenseNotes(e.target.value)}
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm md:col-span-2"
+              placeholder="Notiz (optional)"
+            />
+            <button
+              type="submit"
+              disabled={expenseSaving}
+              className="rounded-md bg-[#059669] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {expenseSaving ? "Speichere…" : expenseEditId ? "Update" : "Hinzufuegen"}
+            </button>
+          </form>
+
+          <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100">
+            <table className="w-full min-w-[24rem] text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                  <th className="px-3 py-2">Monat</th>
+                  <th className="px-3 py-2 text-right">CHF</th>
+                  <th className="px-3 py-2">Notiz</th>
+                  <th className="px-3 py-2 text-right">Aktion</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {monthlyExpenses.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-3 text-gray-400">
+                      Keine Ausgaben fuer {expenseYear}.
+                    </td>
+                  </tr>
+                ) : (
+                  monthlyExpenses.map((row) => (
+                    <tr key={row.id}>
+                      <td className="px-3 py-2">
+                        {monthOptions.find((m) => m.value === row.month)?.label ?? row.month}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium text-[#059669]">
+                        {row.amountCHF.toFixed(2)}
+                      </td>
+                      <td className="px-3 py-2 text-gray-600">{row.notes ?? "—"}</td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => editMonthlyExpense(row)}
+                            className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-600"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void deleteMonthlyExpense(row.id)}
                             className="rounded border border-red-200 px-2 py-1 text-xs text-red-600"
                           >
                             Delete
