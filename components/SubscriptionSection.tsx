@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { platformSubscriptionMonthlyForDuration } from "@/lib/pricing";
 import { formatCHF, getCurrentMonthYear, monthOptions } from "@/lib/ui-format";
 import { buildChargeRows, monthsRemaining } from "@/lib/subscription-utils";
 import type { PlatformSubscriptionWithCharges } from "@/lib/ui-types";
@@ -40,7 +41,7 @@ export function SubscriptionSection({ studentId, initialSubscriptions }: Subscri
 
   function openAddForm() {
     const { month, year } = getCurrentMonthYear();
-    setAddAmount("");
+    setAddAmount(String(platformSubscriptionMonthlyForDuration(6)));
     setAddDuration("6");
     setAddBillingMethod("invoice");
     setAddStartMonth(month);
@@ -203,7 +204,7 @@ export function SubscriptionSection({ studentId, initialSubscriptions }: Subscri
                 value={addAmount}
                 onChange={(e) => setAddAmount(e.target.value)}
                 className="rounded border border-gray-300 px-2 py-1 text-sm w-28"
-                placeholder="z.B. 50"
+                placeholder={`z.B. ${platformSubscriptionMonthlyForDuration(1)}`}
               />
             </div>
 
@@ -211,7 +212,13 @@ export function SubscriptionSection({ studentId, initialSubscriptions }: Subscri
               <label className="text-xs text-gray-500">Laufzeit</label>
               <select
                 value={addDuration}
-                onChange={(e) => setAddDuration(e.target.value as "1" | "6")}
+                onChange={(e) => {
+                  const duration = e.target.value as "1" | "6";
+                  setAddDuration(duration);
+                  setAddAmount(
+                    String(platformSubscriptionMonthlyForDuration(parseInt(duration, 10) as 1 | 6))
+                  );
+                }}
                 className="rounded border border-gray-300 px-2 py-1 text-sm"
               >
                 <option value="1">1 Monat</option>

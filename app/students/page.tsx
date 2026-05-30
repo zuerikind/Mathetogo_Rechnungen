@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { StudentTable } from "@/components/StudentTable";
+import { STANDARD_RATE_PER_MIN } from "@/lib/pricing";
 import type { SessionWithStudent, Student } from "@/lib/ui-types";
 
 type EditableStudent = Student & { totalEarned: number; sessions: number };
@@ -215,7 +216,7 @@ export default function StudentsPage() {
                     step="0.01"
                     value={form.ratePerMin}
                     onChange={(e) => setForm((f) => ({ ...f, ratePerMin: e.target.value }))}
-                    placeholder="z.B. 1.25"
+                    placeholder={`z.B. ${STANDARD_RATE_PER_MIN} (= 60 CHF / 50 Min)`}
                     className={inputClass}
                   />
                 </div>

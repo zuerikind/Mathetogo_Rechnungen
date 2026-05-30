@@ -1,6 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import {
+  classPriceFromRate,
+  LONG_CLASS_MINUTES,
+  LONG_SESSION_STUDENT_NAMES,
+  STANDARD_CLASS_MINUTES,
+} from "@/lib/pricing";
 import { formatCHF } from "@/lib/ui-format";
 import type { Student } from "@/lib/ui-types";
 
@@ -24,7 +30,7 @@ export function StudentTable({ students, onEdit, onDeactivate }: StudentTablePro
             <th className="px-5 py-3.5">Name</th>
             <th className="px-5 py-3.5">Fach</th>
             <th className="px-5 py-3.5">CHF/Min</th>
-            <th className="px-5 py-3.5">CHF/Std</th>
+            <th className="px-5 py-3.5">CHF/Lektion</th>
             <th className="px-5 py-3.5">Verdient</th>
             <th className="px-5 py-3.5">Sessions</th>
             <th className="px-5 py-3.5" />
@@ -40,7 +46,12 @@ export function StudentTable({ students, onEdit, onDeactivate }: StudentTablePro
               </td>
               <td className="px-5 py-3 text-gray-600">{s.subject}</td>
               <td className="px-5 py-3 text-gray-600">{s.ratePerMin.toFixed(2)}</td>
-              <td className="px-5 py-3 text-gray-600">{(s.ratePerMin * 60).toFixed(2)}</td>
+              <td className="px-5 py-3 text-gray-600">
+                {classPriceFromRate(
+                  s.ratePerMin,
+                  LONG_SESSION_STUDENT_NAMES.has(s.name) ? LONG_CLASS_MINUTES : STANDARD_CLASS_MINUTES
+                ).toFixed(0)}
+              </td>
               <td className="px-5 py-3 font-medium text-gray-800">{formatCHF(s.totalEarned)}</td>
               <td className="px-5 py-3 text-gray-600">{s.sessions}</td>
               <td className="px-5 py-3">

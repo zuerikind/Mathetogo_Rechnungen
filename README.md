@@ -73,7 +73,7 @@ curl http://localhost:3000/api/students -b cookies.txt
 # Create student
 curl -X POST http://localhost:3000/api/students \
   -H "Content-Type: application/json" -b cookies.txt \
-  -d '{"name":"Max","subject":"Mathe","ratePerMin":1.1,"email":"max@example.com"}'
+  -d '{"name":"Max","subject":"Mathe","ratePerMin":1.2,"email":"max@example.com"}'
 
 # Update student
 curl -X PUT http://localhost:3000/api/students/<id> \
@@ -103,12 +103,11 @@ Events in `unmatched` didn't match any student — rename them in Google Calenda
 
 ## 4. Default Students (seed data)
 
-| Name    | Subject | CHF/min |
-|---------|---------|---------|
-| Thilo   | Mathe   | 1.20    |
-| Johanna | Mathe   | 1.10    |
-| Alena   | Mathe   | 1.10    |
-| Liam    | Mathe   | 1.10    |
-| Flurina | Mathe   | 1.10    |
+| Name    | Subject | CHF/min | CHF/Lektion (50 Min) |
+|---------|---------|---------|----------------------|
+| Thilo   | Mathe   | 1.00    | 60 (60-Min-Lektionen) |
+| Most    | Mathe   | 1.20    | 60                   |
+
+Standard tariff: **60 CHF per class** (`ratePerMin` 1.20 for 50-minute sessions). Platform add-on: **55 CHF/month** (1 month) or **44 CHF/month** (6 months).
 
 Edit rates via `PUT /api/students/<id>` or Prisma Studio (`npm run db:studio`).

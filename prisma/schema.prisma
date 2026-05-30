@@ -142,6 +142,29 @@ model Tutor24Contact {
   messagedAt DateTime @default(now())
 }
 
+enum AcademigoContactType {
+  teacher
+  student
+}
+
+model AcademigoSettings {
+  id                     String   @id @default("default")
+  messageTemplate        String   @db.Text
+  messageTemplateStudent String?  @db.Text
+  updatedAt              DateTime @updatedAt
+}
+
+model AcademigoContact {
+  id          String               @id @default(cuid())
+  tutor24Id   String
+  contactType AcademigoContactType
+  name        String
+  profileUrl  String?
+  messagedAt  DateTime             @default(now())
+
+  @@unique([tutor24Id, contactType])
+}
+
 model FxRateSnapshot {
   id         String   @id @default("default")
   chfPerEur  Float

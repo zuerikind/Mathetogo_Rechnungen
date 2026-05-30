@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { academigoJobState } from "@/lib/automation-state";
 import { jobState, runTutor24Messaging } from "@/lib/tutor24";
 
 export const runtime = "nodejs";
@@ -36,6 +37,9 @@ export async function POST(req: NextRequest) {
 
   if (jobState.running) {
     return NextResponse.json({ error: "Automation is already running" }, { status: 409 });
+  }
+  if (academigoJobState.running) {
+    return NextResponse.json({ error: "Academigo automation is already running" }, { status: 409 });
   }
 
   const body = (await req.json().catch(() => ({}))) as { headless?: boolean; maxPages?: number; subjects?: string[] };

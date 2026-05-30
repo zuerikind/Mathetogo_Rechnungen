@@ -21,6 +21,7 @@ const navItems = [
   { href: "/calendar", label: "Google Kalender", icon: "📅" },
   { href: "/sync", label: "Kalender Sync", icon: "🔄" },
   { href: "/tutor24", label: "Tutor24", icon: "✉️" },
+  { href: "/academigo", label: "Academigo", icon: "🏫" },
   { href: "/settings", label: "Einstellungen", icon: "⚙️" },
 ];
 

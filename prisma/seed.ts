@@ -1,65 +1,68 @@
 import { PrismaClient } from "@prisma/client";
+import { defaultRatePerMinForStudent } from "@/lib/pricing";
 
 const prisma = new PrismaClient();
 
-async function main() {
-  const students = [
-    // 72 CHF / 60 min = 1.2
-    { name: "Thilo",            ratePerMin: 1.2, currency: "CHF" },
-    // 60 CHF / 50 min = 1.2
-    { name: "Alexandra",        ratePerMin: 1.2, currency: "CHF" },
-    // 65 CHF / 50 min, explicit rate 1.2
-    { name: "Sara",             ratePerMin: 1.2, currency: "CHF" },
-    // 60 CHF / 50 min = 1.2
-    { name: "Joseph",           ratePerMin: 1.2, currency: "CHF" },
-    // 55 CHF / 50 min = 1.1
-    { name: "Ruby",             ratePerMin: 1.1, currency: "CHF" },
-    { name: "Elena",            ratePerMin: 1.1, currency: "CHF" },
-    { name: "Liam",             ratePerMin: 1.1, currency: "CHF" },
-    { name: "Poppy",            ratePerMin: 1.1, currency: "CHF" },
-    { name: "Julienne Messmer", ratePerMin: 1.1, currency: "CHF" },
-    { name: "Amelie",           ratePerMin: 1.1, currency: "CHF" },
-    { name: "Nikola/William",   ratePerMin: 1.1, currency: "CHF" },
-    { name: "Nils",             ratePerMin: 1.1, currency: "CHF" },
-    // 65 CHF / 50 min = 1.3
-    { name: "Aiyana",           ratePerMin: 1.3, currency: "CHF" },
-    { name: "Vladimir",         ratePerMin: 1.3, currency: "CHF" },
-    { name: "Juri Düggeli",     ratePerMin: 1.3, currency: "CHF" },
-    { name: "Maximilian",       ratePerMin: 1.3, currency: "CHF" },
-    { name: "Viktor",           ratePerMin: 1.3, currency: "CHF" },
-    { name: "Arno",             ratePerMin: 1.3, currency: "CHF" },
-    { name: "Vincent",          ratePerMin: 1.3, currency: "CHF" },
-    { name: "Alec",             ratePerMin: 1.3, currency: "CHF" },
-    { name: "Leo",              ratePerMin: 1.3, currency: "CHF" },
-    { name: "Juri Wolf",        ratePerMin: 1.3, currency: "CHF" },
-    { name: "Flora",            ratePerMin: 1.3, currency: "CHF" },
-    { name: "Olivia",           ratePerMin: 1.3, currency: "CHF" },
-    { name: "Alyssia",          ratePerMin: 1.3, currency: "CHF" },
-    { name: "Harsheeth",        ratePerMin: 1.3, currency: "CHF" },
-    { name: "Kaija",            ratePerMin: 1.3, currency: "CHF" },
-    { name: "Roxane",           ratePerMin: 1.3, currency: "CHF" },
-    { name: "Una",              ratePerMin: 1.3, currency: "CHF" },
-    { name: "Runqian",          ratePerMin: 1.3, currency: "CHF" },
-    { name: "Khetsün",          ratePerMin: 1.3, currency: "CHF" },
-  ];
+const STUDENT_NAMES = [
+  "Thilo",
+  "Alexandra",
+  "Sara",
+  "Joseph",
+  "Ruby",
+  "Elena",
+  "Liam",
+  "Poppy",
+  "Julienne Messmer",
+  "Amelie",
+  "Nikola/William",
+  "Nils",
+  "Aiyana",
+  "Vladimir",
+  "Juri Düggeli",
+  "Maximilian",
+  "Viktor",
+  "Arno",
+  "Vincent",
+  "Alec",
+  "Leo",
+  "Juri Wolf",
+  "Flora",
+  "Olivia",
+  "Alyssia",
+  "Harsheeth",
+  "Kaija",
+  "Roxane",
+  "Una",
+  "Runqian",
+  "Khetsün",
+  "Aditya",
+  "Raffael",
+  "Vincent/Aurel",
+] as const;
 
-  for (const student of students) {
+async function main() {
+  for (const name of STUDENT_NAMES) {
+    const ratePerMin = defaultRatePerMinForStudent(name);
     await prisma.student.upsert({
-      where: { name: student.name },
-      update: { ratePerMin: student.ratePerMin, currency: student.currency },
-      create: { ...student, subject: "Mathe" },
+      where: { name },
+      update: { ratePerMin, currency: "CHF" },
+      create: { name, subject: "Mathe", ratePerMin, currency: "CHF" },
     });
   }
 
-  // Deactivate old placeholder students no longer in the list
   await prisma.student.updateMany({
     where: { name: { in: ["Johanna", "Alena", "Flurina"] } },
     data: { active: false },
   });
 
-  console.log(`Seed complete: ${students.length} students upserted.`);
+  console.log(`Seed complete: ${STUDENT_NAMES.length} students at 60 CHF/class.`);
 }
 
 main()
-  .catch((e) => { console.error(e); process.exit(1); })
-  .finally(async () => { await prisma.$disconnect(); });
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
