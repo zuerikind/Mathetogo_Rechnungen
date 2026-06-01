@@ -28,11 +28,12 @@ export { tutor24JobState as jobState } from "./automation-state";
 export const MESSAGE_TEMPLATE = TUTOR24_MESSAGE_TEMPLATE;
 
 const BASE_URL = TUTOR24_BASE_URL;
-const SEARCH_BASE = `${BASE_URL}/de/students/search`;
+/** Logged-in tutors land on /jobs/search (students/search redirects there). */
+const SEARCH_BASE = `${BASE_URL}/de/jobs/search?q%5Bplace%5D=8000%2C+Z%C3%BCrich`;
 
 function searchUrl(subject: string, pageNum: number) {
   const q = encodeURIComponent(subject);
-  return `${SEARCH_BASE}?q%5Bsubject_cont%5D=${q}&q%5Bradius%5D=100&page=${pageNum}`;
+  return `${SEARCH_BASE}&q%5Bsubject_cont%5D=${q}&q%5Bdistance%5D=100&page=${pageNum}`;
 }
 
 export async function runTutor24Messaging(
@@ -199,10 +200,12 @@ export async function runTutor24Messaging(
         const links = await collectListingLinks(page, "jobs");
 
         if (links.length === 0) {
-          result.log.push(`${ts()} Seite ${pageNum}: keine passenden Gesuche — Ende`);
+          result.log.push(
+            `${ts()} Seite ${pageNum}: keine Gesuche auf ${page.url()} — Ende (evtl. Filter/Suche prüfen)`
+          );
           break;
         }
-        result.log.push(`${ts()} Seite ${pageNum}: ${links.length} Gesuche gefunden`);
+        result.log.push(`${ts()} Seite ${pageNum}: ${links.length} Gesuche gefunden (${page.url()})`);
 
         for (const { href, id: tutor24Id } of links) {
           if (jobState.shouldStop) {

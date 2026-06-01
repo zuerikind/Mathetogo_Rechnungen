@@ -36,7 +36,15 @@ export async function gotoTutor24(
 }
 
 async function isLoggedInToTutor24(page: import("playwright").Page): Promise<boolean> {
-  if (page.url().includes("sign_in")) return false;
+  const url = page.url();
+
+  if (url.includes("sign_in")) {
+    const loginForm = page.locator("#login-form, form.js-new-user-form").first();
+    if (await loginForm.isVisible().catch(() => false)) return false;
+  }
+
+  // tutor24 redirects here after login; sign-out is often inside a closed user menu
+  if (/\/dashboard(?:\/|$|\?|#)/.test(url)) return true;
 
   const signOut = await findVisible(
     page,
@@ -44,8 +52,21 @@ async function isLoggedInToTutor24(page: import("playwright").Page): Promise<boo
   );
   if (signOut) return true;
 
+  const loggedInNav = await findVisible(
+    page,
+    'a:has-text("Mein Profil"), a[href*="profil-besuche"], a[href*="/conversations"], a[href*="/messages"]'
+  );
+  if (loggedInNav) return true;
+
   const signIn = await findVisible(page, 'a[href*="sign_in"]');
   if (signIn) return false;
+
+  const loginFormVisible = await page
+    .locator("#login-form, form.js-new-user-form")
+    .first()
+    .isVisible()
+    .catch(() => false);
+  if (loginFormVisible) return false;
 
   return false;
 }
@@ -99,6 +120,7 @@ async function waitForLoginOutcome(
     ) {
       return "challenge";
     }
+    if (/\/dashboard(?:\/|$|\?|#)/.test(url)) return "ok";
     if (await isLoggedInToTutor24(page)) return "ok";
     await sleep(400);
   }
@@ -713,25 +735,35 @@ export async function loginToTutor24(
     );
   }
   if (outcome === "still_on_sign_in") {
+    pushLog(`${ts()} ⚠ Login-Status unklar — URL: ${page.url()}`);
     const err = await readLoginError(page);
     throw new Error(
       err
         ? `Login fehlgeschlagen: ${err}`
-        : "Login fehlgeschlagen — TUTOR24_EMAIL / TUTOR24_PASSWORD in .env.local prüfen."
+        : `Login nicht erkannt (URL: ${page.url()}) — Passwort prüfen oder tutor24 manuell testen.`
     );
   }
 
   if (!(await isLoggedInToTutor24(page))) {
-    throw new Error("Login nicht bestätigt — auf tutor24.ch fehlt der Abmelden-Link.");
+    throw new Error(
+      `Login nicht bestätigt (URL: ${page.url()}) — TUTOR24_EMAIL / TUTOR24_PASSWORD prüfen.`
+    );
   }
 
-  pushLog(`${ts()} Login successful`);
+  pushLog(`${ts()} Login erfolgreich — ${page.url()}`);
 }
 
 export async function collectListingLinks(
   page: import("playwright").Page,
   pathSegment: "jobs" | "providers"
 ): Promise<{ href: string; id: string }[]> {
+  const waitSel =
+    pathSegment === "jobs"
+      ? 'a[href*="/jobs/"], a[href*="/students/"], a[href*="/gesuche/"]'
+      : 'a[href*="/providers/"], a[href*="/tutors/"]';
+  await page.waitForSelector(waitSel, { timeout: 20000 }).catch(() => null);
+  await sleep(800);
+
   const segments =
     pathSegment === "jobs"
       ? "students|requests|jobs|gesuche"
