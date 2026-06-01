@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
 import { getInvoicePayload, getNextInvoiceNumber } from "@/lib/invoice";
+import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import {
   INVOICE_BUCKET,
@@ -106,7 +107,10 @@ export async function GET(req: NextRequest) {
 
       // Always rebuild with the current InvoicePDF template so ZIP export never serves stale layouts.
       const payload = await getInvoicePayload(studentId, year, month);
-      if (payload.totalCHF <= 0) continue;
+      if (payload.totalCHF <= 0) {
+        await pruneStaleInvoiceIfUnbillable(studentId, year, month);
+        continue;
+      }
 
       const pdfBuffer = await buildInvoicePdf(payload);
 

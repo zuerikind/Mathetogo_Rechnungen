@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
+import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 
@@ -237,9 +238,15 @@ export async function POST(req: NextRequest) {
       { maxWait: 20_000, timeout: 180_000 }
     );
 
+    let staleInvoicesRemoved = 0;
+    if (removed.count > 0) {
+      staleInvoicesRemoved = await pruneStaleInvoicesInScope({ year, month });
+    }
+
     return NextResponse.json({
       synced: tasks.length,
       removed: removed.count,
+      staleInvoicesRemoved,
       skipped: events.length - tasks.length - unmatched.length,
       unmatched,
       totalEvents: events.length,

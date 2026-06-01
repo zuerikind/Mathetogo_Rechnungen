@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getEffectiveManualBaseline, mergeManualBaselineSessions } from "@/lib/manual-revenue";
+import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
 import { prisma } from "@/lib/prisma";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import { MANUAL_BASELINE_STUDENT_ID } from "@/lib/ui-types";
@@ -47,6 +48,30 @@ export async function GET(req: NextRequest) {
   if (status === "sent" || status === "created") {
     return NextResponse.json(invoices);
   }
+
+  await pruneStaleInvoicesInScope({
+    year: year ? Number(year) : undefined,
+    month: month ? Number(month) : undefined,
+    studentIds: studentId ? [studentId] : undefined,
+  });
+
+  const invoicesAfterPrune = await prisma.invoice.findMany({
+    where: {
+      ...(year ? { year: Number(year) } : {}),
+      ...(month ? { month: Number(month) } : {}),
+      ...(studentId ? { studentId } : {}),
+    },
+    include: {
+      student: {
+        select: {
+          id: true,
+          name: true,
+          subject: true,
+        },
+      },
+    },
+    orderBy: [{ year: "desc" }, { month: "desc" }, { createdAt: "desc" }],
+  });
 
   const sessionRowsRaw = await prisma.session.findMany({
     where: {
@@ -102,7 +127,7 @@ export async function GET(req: NextRequest) {
     entries: baseline.entries,
   });
 
-  const existingKeys = new Set(invoices.map((i) => `${i.studentId}-${i.year}-${i.month}`));
+  const existingKeys = new Set(invoicesAfterPrune.map((i) => `${i.studentId}-${i.year}-${i.month}`));
   const virtualMap = new Map<
     string,
     {
@@ -199,7 +224,7 @@ export async function GET(req: NextRequest) {
     });
     const keys = new Set<string>([
       ...Array.from(effectiveTotals.keys()),
-      ...invoices.map((i) => `${i.studentId}-${i.year}-${i.month}`),
+      ...invoicesAfterPrune.map((i) => `${i.studentId}-${i.year}-${i.month}`),
     ]);
     for (const key of Array.from(keys)) {
       const [sid, yRaw, mRaw] = key.split("-");
@@ -214,16 +239,23 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const realRows = invoices.map((invoice) => {
-    const key = `${invoice.studentId}-${invoice.year}-${invoice.month}`;
-    const nextTotal = effectiveTotals.get(key);
-    return {
-      ...invoice,
-      totalCHF: typeof nextTotal === "number" ? Math.round(nextTotal * 100) / 100 : invoice.totalCHF,
-      isVirtual: false as const,
-    };
-  });
-  const virtualRows = Array.from(virtualMap.values());
+  const realRows = invoicesAfterPrune
+    .map((invoice) => {
+      const key = `${invoice.studentId}-${invoice.year}-${invoice.month}`;
+      const nextTotal = effectiveTotals.get(key);
+      const totalCHF =
+        typeof nextTotal === "number"
+          ? Math.round(nextTotal * 100) / 100
+          : invoice.totalCHF;
+      return {
+        ...invoice,
+        totalCHF,
+        isVirtual: false as const,
+      };
+    })
+    .filter((row) => row.totalCHF > 0 || row.sentAt || row.paidAt);
+
+  const virtualRows = Array.from(virtualMap.values()).filter((row) => row.totalCHF > 0);
 
   const merged = [...realRows, ...virtualRows].sort((a, b) => {
     if (a.year !== b.year) return b.year - a.year;

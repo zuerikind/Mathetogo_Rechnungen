@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
 import { getInvoicePayload, getNextInvoiceNumber } from "@/lib/invoice";
+import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { supabase, INVOICE_BUCKET, invoiceStoragePath, invoicePublicUrl } from "@/lib/supabase";
 
 export async function POST(req: NextRequest) {
@@ -30,6 +31,17 @@ export async function POST(req: NextRequest) {
     }
 
     const payload = await getInvoicePayload(studentId, year, month);
+    if (payload.totalCHF <= 0) {
+      await pruneStaleInvoiceIfUnbillable(studentId, year, month);
+      return NextResponse.json(
+        {
+          error:
+            "Keine abrechenbaren Lektionen oder Abo-Posten für diesen Monat — Rechnung wurde nicht erstellt.",
+        },
+        { status: 400 }
+      );
+    }
+
     const pdfBuffer = await buildInvoicePdf(payload);
 
     const storagePath = invoiceStoragePath(year, month, studentId);
