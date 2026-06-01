@@ -36,12 +36,18 @@ export async function gotoTutor24(
 }
 
 async function isLoggedInToTutor24(page: import("playwright").Page): Promise<boolean> {
-  const url = page.url();
-  if (url.includes("tutor24.ch") && !url.includes("sign_in")) return true;
-  const logout = await page.$(
+  if (page.url().includes("sign_in")) return false;
+
+  const signOut = await findVisible(
+    page,
     'a[href*="sign_out"], a[href*="logout"], form[action*="sign_out"], button:has-text("Abmelden")'
   );
-  return !!logout && (await logout.isVisible().catch(() => false));
+  if (signOut) return true;
+
+  const signIn = await findVisible(page, 'a[href*="sign_in"]');
+  if (signIn) return false;
+
+  return false;
 }
 
 async function readLoginError(page: import("playwright").Page): Promise<string> {
@@ -99,7 +105,7 @@ async function waitForLoginOutcome(
   if (await isLoggedInToTutor24(page)) return "ok";
   const url = page.url();
   if (/two_factor|verification|confirm|challenge|captcha/i.test(url)) return "challenge";
-  return page.url().includes("sign_in") ? "still_on_sign_in" : "ok";
+  return "still_on_sign_in";
 }
 
 export function ts() {
@@ -391,7 +397,17 @@ export const CONTACT_BTN_SEL = [
 ].join(", ");
 
 export const SUBMIT_SEL =
-  'input[type="submit"], button[type="submit"], button:has-text("Senden"), button:has-text("Absenden"), button:has-text("Schicken"), button:has-text("Nachricht senden")';
+  'form:has(textarea[name="message[content]"]) button[type="submit"], ' +
+  'form:has(textarea[name="message[content]"]) input[type="submit"], ' +
+  'form:has(textarea.js-message-form-input) button[type="submit"], ' +
+  'form:has(textarea.js-message-form-input) input[type="submit"], ' +
+  'button:has-text("Nachricht senden"), input[type="submit"], button[type="submit"], ' +
+  'button:has-text("Senden"), button:has-text("Absenden"), button:has-text("Schicken")';
+
+const SEND_SUCCESS_SEL =
+  '[class*="success"], [class*="alert-success"], [class*="notice--success"], ' +
+  'div:has-text("Nachricht gesendet"), div:has-text("erfolgreich gesendet"), ' +
+  'div:has-text("Danke"), p:has-text("Nachricht gesendet")';
 
 const COOKIE_ACCEPT_SEL = [
   "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
@@ -480,6 +496,55 @@ async function hasMessageTextarea(page: import("playwright").Page): Promise<bool
   return !!(await waitForMessageTextarea(page, 1500));
 }
 
+async function fillMessageTextarea(
+  page: import("playwright").Page,
+  textarea: import("playwright").ElementHandle,
+  message: string,
+  pushLog: (s: string) => void,
+  tutor24Id: string
+): Promise<void> {
+  await textarea.click();
+  await textarea.fill("");
+  await textarea.fill(message);
+  await textarea.evaluate((el, v) => {
+    const t = el as HTMLTextAreaElement;
+    t.value = v;
+    t.dispatchEvent(new Event("input", { bubbles: true }));
+    t.dispatchEvent(new Event("change", { bubbles: true }));
+  }, message);
+
+  const len = await textarea.evaluate((el) => (el as HTMLTextAreaElement).value.length);
+  if (len < 20) {
+    pushLog(`${ts()} [${tutor24Id}] ⚠ Textfeld kurz (${len} Zeichen) — tippe erneut`);
+    const sel =
+      'textarea[name="message[content]"], textarea.js-message-form-input';
+    await page.locator(sel).first().pressSequentially(message.slice(0, 500), { delay: 5 });
+  }
+}
+
+async function scrollToSendMessageAnchor(page: import("playwright").Page): Promise<void> {
+  await page.evaluate(() => {
+    const anchor = document.getElementById("send_message");
+    if (anchor) anchor.scrollIntoView({ block: "center", behavior: "instant" });
+  });
+  await sleep(500);
+}
+
+async function messageSendSucceeded(
+  page: import("playwright").Page,
+  preSendUrl: string
+): Promise<boolean> {
+  const postSendUrl = page.url();
+  if (postSendUrl !== preSendUrl) return true;
+  if (await findVisible(page, SEND_SUCCESS_SEL)) return true;
+  if (await findVisible(page, EXISTING_CONVO_SEL)) return true;
+  if (!(await hasMessageTextarea(page))) return true;
+  const ta = await waitForMessageTextarea(page, 1000);
+  if (!ta) return true;
+  const len = await ta.evaluate((el) => (el as HTMLTextAreaElement).value.trim().length);
+  return len === 0;
+}
+
 function messageFormUrls(
   listingHref: string,
   tutor24Id: string,
@@ -529,13 +594,18 @@ async function openMessageForm(
   for (const msgUrl of messageFormUrls(listingHref, tutor24Id, contactHref)) {
     const currentNorm = page.url().split("#")[0].replace(/\/$/, "");
     const targetNorm = msgUrl.split("#")[0].replace(/\/$/, "");
-    // Already on profile with message anchor — don't navigate away to a broken /messages-new URL
+
+    if (currentNorm === targetNorm && msgUrl.includes("#send_message")) {
+      await scrollToSendMessageAnchor(page);
+      const ta = await waitForMessageTextarea(page, 6000);
+      if (ta) return true;
+    }
+
     if (currentNorm === targetNorm && page.url().includes("#send_message")) {
+      await scrollToSendMessageAnchor(page);
       const ta = await waitForMessageTextarea(page, 4000);
       if (ta) return true;
-      continue;
     }
-    if (currentNorm === targetNorm && msgUrl.includes("#") && page.url().includes("#")) continue;
 
     pushLog(`${ts()} [${tutor24Id}] Öffne Nachrichtenformular: ${msgUrl}`);
     await gotoTutor24(page, msgUrl, pushLog);
@@ -558,13 +628,25 @@ async function clickContactButton(
   msgBtn: import("playwright").ElementHandle
 ): Promise<void> {
   const btnHref = await msgBtn.getAttribute("href");
+  await jsClick(msgBtn);
+  await sleep(2000);
+
+  if (await hasMessageTextarea(page)) return;
+
+  if (page.url().includes("#send_message")) {
+    await scrollToSendMessageAnchor(page);
+    await sleep(800);
+    if (await hasMessageTextarea(page)) return;
+  }
+
   const isHashOrEmpty = !btnHref || btnHref.startsWith("#") || btnHref === "";
   if (!isHashOrEmpty && !btnHref.startsWith("javascript:")) {
     const dest = btnHref.startsWith("http") ? btnHref : `${TUTOR24_BASE_URL}${btnHref}`;
     await gotoTutor24(page, dest);
-  } else {
-    await jsClick(msgBtn);
     await sleep(1500);
+    if (page.url().includes("#send_message")) {
+      await scrollToSendMessageAnchor(page);
+    }
   }
 }
 
@@ -639,6 +721,10 @@ export async function loginToTutor24(
     );
   }
 
+  if (!(await isLoggedInToTutor24(page))) {
+    throw new Error("Login nicht bestätigt — auf tutor24.ch fehlt der Abmelden-Link.");
+  }
+
   pushLog(`${ts()} Login successful`);
 }
 
@@ -700,11 +786,11 @@ export async function sendMessageOnListing(
   await acceptTutor24Cookies(page, pushLog);
   await sleep(1000);
 
-  let textarea = await waitForMessageTextarea(page, 8000);
+  let textarea = await waitForMessageTextarea(page, 12000);
   if (!textarea) {
     const profileUrl = listingHref ?? page.url();
     const formReady = await openMessageForm(page, profileUrl, tutor24Id, pushLog, btnHref);
-    textarea = formReady ? await waitForMessageTextarea(page, 4000) : null;
+    textarea = formReady ? await waitForMessageTextarea(page, 8000) : null;
   }
 
   if (!textarea) {
@@ -718,10 +804,14 @@ export async function sendMessageOnListing(
     return "skipped_no_textarea";
   }
 
-  await textarea.fill(message);
+  await fillMessageTextarea(page, textarea, message, pushLog, tutor24Id);
   await sleep(600);
 
-  const submitBtn = await findVisible(page, SUBMIT_SEL);
+  const submitBtn =
+    (await findVisible(
+      page,
+      'form:has(textarea[name="message[content]"]) button[type="submit"], form:has(textarea[name="message[content]"]) input[type="submit"]'
+    )) ?? (await findVisible(page, SUBMIT_SEL));
   const submitDebug = await Promise.all(
     (await page.$$(SUBMIT_SEL)).map(async (b) => {
       const txt = await b.evaluate(
@@ -741,18 +831,10 @@ export async function sendMessageOnListing(
   pushLog(`${ts()} [${tutor24Id}] Sende...`);
   const preSendUrl = page.url();
   await jsClick(submitBtn);
-  await sleep(2500);
+  await sleep(3000);
 
-  const postSendUrl = page.url();
-  const urlChanged = postSendUrl !== preSendUrl;
-  const successEl = await findVisible(
-    page,
-    '[class*="success"], [class*="alert-success"], [class*="notice--success"], ' +
-      'div:has-text("Nachricht gesendet"), div:has-text("erfolgreich gesendet"), ' +
-      'div:has-text("Danke"), p:has-text("Nachricht gesendet")'
-  );
-  if (!urlChanged && !successEl) {
-    pushLog(`${ts()} [${tutor24Id}] ⚠ Kein Erfolgsindikator nach Absenden (URL: ${postSendUrl})`);
+  if (!(await messageSendSucceeded(page, preSendUrl))) {
+    pushLog(`${ts()} [${tutor24Id}] ⚠ Kein Erfolgsindikator nach Absenden (URL: ${page.url()})`);
     return "error_unconfirmed";
   }
 

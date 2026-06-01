@@ -13,12 +13,12 @@ import {
   extractProviderHourlyRate,
   findVisible,
   gotoTutor24,
+  acceptTutor24Cookies,
   isTeacherHourlyRateAllowed,
   loginToTutor24,
   resolveTargetLanguage,
   sendMessageOnListing,
   sleep,
-  acceptTutor24Cookies,
   ts,
   type ListingProfile,
 } from "./tutor24-messaging";
@@ -86,6 +86,7 @@ export async function runAcademigoMessaging(opts: {
 
   try {
     await loginToTutor24(page, email, password, (s) => result.log.push(s));
+    await acceptTutor24Cookies(page, (s) => result.log.push(s));
     result.log.push(`${ts()} Login als ${email} (${MODE_LABEL[mode]})`);
     result.log.push(`${ts()} ════ Academigo: ${MODE_LABEL[mode]} ════`);
     result.log.push(`${ts()} Suche: ${searchBase}`);

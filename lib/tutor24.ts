@@ -12,6 +12,7 @@ import {
   extractProfile,
   findVisible,
   gotoTutor24,
+  acceptTutor24Cookies,
   jsClick,
   loginToTutor24,
   resolveTargetLanguage,
@@ -71,6 +72,7 @@ export async function runTutor24Messaging(
 
   try {
     await loginToTutor24(page, email, password, (s) => result.log.push(s));
+    await acceptTutor24Cookies(page, (s) => result.log.push(s));
 
     for (const subject of subjects) {
       result.log.push(`${ts()} ════ Suche: ${subject} ════`);
