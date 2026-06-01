@@ -62,6 +62,25 @@ async function readLoginError(page: import("playwright").Page): Promise<string> 
   });
 }
 
+/** tutor24 uses #user_login (name user[login]), not user[email]; custom widgets need input events. */
+async function fillTutor24LoginField(
+  page: import("playwright").Page,
+  selector: string,
+  value: string
+): Promise<void> {
+  const field = page.locator(selector).first();
+  await field.waitFor({ state: "visible", timeout: 15000 });
+  await field.click();
+  await field.fill("");
+  await field.fill(value);
+  await field.evaluate((el, v) => {
+    const input = el as HTMLInputElement;
+    input.value = v;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
+}
+
 async function waitForLoginOutcome(
   page: import("playwright").Page,
   timeoutMs: number
@@ -564,14 +583,34 @@ export async function loginToTutor24(
     return;
   }
 
-  const emailSel = 'input[type="email"], input[name="user[email]"]';
-  await page.waitForSelector(emailSel, { timeout: 15000 });
-  await page.fill(emailSel, email);
-  await page.fill('input[type="password"], input[name="user[password]"]', password);
+  await page.waitForSelector("#login-form, form.js-new-user-form", { timeout: 15000 });
+  await sleep(600);
 
-  const submit = await findVisible(page, 'input[type="submit"], button[type="submit"]');
+  const emailField = "#user_login, input[name='user[login]']";
+  const passwordField = "#user_password, input[name='user[password]']";
+
+  await fillTutor24LoginField(page, emailField, email);
+  await fillTutor24LoginField(page, passwordField, password);
+
+  const emailValue = await page.locator(emailField).first().inputValue();
+  if (emailValue.trim() !== email.trim()) {
+    pushLog(`${ts()} ⚠ E-Mail-Feld per fill leer — tippe erneut`);
+    await page.locator(emailField).first().pressSequentially(email, { delay: 25 });
+  }
+
+  const submit =
+    (await findVisible(page, "#login-btn, #login-form input[type='submit']")) ??
+    (await findVisible(page, 'input[type="submit"], button[type="submit"]'));
   if (!submit) {
     throw new Error("Login: Submit-Button auf tutor24.ch nicht gefunden");
+  }
+
+  const emailBeforeSubmit = await page.locator(emailField).first().inputValue();
+  pushLog(
+    `${ts()} Login-Formular: E-Mail="${emailBeforeSubmit ? emailBeforeSubmit.slice(0, 3) + "…" : "(leer)"}"`
+  );
+  if (!emailBeforeSubmit.trim()) {
+    throw new Error("E-Mail wurde nicht ins Login-Feld geschrieben — bitte erneut versuchen.");
   }
 
   // tutor24 often updates via SPA — do not rely on waitForNavigation (times out).
