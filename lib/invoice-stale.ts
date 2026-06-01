@@ -45,6 +45,19 @@ export async function pruneStaleInvoiceIfUnbillable(
   year: number,
   month: number
 ): Promise<boolean> {
+  return removeInvoiceWhenUnbillable(studentId, year, month, { includeSent: false });
+}
+
+/**
+ * Deletes invoice + PDF when nothing is billable for the month.
+ * By default skips sent/paid rows; set includeSent for mistaken sends (e.g. after session removed).
+ */
+export async function removeInvoiceWhenUnbillable(
+  studentId: string,
+  year: number,
+  month: number,
+  opts?: { includeSent?: boolean }
+): Promise<boolean> {
   const billable = await getBillableTotalCHF(studentId, year, month);
   if (billable > 0) return false;
 
@@ -53,7 +66,8 @@ export async function pruneStaleInvoiceIfUnbillable(
     select: { id: true, sentAt: true, paidAt: true },
   });
   if (!invoice) return false;
-  if (invoice.sentAt || invoice.paidAt) return false;
+  if (invoice.paidAt) return false;
+  if (invoice.sentAt && !opts?.includeSent) return false;
 
   await prisma.invoice.delete({ where: { id: invoice.id } });
 

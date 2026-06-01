@@ -174,7 +174,6 @@ export async function POST(req: NextRequest) {
     }
 
     const keepIds = Array.from(new Set(tasks.map((t) => t.calEventId)));
-    const affectedStudentIds = Array.from(new Set(tasks.map((t) => t.studentId)));
     // Safety default: never delete automatically unless explicitly requested.
     const allowPruneOrphans = pruneOrphans === true;
 
@@ -211,27 +210,18 @@ export async function POST(req: NextRequest) {
         }
         // Remove calendar-backed sessions for this month that no longer exist in Google.
         // Manual sessions (calEventId = null) are never touched.
-        if (events.length === 0) {
+        // Do not scope by affectedStudentIds — students with zero calendar events this
+        // sync must still lose orphaned DB rows (e.g. cancelled lesson removed from Google).
+        if (events.length === 0 || keepIds.length === 0) {
           return tx.session.deleteMany({
             where: { year, month, calEventId: { not: null } },
-          });
-        }
-        if (keepIds.length === 0) {
-          if (affectedStudentIds.length === 0) {
-            return tx.session.deleteMany({
-              where: { year, month, calEventId: { not: null } },
-            });
-          }
-          return tx.session.deleteMany({
-            where: { year, month, studentId: { in: affectedStudentIds }, calEventId: { not: null } },
           });
         }
         return tx.session.deleteMany({
           where: {
             year,
             month,
-            calEventId: { notIn: keepIds },
-            ...(affectedStudentIds.length > 0 ? { studentId: { in: affectedStudentIds } } : {}),
+            calEventId: { not: null, notIn: keepIds },
           },
         });
       },
@@ -239,7 +229,7 @@ export async function POST(req: NextRequest) {
     );
 
     let staleInvoicesRemoved = 0;
-    if (removed.count > 0) {
+    if (allowPruneOrphans) {
       staleInvoicesRemoved = await pruneStaleInvoicesInScope({ year, month });
     }
 

@@ -67,6 +67,7 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
   const [parentPhone, setParentPhone] = useState("");
   const [template, setTemplate] = useState(defaultWhatsAppTemplate);
   const [copyState, setCopyState] = useState("");
+  const [voidBusy, setVoidBusy] = useState(false);
 
   const storageKey = `wa-template-${studentId}`;
 
@@ -233,6 +234,38 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
     }
   };
 
+  const voidEmptyInvoice = async () => {
+    if (totals.totalCHF > 0) return;
+    const label = sentDate
+      ? "Diese Rechnung wurde bereits gesendet. Trotzdem entfernen?"
+      : "Rechnung für diesen Monat entfernen?";
+    if (!window.confirm(label)) return;
+
+    setVoidBusy(true);
+    setSendState("");
+    try {
+      const res = await fetch("/api/invoices/void", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ studentId, year, month }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setSendState(data.error ?? "Entfernen fehlgeschlagen.");
+        return;
+      }
+      setInvoice(null);
+      setGeneratedPdfUrl(null);
+      setPreviewNonce((n) => n + 1);
+      setSendState("Rechnung entfernt.");
+      router.push("/invoices");
+    } catch {
+      setSendState("Entfernen fehlgeschlagen.");
+    } finally {
+      setVoidBusy(false);
+    }
+  };
+
   const inputClass = "w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20";
 
   const nextStudentId = useMemo(() => {
@@ -296,12 +329,23 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
                 {formatAmount(totals.subscriptionCHF)}
               </p>
             )}
+            {totals.totalCHF <= 0 && invoice && (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Keine abrechenbaren Lektionen für diesen Monat.
+                {sentDate
+                  ? " Die gespeicherte Rechnung stammt noch von früher — bitte entfernen, wenn sie nicht mehr gilt."
+                  : " Die Rechnung kann entfernt werden."}
+              </p>
+            )}
           </div>
 
           {/* Sessions list */}
           <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Sessions</p>
             <ul className="max-h-48 space-y-1 overflow-auto text-sm text-gray-700">
+              {sessions.length === 0 && subscriptionLines.length === 0 && (
+                <li className="px-2 py-2 text-gray-400">Keine Lektionen in diesem Monat.</li>
+              )}
               {sessions.map((s) => (
                 <li key={s.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-lg px-2 py-1.5 odd:bg-gray-50">
                   <span className="shrink-0">{formatDate(new Date(s.date))}</span>
@@ -336,12 +380,28 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
               <button
                 type="button"
                 onClick={() => void sendInvoice()}
-                disabled={!canSend}
-                title={canSend ? "" : "Bitte E-Mail-Adresse des Schülers hinterlegen"}
+                disabled={!canSend || totals.totalCHF <= 0}
+                title={
+                  totals.totalCHF <= 0
+                    ? "Keine abrechenbaren Lektionen"
+                    : canSend
+                      ? ""
+                      : "Bitte E-Mail-Adresse des Schülers hinterlegen"
+                }
                 className="rounded-xl bg-[#4A7FC1] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 An Schüler senden
               </button>
+              {invoice && totals.totalCHF <= 0 && (
+                <button
+                  type="button"
+                  onClick={() => void voidEmptyInvoice()}
+                  disabled={voidBusy}
+                  className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                >
+                  {voidBusy ? "Entferne…" : "Rechnung entfernen"}
+                </button>
+              )}
             </div>
             {sentDate && (
               <p className="mt-2 text-xs text-green-600">✓ Gesendet am {sentDate}</p>
