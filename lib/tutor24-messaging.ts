@@ -14,6 +14,75 @@ export function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+const NAV_TIMEOUT_MS = 30_000;
+
+/** goto with domcontentloaded; continues if the page is partially loaded after timeout. */
+export async function gotoTutor24(
+  page: import("playwright").Page,
+  url: string,
+  pushLog?: (s: string) => void
+): Promise<void> {
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("Timeout") && !page.url().includes("about:blank")) {
+      pushLog?.(`${ts()} ⚠ Langsames Laden (${page.url()}) — fahre fort`);
+      return;
+    }
+    throw err;
+  }
+  await sleep(400);
+}
+
+async function isLoggedInToTutor24(page: import("playwright").Page): Promise<boolean> {
+  const url = page.url();
+  if (url.includes("tutor24.ch") && !url.includes("sign_in")) return true;
+  const logout = await page.$(
+    'a[href*="sign_out"], a[href*="logout"], form[action*="sign_out"], button:has-text("Abmelden")'
+  );
+  return !!logout && (await logout.isVisible().catch(() => false));
+}
+
+async function readLoginError(page: import("playwright").Page): Promise<string> {
+  return page.evaluate(() => {
+    const selectors = [
+      ".alert-danger",
+      ".alert-error",
+      '[class*="flash-error"]',
+      '[class*="error-message"]',
+      '[role="alert"]',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      const t = (el?.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (t.length > 5 && t.length < 300) return t;
+    }
+    return "";
+  });
+}
+
+async function waitForLoginOutcome(
+  page: import("playwright").Page,
+  timeoutMs: number
+): Promise<"ok" | "still_on_sign_in" | "challenge"> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const url = page.url();
+    if (
+      /two_factor|2fa|verification|confirm|challenge|captcha/i.test(url)
+    ) {
+      return "challenge";
+    }
+    if (await isLoggedInToTutor24(page)) return "ok";
+    await sleep(400);
+  }
+  if (await isLoggedInToTutor24(page)) return "ok";
+  const url = page.url();
+  if (/two_factor|verification|confirm|challenge|captcha/i.test(url)) return "challenge";
+  return page.url().includes("sign_in") ? "still_on_sign_in" : "ok";
+}
+
 export function ts() {
   return new Date().toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
@@ -450,7 +519,7 @@ async function openMessageForm(
     if (currentNorm === targetNorm && msgUrl.includes("#") && page.url().includes("#")) continue;
 
     pushLog(`${ts()} [${tutor24Id}] Öffne Nachrichtenformular: ${msgUrl}`);
-    await page.goto(msgUrl, { waitUntil: "load", timeout: 20000 });
+    await gotoTutor24(page, msgUrl, pushLog);
     await acceptTutor24Cookies(page, pushLog);
     await sleep(1500);
     if (await waitForMessageTextarea(page, 6000)) return true;
@@ -473,7 +542,7 @@ async function clickContactButton(
   const isHashOrEmpty = !btnHref || btnHref.startsWith("#") || btnHref === "";
   if (!isHashOrEmpty && !btnHref.startsWith("javascript:")) {
     const dest = btnHref.startsWith("http") ? btnHref : `${TUTOR24_BASE_URL}${btnHref}`;
-    await page.goto(dest, { waitUntil: "load", timeout: 20000 });
+    await gotoTutor24(page, dest);
   } else {
     await jsClick(msgBtn);
     await sleep(1500);
@@ -486,20 +555,51 @@ export async function loginToTutor24(
   password: string,
   pushLog: (s: string) => void
 ): Promise<void> {
-  pushLog(`${ts()} Logging in to tutor24.ch...`);
-  await page.goto(`${TUTOR24_BASE_URL}/de/sign_in`, { waitUntil: "load", timeout: 20000 });
+  pushLog(`${ts()} Logging in to tutor24.ch (${email})...`);
+  await gotoTutor24(page, `${TUTOR24_BASE_URL}/de/sign_in`, pushLog);
   await acceptTutor24Cookies(page, pushLog);
-  await page.waitForSelector('input[type="email"], input[name="user[email]"]', { timeout: 15000 });
-  await page.fill('input[type="email"], input[name="user[email]"]', email);
-  await page.fill('input[type="password"], input[name="user[password]"]', password);
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: "load", timeout: 20000 }),
-    page.click('input[type="submit"], button[type="submit"]'),
-  ]);
 
-  if (page.url().includes("sign_in")) {
-    throw new Error("Login failed — check credentials in .env.local");
+  if (await isLoggedInToTutor24(page)) {
+    pushLog(`${ts()} Bereits angemeldet`);
+    return;
   }
+
+  const emailSel = 'input[type="email"], input[name="user[email]"]';
+  await page.waitForSelector(emailSel, { timeout: 15000 });
+  await page.fill(emailSel, email);
+  await page.fill('input[type="password"], input[name="user[password]"]', password);
+
+  const submit = await findVisible(page, 'input[type="submit"], button[type="submit"]');
+  if (!submit) {
+    throw new Error("Login: Submit-Button auf tutor24.ch nicht gefunden");
+  }
+
+  // tutor24 often updates via SPA — do not rely on waitForNavigation (times out).
+  await jsClick(submit);
+  try {
+    await page.waitForURL((u) => !u.toString().includes("sign_in"), {
+      timeout: 8000,
+      waitUntil: "domcontentloaded",
+    });
+  } catch {
+    /* poll below */
+  }
+
+  const outcome = await waitForLoginOutcome(page, NAV_TIMEOUT_MS);
+  if (outcome === "challenge") {
+    throw new Error(
+      "Login braucht eine zusätzliche Bestätigung (E-Mail-Link/2FA). Bitte einmal manuell auf tutor24.ch anmelden, dann Automation erneut starten."
+    );
+  }
+  if (outcome === "still_on_sign_in") {
+    const err = await readLoginError(page);
+    throw new Error(
+      err
+        ? `Login fehlgeschlagen: ${err}`
+        : "Login fehlgeschlagen — TUTOR24_EMAIL / TUTOR24_PASSWORD in .env.local prüfen."
+    );
+  }
+
   pushLog(`${ts()} Login successful`);
 }
 

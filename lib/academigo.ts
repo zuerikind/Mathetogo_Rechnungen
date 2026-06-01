@@ -12,6 +12,7 @@ import {
   extractProfile,
   extractProviderHourlyRate,
   findVisible,
+  gotoTutor24,
   isTeacherHourlyRateAllowed,
   loginToTutor24,
   resolveTargetLanguage,
@@ -92,7 +93,7 @@ export async function runAcademigoMessaging(opts: {
     for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
       result.log.push(`${ts()} ── Seite ${pageNum}/${maxPages} ──`);
       const listingUrl = buildPaginatedUrl(searchBase, pageNum);
-      await page.goto(listingUrl, { waitUntil: "load", timeout: 20000 });
+      await gotoTutor24(page, listingUrl, (s) => result.log.push(s));
       await sleep(1200);
 
       const links = await collectListingLinks(page, pathSegment);
@@ -117,7 +118,7 @@ export async function runAcademigoMessaging(opts: {
             continue;
           }
 
-          await page.goto(href, { waitUntil: "load", timeout: 20000 });
+          await gotoTutor24(page, href, (s) => result.log.push(s));
           await sleep(800);
           await acceptTutor24Cookies(page, (s) => result.log.push(s));
 

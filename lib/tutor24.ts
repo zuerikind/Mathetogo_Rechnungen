@@ -11,6 +11,7 @@ import {
   collectListingLinks,
   extractProfile,
   findVisible,
+  gotoTutor24,
   jsClick,
   loginToTutor24,
   resolveTargetLanguage,
@@ -74,7 +75,7 @@ export async function runTutor24Messaging(
     for (const subject of subjects) {
       result.log.push(`${ts()} ════ Suche: ${subject} ════`);
 
-      await page.goto(SEARCH_BASE, { waitUntil: "load", timeout: 20000 });
+      await gotoTutor24(page, SEARCH_BASE, (s) => result.log.push(s));
       await sleep(1000);
 
       let subjectBaseUrl = searchUrl(subject, 1);
@@ -165,11 +166,16 @@ export async function runTutor24Messaging(
         'button[type="submit"], input[type="submit"], button:has-text("Suchen"), button:has-text("Search")'
       );
       if (submitBtn) {
-        await Promise.all([
-          page.waitForNavigation({ waitUntil: "load", timeout: 20000 }).catch(() => {}),
-          jsClick(submitBtn),
-        ]);
-        await sleep(500);
+        const beforeUrl = page.url();
+        await jsClick(submitBtn);
+        try {
+          await page.waitForURL((u) => u.toString() !== beforeUrl, {
+            timeout: 15000,
+            waitUntil: "domcontentloaded",
+          });
+        } catch {
+          await sleep(2000);
+        }
         const postSubmitUrl = page.url();
         if (postSubmitUrl !== SEARCH_BASE && postSubmitUrl.includes("/search")) {
           subjectBaseUrl = postSubmitUrl.replace(/([?&])page=\d+&?/, "$1").replace(/[?&]$/, "");
@@ -185,7 +191,7 @@ export async function runTutor24Messaging(
         result.log.push(`${ts()} ── ${subject} Seite ${pageNum}/${maxPages} ──`);
 
         const listingUrl = buildPaginatedUrl(subjectBaseUrl, pageNum);
-        await page.goto(listingUrl, { waitUntil: "load", timeout: 20000 });
+        await gotoTutor24(page, listingUrl, (s) => result.log.push(s));
         await sleep(1200);
 
         const links = await collectListingLinks(page, "jobs");
@@ -208,7 +214,7 @@ export async function runTutor24Messaging(
               continue;
             }
 
-            await page.goto(href, { waitUntil: "load", timeout: 20000 });
+            await gotoTutor24(page, href, (s) => result.log.push(s));
             await sleep(800);
 
             const listingTitle = await page.title();
