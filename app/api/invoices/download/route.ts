@@ -4,12 +4,14 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
 import { getInvoicePayload, getNextInvoiceNumber } from "@/lib/invoice";
+import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import {
   INVOICE_BUCKET,
   invoicePublicUrl,
   invoiceStoragePath,
   supabase,
 } from "@/lib/supabase";
+import { MANUAL_BASELINE_STUDENT_ID } from "@/lib/ui-types";
 
 function sanitizeFileName(value: string): string {
   return value
@@ -38,8 +40,8 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Prefer existing invoice rows for export candidates; fallback to sessions for first-time months.
-    const invoiceRows = await prisma.invoice.findMany({
+    // Export everyone billable for the month (sessions + Abo), not only students with a saved Invoice row.
+    const sessionRows = await prisma.session.findMany({
       where: { year, month },
       select: {
         studentId: true,
@@ -47,39 +49,56 @@ export async function GET(req: NextRequest) {
       },
       orderBy: { student: { name: "asc" } },
     });
-    const sessions = invoiceRows.length
-      ? []
-      : await prisma.session.findMany({
-          where: { year, month },
-          select: {
-            studentId: true,
-            student: {
-              select: { name: true },
-            },
-          },
-          orderBy: { student: { name: "asc" } },
-        });
 
-    if (invoiceRows.length === 0 && sessions.length === 0) {
+    const students = new Map<string, string>();
+    for (const row of sessionRows) {
+      if (row.studentId === MANUAL_BASELINE_STUDENT_ID) continue;
+      if (!students.has(row.studentId)) {
+        students.set(row.studentId, row.student.name);
+      }
+    }
+
+    const platformSubs = await prisma.platformSubscription.findMany({
+      select: {
+        id: true,
+        studentId: true,
+        amountCHF: true,
+        billingMethod: true,
+        durationMonths: true,
+        startMonth: true,
+        startYear: true,
+        student: { select: { name: true } },
+      },
+    });
+    const subsByStudent = new Map<string, typeof platformSubs>();
+    for (const sub of platformSubs) {
+      const list = subsByStudent.get(sub.studentId) ?? [];
+      list.push(sub);
+      subsByStudent.set(sub.studentId, list);
+    }
+    for (const [studentId, subs] of Array.from(subsByStudent.entries())) {
+      if (students.has(studentId)) continue;
+      const lines = getSubscriptionInvoiceLines(subs, year, month);
+      if (lines.length > 0) {
+        students.set(studentId, subs[0].student.name);
+      }
+    }
+
+    if (students.size === 0) {
       return NextResponse.json(
         { error: "Keine Sessions für diesen Monat gefunden." },
         { status: 404 }
       );
     }
 
-    const students = new Map<string, string>();
-    const sourceRows = invoiceRows.length > 0 ? invoiceRows : sessions;
-    for (const row of sourceRows) {
-      if (!students.has(row.studentId)) {
-        students.set(row.studentId, row.student.name);
-      }
-    }
-
     const zip = new JSZip();
     const prefix = `${year}-${String(month).padStart(2, "0")}`;
     let added = 0;
+    const usedZipNames = new Set<string>();
 
-    for (const [studentId, studentName] of Array.from(students.entries())) {
+    for (const [studentId, studentName] of Array.from(students.entries()).sort((a, b) =>
+      a[1].localeCompare(b[1], "de-CH")
+    )) {
       const storagePath = invoiceStoragePath(year, month, studentId);
       const existing = await prisma.invoice.findUnique({
         where: { studentId_month_year: { studentId, month, year } },
@@ -87,6 +106,8 @@ export async function GET(req: NextRequest) {
 
       // Always rebuild with the current InvoicePDF template so ZIP export never serves stale layouts.
       const payload = await getInvoicePayload(studentId, year, month);
+      if (payload.totalCHF <= 0) continue;
+
       const pdfBuffer = await buildInvoicePdf(payload);
 
       const { error: uploadError } = await supabase.storage
@@ -131,7 +152,11 @@ export async function GET(req: NextRequest) {
         },
       });
 
-      const safeName = sanitizeFileName(studentName);
+      let safeName = sanitizeFileName(studentName);
+      if (usedZipNames.has(safeName)) {
+        safeName = `${safeName}-${studentId.slice(0, 8)}`;
+      }
+      usedZipNames.add(safeName);
       zip.file(`${prefix}-${safeName}.pdf`, pdfBuffer);
       added += 1;
     }
