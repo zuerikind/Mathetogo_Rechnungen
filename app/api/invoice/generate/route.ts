@@ -23,7 +23,8 @@ export async function POST(req: NextRequest) {
       where: { studentId_month_year: { studentId, month, year } },
     });
 
-    if (existing?.sentAt) {
+    // force=true: explicit regeneration after a confirmed tariff change on a billed month.
+    if (existing?.sentAt && body.force !== true) {
       return NextResponse.json(
         { error: "Rechnung wurde bereits gesendet und darf nicht neu generiert werden." },
         { status: 409 }

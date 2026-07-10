@@ -40,6 +40,17 @@ export default function StudentsPage() {
   }, []);
   const [recalculateAllSessions, setRecalculateAllSessions] = useState(false);
   const [tariffError, setTariffError] = useState("");
+  const [billedWarning, setBilledWarning] = useState<{
+    url: string;
+    method: "PUT" | "POST";
+    payload: Record<string, unknown>;
+    opts?: { closePanelsOnSuccess?: boolean };
+    months: { year: number; month: number }[];
+  } | null>(null);
+  const [applyingBilled, setApplyingBilled] = useState(false);
+
+  const monthLabel = (m: { year: number; month: number }) =>
+    `${monthOptions.find((o) => o.value === m.month)?.label ?? m.month} ${m.year}`;
 
   const load = useCallback(async () => {
     try {
@@ -79,7 +90,7 @@ export default function StudentsPage() {
     method: "PUT" | "POST",
     payload: Record<string, unknown>,
     opts?: { closePanelsOnSuccess?: boolean }
-  ) => {
+  ): Promise<boolean> => {
     const closePanelsOnSuccess = opts?.closePanelsOnSuccess !== false;
     const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     if (res.ok) {
@@ -92,26 +103,47 @@ export default function StudentsPage() {
       setPendingSave(null);
       setTariffError("");
       void load();
-      return;
+      return true;
     }
     const data = await res.json().catch(() => ({}));
 
     // Server warns when the recalculation touches already sent/paid months.
     const billedMonths = data.billedMonths as { year: number; month: number }[] | undefined;
     if (res.status === 409 && Array.isArray(billedMonths) && billedMonths.length > 0) {
-      const monthNames = billedMonths
-        .map((m) => `${monthOptions.find((o) => o.value === m.month)?.label ?? m.month} ${m.year}`)
-        .join(", ");
-      const proceed = window.confirm(
-        `Achtung: Diese Tarifänderung berechnet Lektionen in bereits gesendeten/bezahlten Monaten neu:\n\n${monthNames}\n\nDie verschickten Rechnungen stimmen danach nicht mehr mit den gespeicherten Beträgen überein. Trotzdem anwenden?`
-      );
-      if (proceed) {
-        await submitPayload(url, method, { ...payload, confirmBilledMonths: true }, opts);
-      }
-      return;
+      setBilledWarning({ url, method, payload, opts, months: billedMonths });
+      return false;
     }
 
     setTariffError(typeof data.error === "string" ? data.error : "Speichern fehlgeschlagen.");
+    return false;
+  };
+
+  const applyBilledChange = async (regenerateInvoices: boolean) => {
+    if (!billedWarning) return;
+    setApplyingBilled(true);
+    try {
+      const { url, method, payload, opts, months } = billedWarning;
+      const ok = await submitPayload(url, method, { ...payload, confirmBilledMonths: true }, opts);
+      if (!ok) return;
+      setBilledWarning(null);
+      if (regenerateInvoices) {
+        const studentId = url.split("/").pop() ?? "";
+        const failed: string[] = [];
+        for (const m of months) {
+          const res = await fetch("/api/invoice/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ studentId, year: m.year, month: m.month, force: true }),
+          });
+          if (!res.ok) failed.push(monthLabel(m));
+        }
+        if (failed.length > 0) {
+          alert(`Rechnung(en) konnten nicht neu erstellt werden: ${failed.join(", ")}`);
+        }
+      }
+    } finally {
+      setApplyingBilled(false);
+    }
   };
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -325,6 +357,55 @@ export default function StudentsPage() {
                 className="rounded-xl bg-[#4A7FC1] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
               >
                 Speichern und anwenden
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {billedWarning && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl">
+            <h4 className="text-base font-semibold text-gray-900">Bereits verrechnete Monate betroffen</h4>
+            <p className="mt-2 text-sm text-gray-600">
+              Diese Tarifänderung berechnet Lektionen in Monaten neu, deren Rechnung bereits gesendet oder
+              bezahlt wurde:
+            </p>
+            <p className="mt-2 text-sm font-semibold text-gray-900">
+              {billedWarning.months.map(monthLabel).join(", ")}
+            </p>
+            <p className="mt-3 text-xs text-gray-500">
+              <span className="font-semibold">Mit neuer Rechnung:</span> Tarif anwenden und die Rechnungen dieser
+              Monate mit den neuen Beträgen neu erstellen (PDF wird ersetzt — muss neu versendet werden).
+              <br />
+              <span className="font-semibold">Ohne neue Rechnung:</span> nur die Lektionen neu berechnen — die
+              verschickte Rechnung bleibt unverändert.
+            </p>
+            {tariffError && <p className="mt-3 text-sm text-red-600">{tariffError}</p>}
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={applyingBilled}
+                onClick={() => setBilledWarning(null)}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 disabled:opacity-50"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                disabled={applyingBilled}
+                onClick={() => void applyBilledChange(false)}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 disabled:opacity-50"
+              >
+                Ändern ohne neue Rechnung
+              </button>
+              <button
+                type="button"
+                disabled={applyingBilled}
+                onClick={() => void applyBilledChange(true)}
+                className="rounded-xl bg-[#4A7FC1] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
+              >
+                {applyingBilled ? "Wird angewendet…" : "Ändern + neue Rechnung"}
               </button>
             </div>
           </div>
