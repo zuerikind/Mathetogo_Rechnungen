@@ -12,6 +12,7 @@ import {
   extractProfile,
   findVisible,
   gotoTutor24,
+  isSameSearchResultsPage,
   acceptTutor24Cookies,
   jsClick,
   loginToTutor24,
@@ -19,6 +20,7 @@ import {
   sendMessageOnListing,
   sleep,
   ts,
+  waitForJobListingReady,
   type ListingProfile,
 } from "./tutor24-messaging";
 
@@ -194,10 +196,18 @@ export async function runTutor24Messaging(
         result.log.push(`${ts()} ── ${subject} Seite ${pageNum}/${maxPages} ──`);
 
         const listingUrl = buildPaginatedUrl(subjectBaseUrl, pageNum);
-        await gotoTutor24(page, listingUrl, (s) => result.log.push(s));
-        await sleep(1200);
+        const alreadyOnResults =
+          pageNum === 1 && isSameSearchResultsPage(page.url(), listingUrl);
 
-        const links = await collectListingLinks(page, "jobs");
+        if (alreadyOnResults) {
+          result.log.push(`${ts()} Suchergebnisse bereits geladen — sammle Links`);
+        } else {
+          result.log.push(`${ts()} Lade ${listingUrl}`);
+          await gotoTutor24(page, listingUrl, (s) => result.log.push(s));
+        }
+        await acceptTutor24Cookies(page, (s) => result.log.push(s));
+
+        const links = await collectListingLinks(page, "jobs", (s) => result.log.push(s));
 
         if (links.length === 0) {
           result.log.push(
@@ -216,11 +226,13 @@ export async function runTutor24Messaging(
             const existing = await prisma.tutor24Contact.findUnique({ where: { tutor24Id } });
             if (existing) {
               result.skipped++;
+              result.log.push(`${ts()} [${tutor24Id}] bereits in DB — übersprungen`);
               continue;
             }
 
+            result.log.push(`${ts()} [${tutor24Id}] Öffne ${href}`);
             await gotoTutor24(page, href, (s) => result.log.push(s));
-            await sleep(800);
+            await waitForJobListingReady(page, tutor24Id, (s) => result.log.push(s));
 
             const listingTitle = await page.title();
             const displayName = listingTitle.split(/[-–|]/)[0].trim() || tutor24Id;

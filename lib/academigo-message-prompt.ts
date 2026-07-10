@@ -9,13 +9,15 @@ export const DEFAULT_ACADEMIGO_TEACHER_TEMPLATE = `Hallo [Name],
 
 [PERSONALIZED_SECTION]
 
-Ich bin Gründer von Academigo, einer neuen Academy und Lernplattform für Schülerinnen und Schüler in der Schweiz.
+Ich bin Gründer von Academigo, einer neuen Schule und Lernplattform für Schülerinnen und Schüler in der Schweiz. Unser Ziel ist es, qualitativ hochwertige Nachhilfe mit moderner Technologie zu verbinden. Neben persönlichem Unterricht entwickeln wir eine Lernplattform, die Schülerinnen und Schüler individuell beim Lernen unterstützt und Lehrpersonen bei der Vorbereitung, Organisation und Nachbereitung entlastet. So bleibt mehr Zeit für das, was wirklich zählt: guter Unterricht.
 
-Unser Ziel ist es, persönliche Förderung mit moderner Technologie zu verbinden. Neben individuellem Unterricht entwickeln wir eine Plattform, die Schüler beim Lernen unterstützt und Lehrpersonen administrative Arbeit abnimmt.
+Aktuell suchen wir Lehrpersonen, die Deutsch sprechen und eines oder mehrere Fächer unterrichten können. Idealerweise wohnst du in der Schweiz und kannst neben Online-Unterricht auch Präsenzunterricht anbieten. Falls du aber ausschliesslich online unterrichtest, können wir uns trotzdem sehr gerne einmal austauschen.
 
-Aktuell bauen wir unser Lehrpersonen-Netzwerk auf und suchen engagierte Personen, die von Anfang an Teil des Projekts werden möchten. Wir legen grossen Wert auf fachliche Kompetenz, verständliche Erklärungen und eine langfristige Zusammenarbeit.
+Bei Academigo gibt es drei Vergütungsstufen. Die erste beginnt bei CHF 30 pro Lektion (50 Minuten) und reicht bis zu CHF 60 pro Lektion.
 
-Falls das grundsätzlich interessant für dich klingt, würde ich mich über einen kurzen Austausch freuen.
+Ein wichtiger Teil unseres Konzepts ist, dass wir unsere Lehrpersonen nicht einfach vermitteln, sondern auch selbst aus- und weiterbilden. Uns ist wichtig, dass alle bei Academigo auf einem hohen didaktischen Niveau unterrichten und sich kontinuierlich weiterentwickeln können.
+
+Falls das grundsätzlich interessant für dich klingt, würde ich mich freuen, wenn wir uns einmal kurz austauschen.
 
 Liebe Grüsse
 
@@ -25,18 +27,17 @@ Gründer von Academigo`;
 /** @deprecated Alias — Lehrer-Vorlage */
 export const DEFAULT_ACADEMIGO_MESSAGE_TEMPLATE = DEFAULT_ACADEMIGO_TEACHER_TEMPLATE;
 
-export const DEFAULT_ACADEMIGO_STUDENT_TEMPLATE = `Hallo [Name],
+export const DEFAULT_ACADEMIGO_STUDENT_TEMPLATE = `Hallo [Name]
 
 [PERSONALIZED_SECTION]
 
-Ich bin Omid, Gründer von Academigo. Wir bauen in der Schweiz eine Academy und Lernplattform, die persönliche Nachhilfe mit klarer Struktur und moderner Lernbegleitung verbindet.
+Ich bin Omid, Gründer von Academigo, einer Nachhilfeschule hier in der Schweiz. Wir sind seit 12 Jahren in diesem Bereich tätig und haben in dieser Zeit über 300 Schülerinnen und Schülern geholfen, ihre Noten um 1 bis 3 Notenpunkte zu verbessern und wichtige Prüfungen zu bestehen, von der Gymiprüfung über die Matura und Passerelle bis zu Prüfungen an der ETH und Uni.
 
-Wenn du für dein Gesuch passende Unterstützung suchst, prüfen wir gerne gemeinsam, ob unsere Lehrpersonen oder unser Ansatz zu deinen Zielen passen — unverbindlich und ohne Druck.
+Bei uns unterrichten qualifizierte Lehrpersonen, die wir sorgfältig auswählen und mit denen wir eng zusammenarbeiten. Dazu kommt unsere eigene Lernplattform. Dort übst du zwischen den Lektionen mit Aufgaben, die genau zu deinem Stoff passen, und deine Lehrperson sieht immer, wo du stehst. So holst du aus jeder Lektion das Maximum raus. Der Unterricht findet online oder vor Ort statt, wie es dir besser passt.
 
-Melde dich gerne für ein kurzes Gespräch.
+Wenn dich das anspricht, schreib mir gerne auf WhatsApp unter 0786936898. Dann schauen wir zusammen, was du genau brauchst, und finden die perfekte Lehrperson für dich.
 
 Liebe Grüsse
-
 Omid
 Gründer von Academigo`;
 
@@ -99,10 +100,10 @@ function buildTeacherPrompt(profile: ListingProfile, targetLang: ListingProfile[
     `The message looks like this:\n` +
     `  Hallo [FirstName],\n\n` +
     `  [YOUR TEXT]\n\n` +
-    `  Ich bin Gründer von Academigo...\n\n` +
+    `  Ich bin Gründer von Academigo, einer neuen Schule und Lernplattform...\n\n` +
     `Write exactly 1–2 sentences for [YOUR TEXT] (max 45 words).\n` +
     `It must read as a natural continuation after "Hallo [Name]," — not as a separate meta comment about reading the profile.\n` +
-    `Refer to something concrete from the profile (subjects, levels, experience) and why this tutor fits Academigo's teacher network.\n\n` +
+    `Refer to something concrete from the profile (subjects, levels, experience) and why this tutor fits Academigo.\n\n` +
     `GOOD starts: "Dein Schwerpunkt …", "Du bietest …", "Mit deiner Erfahrung in …", "Dein Profil zu … passt …"\n` +
     `BAD starts (never use): "Besonders ist mir aufgefallen", "Mir ist aufgefallen", "Interessant finde ich", "Aufgefallen ist mir"\n\n` +
     `Do NOT repeat the Academigo pitch, Mathetogo, ETH, years of experience, or invented facts.\n` +
@@ -126,13 +127,13 @@ function buildStudentPrompt(profile: ListingProfile, targetLang: ListingProfile[
     `The message looks like this:\n` +
     `  Hallo [FirstName],\n\n` +
     `  [YOUR TEXT]\n\n` +
-    `  Ich bin Omid, Gründer von Academigo...\n\n` +
+    `  Ich bin Omid, Gründer von Academigo, einer Nachhilfeschule hier in der Schweiz...\n\n` +
     `Write exactly 1–2 sentences for [YOUR TEXT] (max 45 words).\n` +
-    `It must read naturally after "Hallo [Name]," — show you read their request and why a short chat from Academigo could help.\n` +
+    `It must read naturally after "Hallo [Name]," — show you read their tutoring request and why a short chat from Academigo could help.\n` +
     `Refer to subject, school level, exam prep, or a concrete goal from the listing.\n\n` +
     `GOOD starts: "Dein Gesuch zu …", "Du suchst …", "Für die Vorbereitung auf …", "Bei deinem Ziel …"\n` +
     `BAD starts (never use): "Mir ist aufgefallen", "Besonders ist mir aufgefallen", "Interessant finde ich"\n\n` +
-    `Do NOT recruit them as a teacher. Do NOT repeat the full Academigo pitch. Do NOT invent subjects or goals not in the listing.\n` +
+    `Do NOT recruit them as a teacher. Do NOT repeat the Academigo pitch (Schule, Lernplattform, 12 Jahre Erfahrung, 300 Schüler, WhatsApp). Do NOT invent subjects or goals not in the listing.\n` +
     `Do NOT start with "Ich".`;
 
   return { system, user };

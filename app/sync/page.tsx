@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { SyncButton } from "@/components/SyncButton";
@@ -9,9 +9,14 @@ import type { SessionWithStudent, SyncResponse } from "@/lib/ui-types";
 
 export default function SyncPage() {
   const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
-  const now = getCurrentMonthYear();
-  const [month, setMonth] = useState(now.month);
-  const [year, setYear] = useState(now.year);
+  const [month, setMonth] = useState(1);
+  const [year, setYear] = useState(() => getCurrentMonthYear().year);
+
+  useEffect(() => {
+    const now = getCurrentMonthYear();
+    setMonth(now.month);
+    setYear(now.year);
+  }, []);
   const [result, setResult] = useState<SyncResponse | null>(null);
   const [sessions, setSessions] = useState<SessionWithStudent[]>([]);
 

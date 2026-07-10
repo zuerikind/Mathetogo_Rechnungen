@@ -62,6 +62,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const amount = Number(amountCHF);
+  if (!Number.isFinite(amount) || amount < 0) {
+    return NextResponse.json({ error: "amountCHF must be a non-negative number" }, { status: 400 });
+  }
+  const startM = Number(startMonth);
+  const startY = Number(startYear);
+  if (!Number.isInteger(startM) || startM < 1 || startM > 12) {
+    return NextResponse.json({ error: "startMonth must be 1-12" }, { status: 400 });
+  }
+  if (!Number.isInteger(startY) || startY < 2000 || startY > 2100) {
+    return NextResponse.json({ error: "startYear must be a valid year" }, { status: 400 });
+  }
+
   // Check for existing active subscription
   const existing = await prisma.platformSubscription.findFirst({
     where: { studentId, active: true },
@@ -76,11 +89,11 @@ export async function POST(req: NextRequest) {
   const subscription = await prisma.platformSubscription.create({
     data: {
       studentId,
-      amountCHF: Number(amountCHF),
+      amountCHF: amount,
       durationMonths: Number(durationMonths),
       billingMethod,
-      startMonth: Number(startMonth),
-      startYear: Number(startYear),
+      startMonth: startM,
+      startYear: startY,
     },
     include: { charges: true },
   });

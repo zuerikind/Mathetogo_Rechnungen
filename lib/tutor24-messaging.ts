@@ -26,8 +26,9 @@ export async function gotoTutor24(
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("Timeout") && !page.url().includes("about:blank")) {
-      pushLog?.(`${ts()} ⚠ Langsames Laden (${page.url()}) — fahre fort`);
+    const current = page.url();
+    if (msg.includes("Timeout") && !current.includes("about:blank")) {
+      pushLog?.(`${ts()} ⚠ Langsames Laden (${current}) — fahre fort`);
       return;
     }
     throw err;
@@ -314,10 +315,7 @@ export function isTeacherHourlyRateAllowed(
     return { allowed: true, reason: `Stundenlohn CHF ${rate.chfPerHour}/h` };
   }
   if (rate.negotiable) {
-    return {
-      allowed: false,
-      reason: "Stundenlohn «Verhandelbar» — kein fester Betrag ≤ Grenze",
-    };
+    return { allowed: true, reason: "Stundenlohn verhandelbar" };
   }
   return { allowed: false, reason: "Kein Stundenlohn auf Profil gefunden" };
 }
@@ -460,10 +458,24 @@ function isExcludedContactLink(href: string | null): boolean {
   );
 }
 
+function isExistingConversationButton(
+  href: string | null,
+  text: string
+): boolean {
+  if (/konversation öffnen|gespräch öffnen/i.test(text)) return true;
+  return isExcludedContactLink(href);
+}
+
 /** tutor24 provider/job pages use .js-btn-send-message (not always /messages/new). */
 async function findContactButton(page: import("playwright").Page) {
-  const primary = await findVisible(page, "a.js-btn-send-message, button.js-btn-send-message");
-  if (primary) return primary;
+  const primaryCandidates = await page.$$("a.js-btn-send-message, button.js-btn-send-message");
+  for (const el of primaryCandidates) {
+    if (!(await el.isVisible())) continue;
+    const href = await el.getAttribute("href");
+    const text = (await el.evaluate((node) => (node.textContent ?? "").replace(/\s+/g, " ").trim())) || "";
+    if (isExistingConversationButton(href, text)) continue;
+    return el;
+  }
 
   const selectors = [
     'a[href*="/users/"][href*="/messages/new"]',
@@ -647,10 +659,21 @@ async function openMessageForm(
 
 async function clickContactButton(
   page: import("playwright").Page,
-  msgBtn: import("playwright").ElementHandle
+  msgBtn: import("playwright").ElementHandle,
+  pushLog?: (s: string) => void
 ): Promise<void> {
   const btnHref = await msgBtn.getAttribute("href");
-  await jsClick(msgBtn);
+  await msgBtn.evaluate((node) => {
+    (node as HTMLElement).scrollIntoView({ block: "center", behavior: "instant" });
+  });
+  await sleep(400);
+
+  try {
+    await msgBtn.click({ timeout: 8000 });
+  } catch {
+    pushLog?.(`${ts()} ⚠ Klick fehlgeschlagen — versuche JS-Klick`);
+    await jsClick(msgBtn);
+  }
   await sleep(2000);
 
   if (await hasMessageTextarea(page)) return;
@@ -664,12 +687,38 @@ async function clickContactButton(
   const isHashOrEmpty = !btnHref || btnHref.startsWith("#") || btnHref === "";
   if (!isHashOrEmpty && !btnHref.startsWith("javascript:")) {
     const dest = btnHref.startsWith("http") ? btnHref : `${TUTOR24_BASE_URL}${btnHref}`;
-    await gotoTutor24(page, dest);
+    pushLog?.(`${ts()} Öffne Kontakt-URL: ${dest}`);
+    await gotoTutor24(page, dest, pushLog);
+    await acceptTutor24Cookies(page, pushLog);
     await sleep(1500);
     if (page.url().includes("#send_message")) {
       await scrollToSendMessageAnchor(page);
     }
+    if (await waitForMessageTextarea(page, 8000)) return;
   }
+}
+
+/** Wait until job listing is interactive (login required for «Ich bin interessiert»). */
+export async function waitForJobListingReady(
+  page: import("playwright").Page,
+  tutor24Id: string,
+  pushLog: (s: string) => void
+): Promise<void> {
+  await acceptTutor24Cookies(page, pushLog);
+
+  const deadline = Date.now() + 25_000;
+  while (Date.now() < deadline) {
+    if (page.url().includes("sign_in")) {
+      throw new Error(
+        `[${tutor24Id}] Nicht angemeldet — tutor24 zeigt die Login-Seite. Bitte Automation neu starten.`
+      );
+    }
+    if (await findVisible(page, EXISTING_CONVO_SEL)) return;
+    if (await findContactButton(page)) return;
+    await sleep(400);
+  }
+
+  pushLog(`${ts()} [${tutor24Id}] ⚠ Job-Seite langsam (${page.url()}) — versuche trotzdem`);
 }
 
 export async function loginToTutor24(
@@ -753,16 +802,48 @@ export async function loginToTutor24(
   pushLog(`${ts()} Login erfolgreich — ${page.url()}`);
 }
 
-export async function collectListingLinks(
+/** Wait until numeric listing cards appear (not nav links like /jobs/search). */
+export async function waitForListingCards(
   page: import("playwright").Page,
   pathSegment: "jobs" | "providers"
-): Promise<{ href: string; id: string }[]> {
-  const waitSel =
+): Promise<boolean> {
+  const pattern =
     pathSegment === "jobs"
-      ? 'a[href*="/jobs/"], a[href*="/students/"], a[href*="/gesuche/"]'
-      : 'a[href*="/providers/"], a[href*="/tutors/"]';
-  await page.waitForSelector(waitSel, { timeout: 20000 }).catch(() => null);
-  await sleep(800);
+      ? "^\\/(de|en|fr)\\/(students|requests|jobs|gesuche)\\/\\d+"
+      : "^\\/(de|en|fr)\\/(providers|tutors|teachers|nachhilfelehrer|private-teacher)\\/\\d+";
+
+  try {
+    await page.waitForFunction(
+      (reSource) => {
+        const re = new RegExp(reSource);
+        return Array.from(document.querySelectorAll("a[href]")).some((a) => {
+          try {
+            return re.test(new URL(a.getAttribute("href") ?? "", window.location.origin).pathname);
+          } catch {
+            return false;
+          }
+        });
+      },
+      pattern,
+      { timeout: 25_000 }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function collectListingLinks(
+  page: import("playwright").Page,
+  pathSegment: "jobs" | "providers",
+  pushLog?: (s: string) => void
+): Promise<{ href: string; id: string }[]> {
+  await acceptTutor24Cookies(page, pushLog);
+  const ready = await waitForListingCards(page, pathSegment);
+  if (!ready) {
+    pushLog?.(`${ts()} ⚠ Warte auf Suchergebnisse — versuche trotzdem (${page.url()})`);
+  }
+  await sleep(600);
 
   const segments =
     pathSegment === "jobs"
@@ -774,15 +855,38 @@ export async function collectListingLinks(
     const seen = new Set<string>();
     const links: { href: string; id: string }[] = [];
     for (const a of anchors) {
-      const m = a.pathname.match(re);
+      let pathname = a.pathname;
+      try {
+        pathname = new URL(a.href, window.location.origin).pathname;
+      } catch {
+        /* keep pathname */
+      }
+      const m = pathname.match(re);
       if (!m) continue;
       const id = m[3];
       if (seen.has(id)) continue;
       seen.add(id);
-      links.push({ href: a.href, id });
+      const href = a.href.split("?")[0];
+      links.push({ href, id });
     }
     return links;
   }, segments);
+}
+
+/** True when current URL is already the same search filter (ignoring page=). */
+export function isSameSearchResultsPage(currentUrl: string, targetUrl: string): boolean {
+  try {
+    const current = new URL(currentUrl);
+    const target = new URL(targetUrl);
+    if (current.pathname !== target.pathname) return false;
+    const c = new URLSearchParams(current.search);
+    const t = new URLSearchParams(target.search);
+    c.delete("page");
+    t.delete("page");
+    return c.toString() === t.toString();
+  } catch {
+    return false;
+  }
 }
 
 export function buildPaginatedUrl(baseUrl: string, pageNum: number): string {
@@ -804,17 +908,40 @@ export async function sendMessageOnListing(
 ): Promise<SendMessageOutcome> {
   await acceptTutor24Cookies(page, pushLog);
 
+  if (page.url().includes("sign_in")) {
+    pushLog(`${ts()} [${tutor24Id}] ⚠ Login-Seite statt Job — übersprungen`);
+    return "skipped_no_button";
+  }
+
   const msgBtn = await findContactButton(page);
   if (!msgBtn) {
-    pushLog(`${ts()} [${tutor24Id}] kein Kontakt-Button — übersprungen`);
+    const onLogin = page.url().includes("sign_in") || (await page.locator("#login-form").isVisible().catch(() => false));
+    pushLog(
+      `${ts()} [${tutor24Id}] kein Kontakt-Button (${page.url()})` +
+        (onLogin ? " — nicht angemeldet" : " — evtl. Seite nicht geladen")
+    );
     return "skipped_no_button";
   }
 
   const btnText = (await msgBtn.evaluate((el) => (el.textContent ?? "").replace(/\s+/g, " ").trim())) || "";
   const btnHref = await msgBtn.getAttribute("href");
+  if (isExistingConversationButton(btnHref, btnText)) {
+    pushLog(`${ts()} [${tutor24Id}] bestehende Konversation — übersprungen`);
+    return "skipped_no_button";
+  }
+
   pushLog(`${ts()} [${tutor24Id}] Kontakt-Button «${btnText.slice(0, 40)}» href=${btnHref ?? "(click)"}`);
 
-  await clickContactButton(page, msgBtn);
+  if (btnHref?.includes("/messages/new")) {
+    const dest = btnHref.startsWith("http") ? btnHref : `${TUTOR24_BASE_URL}${btnHref}`;
+    await gotoTutor24(page, dest, pushLog);
+    await acceptTutor24Cookies(page, pushLog);
+    await sleep(1200);
+  }
+
+  if (!(await hasMessageTextarea(page))) {
+    await clickContactButton(page, msgBtn, pushLog);
+  }
   await acceptTutor24Cookies(page, pushLog);
   await sleep(1000);
 

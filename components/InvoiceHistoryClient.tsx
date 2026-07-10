@@ -5,8 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
-import { formatAmount, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice-format";
-import { formatCHF } from "@/lib/ui-format";
+import { useMounted } from "@/hooks/use-mounted";
+import { formatAmount, formatDate, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice-format";
+import { formatCHF, getCurrentMonthYear, monthOptions } from "@/lib/ui-format";
 
 type InvoiceRow = {
   id: string;
@@ -19,6 +20,9 @@ type InvoiceRow = {
   paidAt: string | null;
   pdfPath: string | null;
   isVirtual?: boolean;
+  /** Sent/paid invoice whose stored total no longer matches the live recalculation. */
+  divergesFromLive?: boolean;
+  liveTotalCHF?: number | null;
   student: { name: string };
 };
 
@@ -42,9 +46,10 @@ function endOfDay(date: Date): Date {
   return d;
 }
 
-function getRowUiState(invoice: InvoiceRow, now: Date): InvoiceRowUiState {
+function getRowUiState(invoice: InvoiceRow, now: Date | null): InvoiceRowUiState {
   if (invoice.paidAt) return "paid";
   if (invoice.sentAt) {
+    if (!now) return "sent";
     const due = endOfDay(getInvoiceDueDate(invoice.year, invoice.month));
     if (now.getTime() > due.getTime()) return "overdue";
     return "sent";
@@ -59,7 +64,7 @@ function getRowClasses(state: InvoiceRowUiState): string {
   return "hover:bg-[#F8FBFF]";
 }
 
-function getStatusLabel(invoice: InvoiceRow, now: Date): string {
+function getStatusLabel(invoice: InvoiceRow, now: Date | null): string {
   const state = getRowUiState(invoice, now);
   if (state === "paid") return "Bezahlt";
   if (state === "overdue") return "Überfällig";
@@ -83,11 +88,12 @@ const FIXED_YEAR_EARNINGS_CHF: Readonly<Record<number, number>> = {
 };
 
 export function InvoiceHistoryClient() {
+  const mounted = useMounted();
   const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
   const [rows, setRows] = useState<InvoiceRow[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
-  /** Default: laufendes Jahr — sonst lädt «Alle Jahre» sehr lange und die Summe ist nicht mit «Jahr gesamt» vergleichbar. */
-  const [year, setYear] = useState(() => String(new Date().getFullYear()));
+  /** Set in useEffect so server (UTC) and browser (Zurich) agree on first paint. */
+  const [year, setYear] = useState("");
   const [month, setMonth] = useState("");
   const [studentId, setStudentId] = useState("");
   const [status, setStatus] = useState("");
@@ -99,8 +105,9 @@ export function InvoiceHistoryClient() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const loadInvoices = useCallback(async () => {
+    if (!year) return;
     const query = new URLSearchParams();
-    if (year) query.set("year", year);
+    query.set("year", year);
     if (month) query.set("month", month);
     if (studentId) query.set("studentId", studentId);
     if (status) query.set("status", status);
@@ -122,6 +129,10 @@ export function InvoiceHistoryClient() {
       setListLoading(false);
     }
   }, [year, month, studentId, status]);
+
+  useEffect(() => {
+    setYear((prev) => prev || String(getCurrentMonthYear().year));
+  }, []);
 
   useEffect(() => {
     void fetch("/api/students")
@@ -150,13 +161,13 @@ export function InvoiceHistoryClient() {
       .catch(() => setSelectedYearYtd(null));
   }, [year]);
 
-  const years = useMemo(() => {
-    const current = new Date().getFullYear();
-    return [current - 1, current, current + 1];
-  }, []);
+  const calendarYear = mounted ? getCurrentMonthYear().year : Number(year) || 2026;
+  const years = useMemo(
+    () => [calendarYear - 1, calendarYear, calendarYear + 1],
+    [calendarYear]
+  );
 
-  const now = new Date();
-  const calendarYear = now.getFullYear();
+  const now = mounted ? new Date() : null;
 
   const earningsByYear = useMemo(() => {
     const map = new Map<number, { totalCHF: number; count: number }>();
@@ -310,21 +321,21 @@ export function InvoiceHistoryClient() {
       if (selectedRows.length === 0) return;
       setBulkBusy(true);
       try {
-        await Promise.all(
-          selectedRows.map(async (row) => {
-            try {
-              const target = await ensurePersistedInvoice(row);
-              const response = await fetch(`/api/invoices/${target.id}/status`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status }),
-              });
-              if (response.ok) updateRowStatusLocally(target.id, status);
-            } catch {
-              // Continue with other rows; one failure should not block the bulk action.
-            }
-          })
-        );
+        // Sequential on purpose: parallel invoice generation races for the same
+        // next invoice number and produces duplicates.
+        for (const row of selectedRows) {
+          try {
+            const target = await ensurePersistedInvoice(row);
+            const response = await fetch(`/api/invoices/${target.id}/status`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status }),
+            });
+            if (response.ok) updateRowStatusLocally(target.id, status);
+          } catch {
+            // Continue with other rows; one failure should not block the bulk action.
+          }
+        }
       } finally {
         setBulkBusy(false);
       }
@@ -384,15 +395,16 @@ export function InvoiceHistoryClient() {
           {/* Filters */}
           <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch sm:justify-end">
             <select value={year} onChange={(e) => setYear(e.target.value)} className={selectClass}>
-              <option value="">Alle Jahre</option>
               {years.map((y) => (
                 <option key={y} value={String(y)}>{y}</option>
               ))}
             </select>
             <select value={month} onChange={(e) => setMonth(e.target.value)} className={selectClass}>
               <option value="">Alle Monate</option>
-              {Array.from({ length: 12 }, (_, idx) => idx + 1).map((m) => (
-                <option key={m} value={String(m)}>{new Intl.DateTimeFormat("de-CH", { month: "long" }).format(new Date(2026, m - 1, 1))}</option>
+              {monthOptions.map((m) => (
+                <option key={m.value} value={String(m.value)}>
+                  {m.label}
+                </option>
               ))}
             </select>
             <select value={studentId} onChange={(e) => setStudentId(e.target.value)} className={selectClass}>
@@ -580,16 +592,30 @@ export function InvoiceHistoryClient() {
                     <td className="whitespace-nowrap px-3 py-3 font-medium text-gray-800 sm:px-5">{getPeriodLabel(invoice.month, invoice.year)}</td>
                     <td className="max-w-[10rem] truncate px-3 py-3 text-gray-700 sm:max-w-none sm:whitespace-normal sm:px-5" title={invoice.student.name}>{invoice.student.name}</td>
                     <td className="whitespace-nowrap px-3 py-3 text-gray-600 sm:px-5">{sessionCount}</td>
-                    <td className="whitespace-nowrap px-3 py-3 font-semibold text-gray-800 sm:px-5">{formatAmount(invoice.totalCHF)}</td>
+                    <td className="whitespace-nowrap px-3 py-3 font-semibold text-gray-800 sm:px-5">
+                      {formatAmount(invoice.totalCHF)}
+                      {invoice.divergesFromLive ? (
+                        <span
+                          className="ml-1 cursor-help text-amber-600"
+                          title={`Weicht von aktueller Berechnung ab${
+                            typeof invoice.liveTotalCHF === "number"
+                              ? ` (aktuell: ${formatAmount(invoice.liveTotalCHF)})`
+                              : ""
+                          } — angezeigt wird der Betrag der verschickten Rechnung.`}
+                        >
+                          ⚠
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-3 py-3 sm:px-5">
                       <span className={`inline-block max-w-full truncate rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadge[statusText]}`} title={statusText}>
                         {statusText}
                       </span>
-                      {rowState !== "paid" && invoice.sentAt && (
+                      {mounted && rowState !== "paid" && invoice.sentAt ? (
                         <div className="mt-1 text-[11px] text-gray-500">
-                          Fällig bis {new Intl.DateTimeFormat("de-CH").format(dueDate)}
+                          Fällig bis {formatDate(dueDate)}
                         </div>
-                      )}
+                      ) : null}
                     </td>
                     <td className="px-3 py-3 sm:px-5">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">

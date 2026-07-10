@@ -45,7 +45,7 @@ const PREVIEW_TEACHER =
   "Dein Schwerpunkt Mathematik und Physik sowie deine Erfahrung mit Schülerinnen und Schülern auf verschiedenen Niveaus passen gut zu dem Netzwerk, das wir bei Academigo aufbauen.";
 
 const PREVIEW_STUDENT =
-  "Dein Gesuch in Mathematik auf Gymi-Niveau klingt nach etwas, bei dem wir dich bei Academigo gerne unverbindlich unterstützen können.";
+  "Für die Vorbereitung auf die Gymiprüfung in Mathematik können wir bei Academigo gezielt passende Unterstützung anbieten — gerne unverbindlich im kurzen Gespräch.";
 
 export default function AcademigoPage() {
   const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
@@ -126,6 +126,41 @@ export default function AcademigoPage() {
         setTemplateDirty(false);
         fetchStatus();
       }
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const handleResetTemplate = async () => {
+    if (
+      !confirm(
+        templateTab === "teachers"
+          ? "Lehrer-Vorlage auf die aktuelle Standardvorlage zurücksetzen?"
+          : "Schüler-Vorlage auf die aktuelle Standardvorlage zurücksetzen?"
+      )
+    ) {
+      return;
+    }
+    setSavingTemplate(true);
+    try {
+      const res = await fetch("/api/academigo", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateTarget: templateTab }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error ?? "Zurücksetzen fehlgeschlagen");
+        return;
+      }
+      if (templateTab === "teachers" && typeof data.teachers === "string") {
+        setTeacherTemplate(data.teachers);
+      }
+      if (templateTab === "students" && typeof data.students === "string") {
+        setStudentTemplate(data.students);
+      }
+      setTemplateDirty(false);
+      fetchStatus();
     } finally {
       setSavingTemplate(false);
     }
@@ -220,7 +255,7 @@ export default function AcademigoPage() {
                 setTemplateDirty(true);
               }}
               disabled={isRunning}
-              rows={14}
+              rows={18}
               className="w-full rounded-xl border border-gray-200 px-3 py-2 font-mono text-xs leading-relaxed text-gray-800"
             />
           </div>
@@ -236,7 +271,13 @@ export default function AcademigoPage() {
             </button>
             <button
               type="button"
-              onClick={() => setShowPreview((v) => !v)}
+              onClick={handleResetTemplate}
+              disabled={isRunning || savingTemplate}
+              className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-600 hover:border-violet-200 hover:text-violet-700 disabled:opacity-50"
+            >
+              Standardvorlage laden
+            </button>
+            <button
               className="text-xs text-violet-600 underline underline-offset-2"
             >
               {showPreview ? "Vorschau verbergen" : "Vorschau mit Beispiel-Einleitung"}
@@ -277,7 +318,7 @@ export default function AcademigoPage() {
             <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-4">
               <h2 className="mb-1 text-sm font-semibold text-gray-900">Lehrer kontaktieren</h2>
               <p className="mb-3 text-xs text-gray-500">
-                providers/search — Nachhilfelehrer in Zürich, max. CHF {ACADEMIGO_MAX_TEACHER_HOURLY_CHF}/h
+                providers/search — Nachhilfelehrer in Zürich, max. CHF {ACADEMIGO_MAX_TEACHER_HOURLY_CHF}/h oder «verhandelbar»
               </p>
               <div className="flex gap-2">
                 <button

@@ -1,7 +1,7 @@
 export type AcademigoMode = "teachers" | "students";
 
 /** Max. Stundenlohn (CHF) für Lehrer-Outreach auf tutor24.ch */
-export const ACADEMIGO_MAX_TEACHER_HOURLY_CHF = 35;
+export const ACADEMIGO_MAX_TEACHER_HOURLY_CHF = 45;
 
 export type AcademigoResult = {
   messaged: number;

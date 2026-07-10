@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
+import { zurichYearMonth } from "@/lib/month-math";
 import { prisma } from "@/lib/prisma";
+import { rateAtDate, type RateHistoryEntry } from "@/lib/rate-history";
 import { auth } from "@/auth";
 
 /** One pool slot + long tx: concurrent /api/sync causes P2024 on the second request. */
@@ -96,6 +98,16 @@ export async function POST(req: NextRequest) {
 
   return runSyncDbSerialized(async () => {
     const students = await prisma.student.findMany({ where: { active: true } });
+    const rateHistoryRows = await prisma.studentRateHistory.findMany({
+      where: { studentId: { in: students.map((s) => s.id) } },
+      select: { studentId: true, ratePerMin: true, effectiveFrom: true },
+    });
+    const rateHistoryByStudent = new Map<string, RateHistoryEntry[]>();
+    for (const row of rateHistoryRows) {
+      const list = rateHistoryByStudent.get(row.studentId) ?? [];
+      list.push({ ratePerMin: row.ratePerMin, effectiveFrom: row.effectiveFrom });
+      rateHistoryByStudent.set(row.studentId, list);
+    }
 
     const unmatched: string[] = [];
     type UpsertTask = {
@@ -130,26 +142,33 @@ export async function POST(req: NextRequest) {
       if (!startStr || !endStr || !calEventId) continue;
 
       const titleLower = title.toLowerCase();
-      const student = students.find((s) => {
+      const matches = students.filter((s) => {
         const nameLower = s.name.toLowerCase();
         const escaped = nameLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const regex = new RegExp(`(?<![a-z])${escaped}(?![a-z])`, "i");
         return regex.test(titleLower);
       });
 
-      if (!student) {
+      if (matches.length === 0) {
         unmatched.push(title);
         continue;
       }
+      if (matches.length > 1) {
+        // Ambiguous: never guess which student (and thus which tariff) applies.
+        unmatched.push(`${title} (mehrdeutig: ${matches.map((s) => s.name).join(", ")})`);
+        continue;
+      }
+      const student = matches[0];
 
       const start = new Date(startStr);
       const end = new Date(endStr);
-      const eventMonth = start.getMonth() + 1;
-      const eventYear = start.getFullYear();
-      if (eventMonth !== month || eventYear !== year) continue;
+      // Bucket by Zurich calendar month — server TZ (UTC on Vercel) shifts midnight events.
+      const eventYm = zurichYearMonth(start);
+      if (eventYm.month !== month || eventYm.year !== year) continue;
       const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
       const existingSession = existingByEventId.get(calEventId);
-      let amountCHF = durationMin * student.ratePerMin;
+      // New sessions get the tariff effective on the lesson date, not today's.
+      let amountCHF = durationMin * rateAtDate(rateHistoryByStudent.get(student.id) ?? [], student.ratePerMin, start);
       if (existingSession) {
         if (existingSession.durationMin > 0) {
           // Keep historical session rate on re-syncs so tariff changes with effective dates are not overwritten.
@@ -168,14 +187,17 @@ export async function POST(req: NextRequest) {
         durationMin,
         amountCHF,
         notes: event.description ?? null,
-        month: eventMonth,
-        year: eventYear,
+        month: eventYm.month,
+        year: eventYm.year,
       });
     }
 
     const keepIds = Array.from(new Set(tasks.map((t) => t.calEventId)));
     // Safety default: never delete automatically unless explicitly requested.
-    const allowPruneOrphans = pruneOrphans === true;
+    // Also skip pruning while events are unmatched: a renamed/deactivated student
+    // would otherwise lose real historical sessions.
+    const allowPruneOrphans = pruneOrphans === true && unmatched.length === 0;
+    const pruneSkippedUnmatched = pruneOrphans === true && unmatched.length > 0;
 
     // Default interactive transaction timeout is too low for a full month of upserts + deleteMany
     // (leads to P2028 "Transaction not found" when Prisma closes the tx mid-loop).
@@ -185,6 +207,8 @@ export async function POST(req: NextRequest) {
           await tx.session.upsert({
             where: { calEventId: t.calEventId },
             update: {
+              // studentId included so corrected event titles reassign the session.
+              studentId: t.studentId,
               date: t.date,
               durationMin: t.durationMin,
               amountCHF: t.amountCHF,
@@ -212,9 +236,11 @@ export async function POST(req: NextRequest) {
         // Manual sessions (calEventId = null) are never touched.
         // Do not scope by affectedStudentIds — students with zero calendar events this
         // sync must still lose orphaned DB rows (e.g. cancelled lesson removed from Google).
+        // Sessions of deactivated students are never pruned — their events can no
+        // longer match, so they would always look like orphans.
         if (events.length === 0 || keepIds.length === 0) {
           return tx.session.deleteMany({
-            where: { year, month, calEventId: { not: null } },
+            where: { year, month, calEventId: { not: null }, student: { active: true } },
           });
         }
         return tx.session.deleteMany({
@@ -222,6 +248,7 @@ export async function POST(req: NextRequest) {
             year,
             month,
             calEventId: { not: null, notIn: keepIds },
+            student: { active: true },
           },
         });
       },
@@ -239,6 +266,7 @@ export async function POST(req: NextRequest) {
       staleInvoicesRemoved,
       skipped: events.length - tasks.length - unmatched.length,
       unmatched,
+      pruneSkippedUnmatched,
       totalEvents: events.length,
     });
   });

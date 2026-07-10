@@ -5,6 +5,7 @@ import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { StudentTable } from "@/components/StudentTable";
 import { STANDARD_RATE_PER_MIN } from "@/lib/pricing";
+import { monthOptions } from "@/lib/ui-format";
 import type { SessionWithStudent, Student } from "@/lib/ui-types";
 
 type EditableStudent = Student & { totalEarned: number; sessions: number };
@@ -32,7 +33,11 @@ export default function StudentsPage() {
     method: "PUT" | "POST";
     body: Record<string, unknown>;
   } | null>(null);
-  const [effectiveFrom, setEffectiveFrom] = useState(todayYmd);
+  const [effectiveFrom, setEffectiveFrom] = useState("");
+
+  useEffect(() => {
+    setEffectiveFrom(todayYmd());
+  }, []);
   const [recalculateAllSessions, setRecalculateAllSessions] = useState(false);
   const [tariffError, setTariffError] = useState("");
 
@@ -90,6 +95,22 @@ export default function StudentsPage() {
       return;
     }
     const data = await res.json().catch(() => ({}));
+
+    // Server warns when the recalculation touches already sent/paid months.
+    const billedMonths = data.billedMonths as { year: number; month: number }[] | undefined;
+    if (res.status === 409 && Array.isArray(billedMonths) && billedMonths.length > 0) {
+      const monthNames = billedMonths
+        .map((m) => `${monthOptions.find((o) => o.value === m.month)?.label ?? m.month} ${m.year}`)
+        .join(", ");
+      const proceed = window.confirm(
+        `Achtung: Diese Tarifänderung berechnet Lektionen in bereits gesendeten/bezahlten Monaten neu:\n\n${monthNames}\n\nDie verschickten Rechnungen stimmen danach nicht mehr mit den gespeicherten Beträgen überein. Trotzdem anwenden?`
+      );
+      if (proceed) {
+        await submitPayload(url, method, { ...payload, confirmBilledMonths: true }, opts);
+      }
+      return;
+    }
+
     setTariffError(typeof data.error === "string" ? data.error : "Speichern fehlgeschlagen.");
   };
 

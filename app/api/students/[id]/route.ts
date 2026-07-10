@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { zurichYearMonth } from "@/lib/month-math";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 
@@ -58,6 +59,49 @@ export async function PUT(
     );
   }
 
+  const effectiveDay = recalculateAllSessions ? null : parseLocalDateOnly(effectiveFromRaw);
+
+  let updates: { id: string; date: Date; durationMin: number }[] = [];
+  if (rateChanged) {
+    const sessions = await prisma.session.findMany({
+      where: { studentId: params.id },
+      select: { id: true, date: true, durationMin: true },
+    });
+    updates = sessions.filter((s) => {
+      if (recalculateAllSessions) return true;
+      if (!effectiveDay) return false;
+      return s.date >= effectiveDay;
+    });
+
+    // Warn before rewriting amounts inside months whose invoice already went out.
+    if (!Boolean(body.confirmBilledMonths) && updates.length > 0) {
+      const affected = Array.from(
+        new Set(updates.map((s) => `${zurichYearMonth(s.date).year}-${zurichYearMonth(s.date).month}`))
+      ).map((key) => {
+        const [y, m] = key.split("-").map(Number);
+        return { year: y, month: m };
+      });
+      const billedInvoices = await prisma.invoice.findMany({
+        where: {
+          studentId: params.id,
+          OR: affected.map((a) => ({ year: a.year, month: a.month })),
+          NOT: { sentAt: null, paidAt: null },
+        },
+        select: { year: true, month: true },
+        orderBy: [{ year: "asc" }, { month: "asc" }],
+      });
+      if (billedInvoices.length > 0) {
+        return NextResponse.json(
+          {
+            error: "Tarifaenderung betrifft bereits gesendete/bezahlte Monate.",
+            billedMonths: billedInvoices.map((i) => ({ year: i.year, month: i.month })),
+          },
+          { status: 409 }
+        );
+      }
+    }
+  }
+
   const student = await prisma.student.update({
     where: { id: params.id },
     data: {
@@ -70,30 +114,43 @@ export async function PUT(
   });
 
   if (rateChanged) {
-    const effectiveDay = recalculateAllSessions ? null : parseLocalDateOnly(effectiveFromRaw);
-    const sessions = await prisma.session.findMany({
-      where: { studentId: params.id },
-      select: { id: true, date: true, durationMin: true },
-    });
-
-    const updates = sessions.filter((s) => {
-      if (recalculateAllSessions) return true;
-      if (!effectiveDay) return false;
-      return s.date >= effectiveDay;
-    });
+    // Keep the rate history in sync so late-synced past lessons get the correct tariff.
+    if (recalculateAllSessions) {
+      // "This rate always applied": collapse history to a single entry.
+      await prisma.$transaction([
+        prisma.studentRateHistory.deleteMany({ where: { studentId: params.id } }),
+        prisma.studentRateHistory.create({
+          data: { studentId: params.id, ratePerMin: nextRate, effectiveFrom: new Date(0) },
+        }),
+      ]);
+    } else if (effectiveDay) {
+      const historyCount = await prisma.studentRateHistory.count({
+        where: { studentId: params.id },
+      });
+      if (historyCount === 0) {
+        // Backfill: the old rate applied before this change.
+        await prisma.studentRateHistory.create({
+          data: { studentId: params.id, ratePerMin: existing.ratePerMin, effectiveFrom: new Date(0) },
+        });
+      }
+      await prisma.studentRateHistory.create({
+        data: { studentId: params.id, ratePerMin: nextRate, effectiveFrom: effectiveDay },
+      });
+    }
 
     if (updates.length > 0) {
       await prisma.$transaction(
-        updates.map((s) =>
-          prisma.session.update({
+        updates.map((s) => {
+          const ym = zurichYearMonth(s.date);
+          return prisma.session.update({
             where: { id: s.id },
             data: {
               amountCHF: Math.round(s.durationMin * nextRate * 100) / 100,
-              month: s.date.getMonth() + 1,
-              year: s.date.getFullYear(),
+              month: ym.month,
+              year: ym.year,
             },
-          })
-        )
+          });
+        })
       );
     }
   }

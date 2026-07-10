@@ -30,9 +30,23 @@ model Student {
   sessions       Session[]
   invoices       Invoice[]
   subscriptions  PlatformSubscription[]
+  rateHistory    StudentRateHistory[]
   createdAt      DateTime  @default(now())
 
   @@index([active, name])
+}
+
+/// Tarif-Verlauf: welcher CHF/Min-Satz galt ab welchem Datum.
+/// Sync bepreist neue Lektionen mit dem Satz, der am Lektionsdatum galt.
+model StudentRateHistory {
+  id            String   @id @default(cuid())
+  studentId     String
+  student       Student  @relation(fields: [studentId], references: [id])
+  ratePerMin    Float
+  effectiveFrom DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([studentId, effectiveFrom])
 }
 
 model Session {

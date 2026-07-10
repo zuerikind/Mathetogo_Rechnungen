@@ -5,11 +5,16 @@
 
 import type { ListingProfile } from "./tutor24-messaging";
 
+/** Fixed intro — always before {{LEVEL_INSERT}}; do not personalize this block. */
+export const TUTOR24_CREDENTIALS_BLOCK = `gerne unterstütze ich dich in Mathematik und der Physik, entweder online oder in Zürich, auf Deutsch oder Englisch. Ich unterrichte seit über 12 Jahren, habe an der ETH studiert und begleite aktuell mehr als 30 aktive Schüler, die meisten auf Gymi- oder Universitätsniveau. Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.`;
+
 export const TUTOR24_MESSAGE_TEMPLATE = `Hallo zusammen,
 
-gerne unterstütze ich dich in Mathematik und der Physik, entweder online oder in Zürich, auf Deutsch oder Englisch. Ich unterrichte seit über 12 Jahren, habe an der ETH studiert und begleite aktuell mehr als 30 aktive Schüler, die meisten auf Gymi- oder Universitätsniveau. Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.
+${TUTOR24_CREDENTIALS_BLOCK}
 
-{{LEVEL_INSERT}}Für meinen Unterricht habe ich eigene Lehrmittel für die Gymivorbereitung, BM-Vorbereitung sowie verschiedene Gymi- und BM-Stufen entwickelt. Zusätzlich habe ich die Lernplattform Mathetogo programmiert (www.platform.mathetogo.xyz). Dort arbeitest du mit klar strukturierten Inhalten, löst gezielte Aufgaben, hältst deinen Lösungsweg fest und erhältst persönliches Feedback. Ergänzende Quizzes helfen dir, deinen Lernstand realistisch einzuschätzen und gezielt Fortschritte zu machen.
+{{LEVEL_INSERT}}
+
+Für meinen Unterricht habe ich eigene Lehrmittel für die Gymivorbereitung, BM-Vorbereitung sowie verschiedene Gymi- und BM-Stufen entwickelt. Zusätzlich habe ich die Lernplattform Mathetogo programmiert (www.platform.mathetogo.xyz). Dort arbeitest du mit klar strukturierten Inhalten, löst gezielte Aufgaben, hältst deinen Lösungsweg fest und erhältst persönliches Feedback. Ergänzende Quizzes helfen dir, deinen Lernstand realistisch einzuschätzen und gezielt Fortschritte zu machen.
 
 Online-Lektionen finden über Google Meet statt. Ich erkläre den Stoff verständlich und visuell mit dem iPad, und nach jeder Lektion erhältst du die bearbeiteten Unterlagen, damit du alles nochmals in Ruhe nachvollziehen kannst.
 
@@ -136,8 +141,14 @@ export async function generateTutor24Message(
         {
           role: "system",
           content:
-            `You are Omid, a math and physics tutor in Switzerland (math and physics only).\n` +
+            `You are Omid, a math and physics tutor in Switzerland (Mathematik and Physik only in the personalised middle section).\n` +
             `You write complete tutor24.ch outreach messages.\n` +
+            `MESSAGE STRUCTURE (strict order):\n` +
+            `1. "Hallo zusammen,"\n` +
+            `2. Credentials block (fixed text — keep meaning; translate for en/fr)\n` +
+            `3. {{LEVEL_INSERT}} — your 1–2 sentence personalisation ONLY here\n` +
+            `4. Rest of template from "Für meinen Unterricht..." through sign-off\n` +
+            `Do NOT merge step 2 and 3. Do NOT rewrite the credentials block to include listing details.\n` +
             `Style: direct, professional, human. No marketing fluff, no em dashes.\n` +
             `TARGET LANGUAGE: ${targetLabel} (${targetLang}). ${languageRule}\n` +
             `Respond with JSON only: {"message":"<full outreach text>"}`,
@@ -147,14 +158,16 @@ export async function generateTutor24Message(
           content:
             `Listing title: "${profile.pageTitle}"\n` +
             `Description: ${context.slice(0, 400)}\n\n` +
-            `Step 1 — personalised opening (1–2 sentences, max 40 words) for {{LEVEL_INSERT}}:\n` +
-            `IF the listing mentions a concrete exam/school goal (Gymi, Matura, BM, Passerelle, university entrance, etc.):\n` +
-            `→ Name that goal and one sentence on why Omid is a strong fit.\n` +
+            `Step 1 — write ONLY the text for {{LEVEL_INSERT}} (1–2 sentences, max 40 words). This goes AFTER the credentials block and BEFORE "Für meinen Unterricht...":\n` +
+            `IF the listing mentions a concrete exam/school goal (Gymi, Matura, BM, Passerelle, university entrance, Primarschule, etc.):\n` +
+            `→ Name that goal and one sentence on why Omid is a strong fit for Mathematik and/or Physik.\n` +
             `ELSE:\n` +
-            `→ One sentence showing you read their need and how Omid can help specifically.\n` +
-            `Do NOT mention: ETH, 12 years experience, 30+ students, own materials, Mathetogo platform, Google Meet, languages offered.\n` +
-            `Do NOT: recap their situation, start with "I", mention location, other subjects.\n\n` +
-            `Step 2 — insert opening into template, output full message in ${targetLabel}:\n` +
+            `→ One sentence showing you read their need and how Omid can help with Mathematik and/or Physik specifically.\n` +
+            `SUBJECTS: Omid teaches Mathematik and Physik only. If the listing also asks for Französisch, Deutsch, Englisch, or other subjects — ignore those here; address only Mathematik and/or Physik. Never offer French or other language tutoring in this section.\n` +
+            `Do NOT repeat or paraphrase the credentials block (ETH, 12 years, 30 students, online/Zürich, Deutsch/Englisch) — that block stays fixed above {{LEVEL_INSERT}}.\n` +
+            `Do NOT mention: own materials, Mathetogo platform, Google Meet in this section.\n` +
+            `Do NOT: recap their whole situation, start with "I", or mention their city.\n\n` +
+            `Step 2 — assemble the FULL message: greeting + credentials block (unchanged) + your Step 1 text + remainder of template. Output in ${targetLabel}:\n` +
             TUTOR24_MESSAGE_TEMPLATE,
         },
       ],

@@ -108,8 +108,11 @@ export async function GET(req: NextRequest) {
     const baselineMonths =
       year === baseline.year ? new Set<number>(baseline.entries.map((e) => e.month)) : new Set<number>();
     const baselineMonthAmount = baseline.entries.find((e) => e.month === month)?.amountCHF ?? null;
+    // YTD = only through the selected month; planned future lessons don't count.
     const baselineYearTotal =
-      year === baseline.year ? baseline.entries.reduce((s, e) => s + e.amountCHF, 0) : 0;
+      year === baseline.year
+        ? baseline.entries.filter((e) => e.month <= month).reduce((s, e) => s + e.amountCHF, 0)
+        : 0;
 
     const [monthAgg, nonBaselineYearAgg] = await Promise.all([
       baselineMonths.has(month)
@@ -121,7 +124,10 @@ export async function GET(req: NextRequest) {
       prisma.session.aggregate({
         where: {
           year,
-          ...(baselineMonths.size > 0 ? { month: { notIn: Array.from(baselineMonths) } } : {}),
+          month: {
+            lte: month,
+            ...(baselineMonths.size > 0 ? { notIn: Array.from(baselineMonths) } : {}),
+          },
         },
         _sum: { amountCHF: true },
       }),

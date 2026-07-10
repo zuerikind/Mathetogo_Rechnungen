@@ -1,19 +1,16 @@
-const monthFormatter = new Intl.DateTimeFormat("de-CH", { month: "long" });
-const dateFormatter = new Intl.DateTimeFormat("de-CH");
+import { formatCHF } from "./ui-format";
 
-const chfFormatter = new Intl.NumberFormat("de-CH", {
-  style: "currency",
-  currency: "CHF",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+const ZURICH_TZ = "Europe/Zurich";
+
+const monthFormatter = new Intl.DateTimeFormat("de-CH", { month: "long", timeZone: ZURICH_TZ });
+const dateFormatter = new Intl.DateTimeFormat("de-CH", { timeZone: ZURICH_TZ });
 
 export function formatDate(date: Date): string {
   return dateFormatter.format(date);
 }
 
 export function formatAmount(amount: number): string {
-  return chfFormatter.format(amount);
+  return formatCHF(amount);
 }
 
 export function formatDuration(minutes: number): string {

@@ -14,6 +14,18 @@ export function addMonths(
   };
 }
 
+const zurichYearMonthFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/Zurich",
+  year: "numeric",
+  month: "2-digit",
+});
+
+/** Which billing month an instant belongs to, in Zurich time (server TZ on Vercel is UTC). */
+export function zurichYearMonth(date: Date): { year: number; month: number } {
+  const [year, month] = zurichYearMonthFormatter.format(date).split("-").map(Number);
+  return { year, month };
+}
+
 export function getChargeMonths(
   startMonth: number,
   startYear: number,

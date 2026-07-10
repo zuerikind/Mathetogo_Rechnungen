@@ -41,6 +41,10 @@ export async function PATCH(
     );
   }
 
+  if (amountCHF !== undefined && (!Number.isFinite(Number(amountCHF)) || Number(amountCHF) < 0)) {
+    return NextResponse.json({ error: "amountCHF must be a non-negative number" }, { status: 400 });
+  }
+
   const subscription = await prisma.platformSubscription.update({
     where: { id: params.id },
     data: {

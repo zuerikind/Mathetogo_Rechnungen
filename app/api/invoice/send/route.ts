@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { prisma } from "@/lib/prisma";
-import { formatAmount, getPeriodLabel, getInvoicePayload } from "@/lib/invoice";
+import { formatAmount, getPeriodLabel } from "@/lib/invoice";
 import { supabase, INVOICE_BUCKET, invoiceStoragePath } from "@/lib/supabase";
+import { getTutorProfile } from "@/lib/tutor-profile";
 
 export async function POST(req: NextRequest) {
   try {
@@ -60,8 +61,15 @@ export async function POST(req: NextRequest) {
     }
 
     const pdfBuffer = Buffer.from(await fileData.arrayBuffer());
-    const payload = await getInvoicePayload(invoice.studentId, invoice.year, invoice.month);
-    const lessonCount = payload.sessions.length;
+    const tutor = await getTutorProfile();
+    // Email amounts come from the stored invoice so text and attached PDF always match.
+    let lessonCount = 0;
+    try {
+      const ids = JSON.parse(invoice.sessionIds || "[]") as unknown;
+      lessonCount = Array.isArray(ids) ? ids.length : 0;
+    } catch {
+      lessonCount = 0;
+    }
     const monthLabel = getPeriodLabel(invoice.month, invoice.year);
     const fileName = storagePath;
 
@@ -69,13 +77,13 @@ export async function POST(req: NextRequest) {
     const html = `
       <p>Liebe/r ${invoice.student.name},</p>
       <p>anbei findest du die Abrechnung für ${monthLabel}.</p>
-      <p>${lessonCount} Lektionen, Total ${formatAmount(payload.totalCHF)}</p>
+      <p>${lessonCount} Lektionen, Total ${formatAmount(invoice.totalCHF)}</p>
       <p>Bei Fragen stehe ich gerne zur Verfügung.</p>
-      <p>Beste Gruesse<br/>${payload.tutor.name}</p>
+      <p>Beste Gruesse<br/>${tutor.name}</p>
     `;
 
     await resend.emails.send({
-      from: payload.tutor.email || process.env.TUTOR_EMAIL || "onboarding@resend.dev",
+      from: tutor.email || process.env.TUTOR_EMAIL || "onboarding@resend.dev",
       to: invoice.student.email,
       subject,
       html,

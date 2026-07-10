@@ -25,7 +25,14 @@ export async function POST(req: NextRequest) {
   }
 
   const student = await prisma.student.create({
-    data: { name, subject, ratePerMin: Number(ratePerMin), email },
+    data: {
+      name,
+      subject,
+      ratePerMin: Number(ratePerMin),
+      email,
+      // Initial rate applies to all dates until a Tarifänderung adds a newer entry.
+      rateHistory: { create: { ratePerMin: Number(ratePerMin), effectiveFrom: new Date(0) } },
+    },
   });
   return NextResponse.json(student, { status: 201 });
 }

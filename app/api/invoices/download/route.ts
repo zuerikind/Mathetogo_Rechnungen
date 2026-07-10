@@ -85,6 +85,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Sent/paid invoices belong in the export even when their sessions were
+    // since removed — they are real, delivered documents.
+    const monthInvoices = await prisma.invoice.findMany({
+      where: { year, month, NOT: { sentAt: null, paidAt: null } },
+      select: { studentId: true, student: { select: { name: true } } },
+    });
+    for (const inv of monthInvoices) {
+      if (!students.has(inv.studentId)) students.set(inv.studentId, inv.student.name);
+    }
+
     if (students.size === 0) {
       return NextResponse.json(
         { error: "Keine Sessions für diesen Monat gefunden." },
@@ -105,7 +115,35 @@ export async function GET(req: NextRequest) {
         where: { studentId_month_year: { studentId, month, year } },
       });
 
-      // Always rebuild with the current InvoicePDF template so ZIP export never serves stale layouts.
+      let safeNameBase = sanitizeFileName(studentName);
+      if (usedZipNames.has(safeNameBase)) {
+        safeNameBase = `${safeNameBase}-${studentId.slice(0, 8)}`;
+      }
+
+      // Sent/paid invoices are frozen: serve the stored PDF exactly as delivered,
+      // never regenerate or update the invoice row.
+      if (existing?.sentAt || existing?.paidAt) {
+        const { data: storedFile } = await supabase.storage
+          .from(INVOICE_BUCKET)
+          .download(storagePath);
+        if (storedFile) {
+          usedZipNames.add(safeNameBase);
+          zip.file(`${prefix}-${safeNameBase}.pdf`, Buffer.from(await storedFile.arrayBuffer()));
+          added += 1;
+          continue;
+        }
+        // Stored PDF missing (should not happen): rebuild for the ZIP only,
+        // without touching storage or the invoice row.
+        const payload = await getInvoicePayload(studentId, year, month);
+        if (payload.totalCHF > 0) {
+          usedZipNames.add(safeNameBase);
+          zip.file(`${prefix}-${safeNameBase}.pdf`, await buildInvoicePdf(payload));
+          added += 1;
+        }
+        continue;
+      }
+
+      // Drafts: rebuild with the current InvoicePDF template so ZIP export never serves stale layouts.
       const payload = await getInvoicePayload(studentId, year, month);
       if (payload.totalCHF <= 0) {
         await pruneStaleInvoiceIfUnbillable(studentId, year, month);
@@ -156,12 +194,8 @@ export async function GET(req: NextRequest) {
         },
       });
 
-      let safeName = sanitizeFileName(studentName);
-      if (usedZipNames.has(safeName)) {
-        safeName = `${safeName}-${studentId.slice(0, 8)}`;
-      }
-      usedZipNames.add(safeName);
-      zip.file(`${prefix}-${safeName}.pdf`, pdfBuffer);
+      usedZipNames.add(safeNameBase);
+      zip.file(`${prefix}-${safeNameBase}.pdf`, pdfBuffer);
       added += 1;
     }
 

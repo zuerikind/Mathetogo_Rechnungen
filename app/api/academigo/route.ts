@@ -4,6 +4,7 @@ import { AcademigoContactType } from "@prisma/client";
 import {
   getAcademigoMessageTemplate,
   getAcademigoTemplates,
+  resetAcademigoTemplatesToDefault,
   saveAcademigoMessageTemplate,
 } from "@/lib/academigo-settings";
 import { academigoJobState, runAcademigoMessaging, type AcademigoMode } from "@/lib/academigo";
@@ -50,6 +51,28 @@ export async function GET(req: NextRequest) {
     contactTotal,
     tutor24Running: tutor24JobState.running,
   });
+}
+
+/** PATCH — reset template(s) to built-in default */
+export async function PATCH(req: NextRequest) {
+  const session = await auth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = (await req.json().catch(() => ({}))) as { templateTarget?: AcademigoMode | "both" };
+  const target =
+    body.templateTarget === "students" || body.templateTarget === "teachers"
+      ? body.templateTarget
+      : "both";
+
+  try {
+    const templates = await resetAcademigoTemplatesToDefault(target);
+    return NextResponse.json({ ok: true, templateTarget: target, ...templates });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 400 }
+    );
+  }
 }
 
 /** PUT — save one template (teachers | students) */

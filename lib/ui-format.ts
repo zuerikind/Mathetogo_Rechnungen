@@ -40,17 +40,22 @@ export const monthOptions = [
   { value: 12, label: "Dezember" },
 ];
 
-const amountFormatter = new Intl.NumberFormat("de-CH", {
-  style: "currency",
-  currency: "CHF",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+const ZURICH_TZ = "Europe/Zurich";
 
-const dateFormatter = new Intl.DateTimeFormat("de-CH");
+const dateFormatter = new Intl.DateTimeFormat("de-CH", { timeZone: ZURICH_TZ });
 
+/**
+ * Swiss CHF display — manual formatting so SSR (Node) and the browser match.
+ * `Intl.NumberFormat("de-CH")` uses `'` (U+2019) on the server and `'` (ASCII) in Chrome.
+ */
 export function formatCHF(amount: number): string {
-  return amountFormatter.format(amount);
+  if (!Number.isFinite(amount)) return "CHF 0.00";
+
+  const sign = amount < 0 ? "−" : "";
+  const abs = Math.abs(amount);
+  const [intPart, decPart] = abs.toFixed(2).split(".");
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, "'");
+  return `${sign}CHF ${grouped}.${decPart}`;
 }
 
 export function formatDate(dateInput: string | Date): string {

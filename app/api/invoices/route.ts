@@ -243,13 +243,18 @@ export async function GET(req: NextRequest) {
     .map((invoice) => {
       const key = `${invoice.studentId}-${invoice.year}-${invoice.month}`;
       const nextTotal = effectiveTotals.get(key);
-      const totalCHF =
-        typeof nextTotal === "number"
-          ? Math.round(nextTotal * 100) / 100
-          : invoice.totalCHF;
+      const liveTotal =
+        typeof nextTotal === "number" ? Math.round(nextTotal * 100) / 100 : null;
+      // Sent/paid invoices show what was actually billed; only drafts track live data.
+      const locked = Boolean(invoice.sentAt || invoice.paidAt);
+      const totalCHF = locked ? invoice.totalCHF : liveTotal ?? invoice.totalCHF;
+      const divergesFromLive =
+        locked && liveTotal !== null && Math.abs(liveTotal - invoice.totalCHF) > 0.005;
       return {
         ...invoice,
         totalCHF,
+        divergesFromLive,
+        liveTotalCHF: liveTotal,
         isVirtual: false as const,
       };
     })

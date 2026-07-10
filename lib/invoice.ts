@@ -92,10 +92,11 @@ export async function getInvoicePayload(
     throw new Error("Schüler nicht gefunden");
   }
 
-  const sessionsSubtotalCHF = sessions.reduce((acc, s) => acc + s.amountCHF, 0);
+  const roundCents = (n: number) => Math.round(n * 100) / 100;
+  const sessionsSubtotalCHF = roundCents(sessions.reduce((acc, s) => acc + s.amountCHF, 0));
   const subscriptionLines = getSubscriptionInvoiceLines(subscriptions, year, month);
   const subscriptionTotalCHF = subscriptionLines.reduce((acc, l) => acc + l.amountCHF, 0);
-  const totalCHF = sessionsSubtotalCHF + subscriptionTotalCHF;
+  const totalCHF = roundCents(sessionsSubtotalCHF + subscriptionTotalCHF);
   const totalMinutes = sessions.reduce((acc, s) => acc + s.durationMin, 0);
   const stored = existingInvoice?.invoiceNumber?.trim();
   const provisional = `${year}-${String(month).padStart(2, "0")}-${getStudentInitials(student.name)}`;
@@ -117,8 +118,18 @@ export async function getInvoicePayload(
 }
 
 export async function getNextInvoiceNumber(year: number): Promise<string> {
-  const count = await prisma.invoice.count({ where: { year } });
-  return `${year}-${String(count + 1).padStart(4, "0")}`;
+  // Highest existing number + 1 (not count + 1): deleting an invoice must never
+  // cause a number to be handed out twice.
+  const rows = await prisma.invoice.findMany({
+    where: { year, invoiceNumber: { startsWith: `${year}-` } },
+    select: { invoiceNumber: true },
+  });
+  let max = 0;
+  for (const row of rows) {
+    const m = /^\d{4}-(\d{4})$/.exec(row.invoiceNumber.trim());
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `${year}-${String(max + 1).padStart(4, "0")}`;
 }
 
 /** Safe ASCII-ish basename for downloads, e.g. `aiyana_04_2026.pdf` */
