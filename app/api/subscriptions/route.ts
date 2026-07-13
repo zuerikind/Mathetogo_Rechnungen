@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
+import { zurichYearMonth } from "@/lib/month-math";
+import { isExpiredAt } from "@/lib/subscription-utils";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -75,11 +77,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "startYear must be a valid year" }, { status: 400 });
   }
 
-  // Check for existing active subscription
-  const existing = await prisma.platformSubscription.findFirst({
+  // Abos deactivate automatically once their duration is over: flip expired
+  // flags here (write-on-read), then only a still-running Abo blocks a new one.
+  const actives = await prisma.platformSubscription.findMany({
     where: { studentId, active: true },
   });
-  if (existing) {
+  const nowRef = zurichYearMonth(new Date());
+  const expiredIds = actives.filter((s) => isExpiredAt(s, nowRef)).map((s) => s.id);
+  if (expiredIds.length > 0) {
+    await prisma.platformSubscription.updateMany({
+      where: { id: { in: expiredIds } },
+      data: { active: false },
+    });
+  }
+  if (actives.some((s) => !isExpiredAt(s, nowRef))) {
     return NextResponse.json(
       { error: "Student hat bereits ein aktives Abonnement" },
       { status: 409 }

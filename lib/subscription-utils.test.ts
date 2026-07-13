@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { chargeStatus, monthsRemaining, buildChargeRows } from "./subscription-utils";
+import { chargeStatus, isExpiredAt, monthsRemaining, buildChargeRows } from "./subscription-utils";
 
 // Reference date for deterministic tests: 2026-04-01
 const REF_DATE = new Date(2026, 3, 1); // month index 3 = April
@@ -50,6 +50,30 @@ describe("monthsRemaining", () => {
     expect(
       monthsRemaining({ startMonth: 4, startYear: 2026, durationMonths: 1 }, REF_DATE)
     ).toBe(1);
+  });
+});
+
+describe("isExpiredAt", () => {
+  const sub6 = { startMonth: 1, startYear: 2026, durationMonths: 6 }; // covers Jan–Jun 2026
+
+  it("is not expired during the last covered month (Jun 2026)", () => {
+    expect(isExpiredAt(sub6, { year: 2026, month: 6 })).toBe(false);
+  });
+
+  it("is expired the month after the last covered month (Jul 2026)", () => {
+    expect(isExpiredAt(sub6, { year: 2026, month: 7 })).toBe(true);
+  });
+
+  it("handles year rollover: Oct 2026 + 6 months covers through Mar 2027", () => {
+    const sub = { startMonth: 10, startYear: 2026, durationMonths: 6 };
+    expect(isExpiredAt(sub, { year: 2027, month: 3 })).toBe(false);
+    expect(isExpiredAt(sub, { year: 2027, month: 4 })).toBe(true);
+  });
+
+  it("a 1-month subscription expires after its single month", () => {
+    const sub = { startMonth: 4, startYear: 2026, durationMonths: 1 };
+    expect(isExpiredAt(sub, { year: 2026, month: 4 })).toBe(false);
+    expect(isExpiredAt(sub, { year: 2026, month: 5 })).toBe(true);
   });
 });
 

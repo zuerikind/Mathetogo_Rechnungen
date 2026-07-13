@@ -41,6 +41,15 @@ export function monthsRemaining(sub: MinimalSubscription, now: Date = new Date()
   return Math.max(0, diff);
 }
 
+/** True when the subscription's last covered month lies before the reference month. */
+export function isExpiredAt(
+  sub: MinimalSubscription,
+  ref: { year: number; month: number }
+): boolean {
+  const end = addMonths(sub.startMonth, sub.startYear, sub.durationMonths);
+  return end.year < ref.year || (end.year === ref.year && end.month <= ref.month);
+}
+
 /**
  * Build the full expected row list for a subscription, merging actual charge
  * rows with expected months. Subscriptions with no charge rows will show all

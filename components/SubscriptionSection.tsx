@@ -31,7 +31,8 @@ export function SubscriptionSection({ studentId, initialSubscriptions }: Subscri
   const [editAmount, setEditAmount] = useState("");
   const [editBillingMethod, setEditBillingMethod] = useState<"invoice" | "direct">("invoice");
 
-  const hasActive = subscriptions.some((s) => s.active);
+  // Abos laufen automatisch aus: nach der Laufzeit zaehlt eines nicht mehr als aktiv.
+  const hasActive = subscriptions.some((s) => s.active && monthsRemaining(s) > 0);
 
   function openEditForm(sub: PlatformSubscriptionWithCharges) {
     setEditingId(sub.id);
@@ -132,30 +133,6 @@ export function SubscriptionSection({ studentId, initialSubscriptions }: Subscri
       }
       setSubscriptions((prev) => prev.filter((s) => s.id !== subId));
       if (editingId === subId) setEditingId(null);
-    } catch {
-      setError("Netzwerkfehler.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleDeactivate(subId: string) {
-    if (!window.confirm("Abonnement wirklich deaktivieren? Dies stoppt zukuenftige Abrechnungen.")) return;
-    setSaving(true);
-    setError("");
-    try {
-      const res = await fetch(`/api/subscriptions/${subId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ active: false }),
-      });
-      if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
-        setError(data.error ?? "Fehler beim Deaktivieren.");
-        return;
-      }
-      const updated = (await res.json()) as PlatformSubscriptionWithCharges;
-      setSubscriptions((prev) => prev.map((s) => (s.id === subId ? updated : s)));
     } catch {
       setError("Netzwerkfehler.");
     } finally {
@@ -300,14 +277,14 @@ export function SubscriptionSection({ studentId, initialSubscriptions }: Subscri
             <div key={sub.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2 flex-wrap">
-                  {/* Status badge */}
-                  {sub.active ? (
+                  {/* Status badge — expiry is automatic after the set duration */}
+                  {sub.active && remaining > 0 ? (
                     <span className="rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">
                       Aktiv
                     </span>
                   ) : (
                     <span className="rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500">
-                      Inaktiv
+                      {sub.active ? "Abgelaufen" : "Inaktiv"}
                     </span>
                   )}
                   <span className="text-sm text-gray-800">{formatCHF(sub.amountCHF)}/Monat</span>
@@ -322,24 +299,14 @@ export function SubscriptionSection({ studentId, initialSubscriptions }: Subscri
                 {!isEditing && (
                   <div className="flex flex-wrap gap-2">
                     {sub.active && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => openEditForm(sub)}
-                          className="text-xs text-[#4A7FC1] hover:underline"
-                          disabled={saving}
-                        >
-                          Bearbeiten
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDeactivate(sub.id)}
-                          className="text-xs text-red-500 hover:underline"
-                          disabled={saving}
-                        >
-                          Deaktivieren
-                        </button>
-                      </>
+                      <button
+                        type="button"
+                        onClick={() => openEditForm(sub)}
+                        className="text-xs text-[#4A7FC1] hover:underline"
+                        disabled={saving}
+                      >
+                        Bearbeiten
+                      </button>
                     )}
                     <button
                       type="button"
