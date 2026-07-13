@@ -18,12 +18,14 @@ type Session = {
   date: string;
   durationMin: number;
   amountCHF: number;
+  student?: { id: string; name: string };
 };
 
 type Student = {
   id: string;
   name: string;
   email: string | null;
+  billedToId?: string | null;
 };
 
 type TutorSettings = {
@@ -38,6 +40,7 @@ type TutorSettings = {
 type Invoice = {
   id: string;
   sentAt: string | null;
+  paidAt?: string | null;
   invoiceNumber?: string | null;
   pdfPath?: string | null;
   month?: number;
@@ -79,26 +82,56 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
       fetch(`/api/invoices?year=${year}`).then((r) => r.json()),
       fetch(`/api/subscriptions?studentId=${encodeURIComponent(studentId)}`).then((r) => r.json()),
       fetch("/api/settings").then((r) => (r.ok ? r.json() : null)),
-    ]).then(([sessionData, studentData, studentsData, invoices, subData, settingsData]) => {
-      setSessions(Array.isArray(sessionData) ? sessionData : []);
-      if (Array.isArray(subData)) {
-        setSubscriptions(
-          subData.map((s: SubscriptionBillingInput) => ({
-            id: s.id,
-            studentId: s.studentId,
-            amountCHF: s.amountCHF,
-            billingMethod: s.billingMethod,
-            durationMonths: s.durationMonths,
-            startMonth: s.startMonth,
-            startYear: s.startYear,
-          }))
-        );
-      } else {
-        setSubscriptions([]);
-      }
+    ]).then(async ([sessionData, studentData, studentsData, invoices, subData, settingsData]) => {
+      const toBillingInput = (s: SubscriptionBillingInput): SubscriptionBillingInput => ({
+        id: s.id,
+        studentId: s.studentId,
+        amountCHF: s.amountCHF,
+        billingMethod: s.billingMethod,
+        durationMonths: s.durationMonths,
+        startMonth: s.startMonth,
+        startYear: s.startYear,
+      });
+      let allSessions: Session[] = Array.isArray(sessionData) ? sessionData : [];
+      let allSubs: SubscriptionBillingInput[] = Array.isArray(subData)
+        ? (subData as SubscriptionBillingInput[]).map(toBillingInput)
+        : [];
+
       const currentStudent =
         studentData && !("error" in studentData) ? (studentData as Student) : null;
       if (currentStudent) setStudent(currentStudent);
+
+      // Familienrechnung: Lektionen/Abos verlinkter Geschwister mitzählen — ausser das Kind
+      // hat für diesen Monat schon eine eigene gesendete/bezahlte Rechnung (wie der Server).
+      const allInvoiceRows = Array.isArray(invoices) ? (invoices as Invoice[]) : [];
+      const childIds = (Array.isArray(studentsData) ? (studentsData as Student[]) : [])
+        .filter((s) => s.billedToId === studentId)
+        .filter(
+          (s) =>
+            !allInvoiceRows.some(
+              (r) => r.studentId === s.id && r.month === month && (r.sentAt || r.paidAt)
+            )
+        )
+        .map((s) => s.id);
+      if (childIds.length > 0) {
+        const extras = await Promise.all(
+          childIds.map(async (cid) => {
+            const [ses, subs] = await Promise.all([
+              fetch(`/api/sessions?studentId=${encodeURIComponent(cid)}&year=${year}&month=${month}`).then((r) => r.json()),
+              fetch(`/api/subscriptions?studentId=${encodeURIComponent(cid)}`).then((r) => r.json()),
+            ]);
+            return { ses, subs };
+          })
+        );
+        for (const extra of extras) {
+          if (Array.isArray(extra.ses)) allSessions = [...allSessions, ...extra.ses];
+          if (Array.isArray(extra.subs)) {
+            allSubs = [...allSubs, ...(extra.subs as SubscriptionBillingInput[]).map(toBillingInput)];
+          }
+        }
+      }
+      setSessions(allSessions);
+      setSubscriptions(allSubs);
 
       const fromStudents = Array.isArray(studentsData) ? (studentsData as Student[]) : [];
       const invoiceRows = Array.isArray(invoices) ? (invoices as Invoice[]) : [];
@@ -146,6 +179,11 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
   const subscriptionLines = useMemo(
     () => getSubscriptionInvoiceLines(subscriptions, year, month),
     [subscriptions, year, month]
+  );
+
+  const hasMultipleStudents = useMemo(
+    () => new Set(sessions.map((s) => s.student?.id).filter(Boolean)).size > 1,
+    [sessions]
   );
 
   const totals = useMemo(() => {
@@ -349,6 +387,9 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
               {sessions.map((s) => (
                 <li key={s.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-lg px-2 py-1.5 odd:bg-gray-50">
                   <span className="shrink-0">{formatDate(new Date(s.date))}</span>
+                  {hasMultipleStudents && s.student?.name ? (
+                    <span className="text-xs text-gray-400">{s.student.name.split(" ")[0]}</span>
+                  ) : null}
                   <span className="text-gray-400">{formatDuration(s.durationMin)}</span>
                   <span className="ml-auto font-medium sm:ml-0">{formatAmount(s.amountCHF)}</span>
                 </li>

@@ -154,6 +154,19 @@ const styles = StyleSheet.create({
   colDuration: { width: 62 },
   colSubject: { width: 218 },
   colAmount: { width: 104, textAlign: "right" },
+  studentHeaderRow: {
+    paddingTop: 10,
+    paddingBottom: 4,
+    paddingHorizontal: 8,
+    borderBottomWidth: 0.5,
+    borderBottomColor: BORDER,
+  },
+  studentHeaderText: {
+    fontSize: 9.5,
+    fontWeight: "bold",
+    color: "#2c2e31",
+    letterSpacing: 0.3,
+  },
   totalsSection: {
     marginTop: 14,
     alignSelf: "flex-end",
@@ -224,6 +237,20 @@ export function InvoicePDF({
   const tutor = payload.tutor;
   const dueDate = getInvoiceDueDate(payload.year, payload.month);
   const hasPaymentSlip = Boolean(paymentSlipSrc);
+  // Familienrechnung: Geschwister als eigene Abschnitte; Einzelrechnung bleibt unverändert.
+  const sections = payload.sections?.length
+    ? payload.sections
+    : [
+        {
+          student: payload.student,
+          sessions: payload.sessions,
+          subtotalCHF: payload.sessionsSubtotalCHF,
+        },
+      ];
+  const isFamily = sections.length > 1;
+  const recipientName = isFamily
+    ? sections.map((s) => s.student.name).join(" & ")
+    : payload.student.name;
   const paymentSlipStyle =
     paymentSlipSrc && paymentSlipWidthPt && paymentSlipHeightPt
       ? { ...styles.paymentSlip, width: paymentSlipWidthPt, height: paymentSlipHeightPt }
@@ -265,8 +292,8 @@ export function InvoicePDF({
         </View>
 
         <View style={styles.recipientBlock}>
-          <Text style={styles.recipientLabel}>Schülername</Text>
-          <Text style={styles.recipientName}>{payload.student.name}</Text>
+          <Text style={styles.recipientLabel}>{isFamily ? "Schüler" : "Schülername"}</Text>
+          <Text style={styles.recipientName}>{recipientName}</Text>
           {payload.student.email ? (
             <Text style={styles.recipientDetail}>{payload.student.email}</Text>
           ) : null}
@@ -279,19 +306,33 @@ export function InvoicePDF({
             <Text style={styles.colSubject}>Leistung / Fach</Text>
             <Text style={styles.colAmount}>Betrag</Text>
           </View>
-          {payload.sessions.map((session, index) => (
-            <View
-              key={session.id}
-              style={[styles.tableRow, ...(index % 2 === 1 ? [styles.altRow] : [])]}
-            >
-              <Text style={styles.colDate}>{formatDate(session.date)}</Text>
-              <Text style={styles.colDuration}>
-                {formatDuration(session.durationMin)}
-              </Text>
-              <Text style={styles.colSubject}>Nachhilfe · {payload.student.subject}</Text>
-              <Text style={styles.colAmount}>{formatAmount(session.amountCHF)}</Text>
-            </View>
-          ))}
+          {sections.map((sec, sIdx) => {
+            const offset = sections
+              .slice(0, sIdx)
+              .reduce((n, s) => n + s.sessions.length, 0);
+            return (
+              <View key={sec.student.id}>
+                {isFamily ? (
+                  <View style={styles.studentHeaderRow}>
+                    <Text style={styles.studentHeaderText}>{sec.student.name}</Text>
+                  </View>
+                ) : null}
+                {sec.sessions.map((session, index) => (
+                  <View
+                    key={session.id}
+                    style={[styles.tableRow, ...((offset + index) % 2 === 1 ? [styles.altRow] : [])]}
+                  >
+                    <Text style={styles.colDate}>{formatDate(session.date)}</Text>
+                    <Text style={styles.colDuration}>
+                      {formatDuration(session.durationMin)}
+                    </Text>
+                    <Text style={styles.colSubject}>Nachhilfe · {sec.student.subject}</Text>
+                    <Text style={styles.colAmount}>{formatAmount(session.amountCHF)}</Text>
+                  </View>
+                ))}
+              </View>
+            );
+          })}
           {payload.subscriptionLines.map((line, i) => (
             <View
               key={line.id}
@@ -307,10 +348,19 @@ export function InvoicePDF({
             </View>
           ))}
           <View style={styles.totalsSection}>
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Zwischensumme Nachhilfe</Text>
-              <Text style={styles.totalValue}>{formatAmount(payload.sessionsSubtotalCHF)}</Text>
-            </View>
+            {isFamily ? (
+              sections.map((sec) => (
+                <View key={`sub-${sec.student.id}`} style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Zwischensumme {sec.student.name}</Text>
+                  <Text style={styles.totalValue}>{formatAmount(sec.subtotalCHF)}</Text>
+                </View>
+              ))
+            ) : (
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Zwischensumme Nachhilfe</Text>
+                <Text style={styles.totalValue}>{formatAmount(payload.sessionsSubtotalCHF)}</Text>
+              </View>
+            )}
             {payload.subscriptionLines.map((line) => (
               <View key={`tot-${line.id}`} style={styles.totalRow}>
                 <Text style={styles.totalLabel}>{line.description}</Text>

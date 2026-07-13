@@ -16,11 +16,24 @@ export async function GET(req: NextRequest) {
   const studentId = searchParams.get("studentId");
   const status = searchParams.get("status");
 
+  // Familienrechnung: Sessions/Abos von verlinkten Geschwistern zählen zur Rechnung des Hauptschülers.
+  const allStudents = await prisma.student.findMany({
+    select: { id: true, name: true, subject: true, billedToId: true },
+  });
+  const studentById = new Map(allStudents.map((s) => [s.id, s]));
+  const billTarget = (id: string) => studentById.get(id)?.billedToId ?? id;
+  // Schüler-Filter schliesst die ganze Rechnungsgruppe ein (auch wenn ein Kind gewählt wurde).
+  const rootId = studentId ? billTarget(studentId) : null;
+  const groupIds = rootId
+    ? [rootId, ...allStudents.filter((s) => s.billedToId === rootId).map((s) => s.id)]
+    : null;
+  const studentFilter = groupIds ? { studentId: { in: groupIds } } : {};
+
   const invoices = await prisma.invoice.findMany({
     where: {
       ...(year ? { year: Number(year) } : {}),
       ...(month ? { month: Number(month) } : {}),
-      ...(studentId ? { studentId } : {}),
+      ...studentFilter,
       ...(status === "paid"
         ? { paidAt: { not: null } }
         : status === "sent"
@@ -52,14 +65,14 @@ export async function GET(req: NextRequest) {
   await pruneStaleInvoicesInScope({
     year: year ? Number(year) : undefined,
     month: month ? Number(month) : undefined,
-    studentIds: studentId ? [studentId] : undefined,
+    studentIds: groupIds ?? undefined,
   });
 
   const invoicesAfterPrune = await prisma.invoice.findMany({
     where: {
       ...(year ? { year: Number(year) } : {}),
       ...(month ? { month: Number(month) } : {}),
-      ...(studentId ? { studentId } : {}),
+      ...studentFilter,
     },
     include: {
       student: {
@@ -77,7 +90,7 @@ export async function GET(req: NextRequest) {
     where: {
       ...(year ? { year: Number(year) } : {}),
       ...(month ? { month: Number(month) } : {}),
-      ...(studentId ? { studentId } : {}),
+      ...studentFilter,
     },
     select: {
       id: true,
@@ -128,6 +141,15 @@ export async function GET(req: NextRequest) {
   });
 
   const existingKeys = new Set(invoicesAfterPrune.map((i) => `${i.studentId}-${i.year}-${i.month}`));
+  // Monate, in denen ein Schüler bereits eine eigene gesendete/bezahlte Rechnung hat
+  // (z. B. vor der Familien-Verknüpfung): seine Beträge bleiben bei ihm statt beim Hauptschüler.
+  const separatelyBilledKeys = new Set(
+    invoicesAfterPrune
+      .filter((i) => i.sentAt || i.paidAt)
+      .map((i) => `${i.studentId}-${i.year}-${i.month}`)
+  );
+  const effTarget = (id: string, y: number, m: number) =>
+    separatelyBilledKeys.has(`${id}-${y}-${m}`) ? id : billTarget(id);
   const virtualMap = new Map<
     string,
     {
@@ -148,12 +170,14 @@ export async function GET(req: NextRequest) {
 
   for (const row of sessionRows) {
     if (row.studentId === MANUAL_BASELINE_STUDENT_ID) continue;
-    const key = `${row.studentId}-${row.year}-${row.month}`;
+    const targetId = effTarget(row.studentId, row.year, row.month);
+    const target = studentById.get(targetId);
+    const key = `${targetId}-${row.year}-${row.month}`;
     if (existingKeys.has(key)) continue;
     if (!virtualMap.has(key)) {
       virtualMap.set(key, {
         id: `virtual-${key}`,
-        studentId: row.studentId,
+        studentId: targetId,
         year: row.year,
         month: row.month,
         totalCHF: 0,
@@ -164,9 +188,9 @@ export async function GET(req: NextRequest) {
         invoiceNumber: null,
         isVirtual: true,
         student: {
-          id: row.student.id,
-          name: row.student.name,
-          subject: row.student.subject,
+          id: targetId,
+          name: target?.name ?? row.student.name,
+          subject: target?.subject ?? row.student.subject,
         },
       });
     }
@@ -180,48 +204,65 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const studentIdsForSubs = Array.from(new Set(sessionRows.map((r) => r.studentId)));
-  if (studentIdsForSubs.length > 0) {
-    const platformSubs = await prisma.platformSubscription.findMany({
-      where: { studentId: { in: studentIdsForSubs } },
-      select: {
-        id: true,
-        studentId: true,
-        amountCHF: true,
-        billingMethod: true,
-        durationMonths: true,
-        startMonth: true,
-        startYear: true,
-      },
+  const platformSubs = await prisma.platformSubscription.findMany({
+    // Gruppen-Filter wie bei Sessions/Invoices: Abos der ganzen Familie mitladen.
+    where: { ...studentFilter },
+    select: {
+      id: true,
+      studentId: true,
+      amountCHF: true,
+      billingMethod: true,
+      durationMonths: true,
+      startMonth: true,
+      startYear: true,
+      student: { select: { id: true, name: true, subject: true } },
+    },
+  });
+
+  // Rechnung-Abos put the full contract price on the start-month invoice, so a
+  // start month without sessions still needs a virtual invoice row.
+  for (const s of platformSubs) {
+    if (s.billingMethod !== "invoice") continue;
+    if (year && s.startYear !== Number(year)) continue;
+    if (month && s.startMonth !== Number(month)) continue;
+    const targetId = effTarget(s.studentId, s.startYear, s.startMonth);
+    const target = studentById.get(targetId);
+    const key = `${targetId}-${s.startYear}-${s.startMonth}`;
+    if (existingKeys.has(key) || virtualMap.has(key)) continue;
+    virtualMap.set(key, {
+      id: `virtual-${key}`,
+      studentId: targetId,
+      year: s.startYear,
+      month: s.startMonth,
+      totalCHF: 0,
+      sessionIds: "[]",
+      sentAt: null,
+      paidAt: null,
+      pdfPath: null,
+      invoiceNumber: null,
+      isVirtual: true,
+      student: target
+        ? { id: target.id, name: target.name, subject: target.subject }
+        : s.student,
     });
-    for (const v of Array.from(virtualMap.values())) {
-      const lines = getSubscriptionInvoiceLines(
-        platformSubs.filter((s) => s.studentId === v.studentId),
-        v.year,
-        v.month
-      );
-      v.totalCHF += lines.reduce((acc, l) => acc + l.amountCHF, 0);
-    }
+  }
+
+  for (const v of Array.from(virtualMap.values())) {
+    const lines = getSubscriptionInvoiceLines(
+      platformSubs.filter((s) => effTarget(s.studentId, v.year, v.month) === v.studentId),
+      v.year,
+      v.month
+    );
+    v.totalCHF += lines.reduce((acc, l) => acc + l.amountCHF, 0);
   }
 
   const effectiveTotals = new Map<string, number>();
   for (const row of sessionRows) {
-    const key = `${row.studentId}-${row.year}-${row.month}`;
+    // effTarget lässt Fremd-IDs (manuelle Baseline) unverändert.
+    const key = `${effTarget(row.studentId, row.year, row.month)}-${row.year}-${row.month}`;
     effectiveTotals.set(key, (effectiveTotals.get(key) ?? 0) + row.amountCHF);
   }
-  if (studentIdsForSubs.length > 0) {
-    const platformSubs = await prisma.platformSubscription.findMany({
-      where: { studentId: { in: studentIdsForSubs } },
-      select: {
-        id: true,
-        studentId: true,
-        amountCHF: true,
-        billingMethod: true,
-        durationMonths: true,
-        startMonth: true,
-        startYear: true,
-      },
-    });
+  if (platformSubs.length > 0) {
     const keys = new Set<string>([
       ...Array.from(effectiveTotals.keys()),
       ...invoicesAfterPrune.map((i) => `${i.studentId}-${i.year}-${i.month}`),
@@ -231,7 +272,7 @@ export async function GET(req: NextRequest) {
       const y = Number(yRaw);
       const m = Number(mRaw);
       const sub = getSubscriptionInvoiceLines(
-        platformSubs.filter((s) => s.studentId === sid),
+        platformSubs.filter((s) => effTarget(s.studentId, y, m) === sid),
         y,
         m
       ).reduce((acc, l) => acc + l.amountCHF, 0);

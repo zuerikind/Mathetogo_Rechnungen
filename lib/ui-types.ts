@@ -6,6 +6,8 @@ export type Student = {
   currency?: string;
   email?: string | null;
   active?: boolean;
+  /** Familienrechnung: id des Schülers, über dessen Rechnung abgerechnet wird. */
+  billedToId?: string | null;
 };
 
 export type SessionWithStudent = {

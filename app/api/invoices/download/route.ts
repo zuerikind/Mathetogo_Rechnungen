@@ -41,6 +41,25 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // Familienrechnung: Sessions verlinkter Geschwister zählen zum Hauptschüler.
+    const allStudents = await prisma.student.findMany({
+      select: { id: true, name: true, billedToId: true },
+    });
+    const studentById = new Map(allStudents.map((s) => [s.id, s]));
+    const nameOf = (id: string, fallback: string) => studentById.get(id)?.name ?? fallback;
+
+    // Sent/paid invoices belong in the export even when their sessions were
+    // since removed — they are real, delivered documents.
+    const monthInvoices = await prisma.invoice.findMany({
+      where: { year, month, NOT: { sentAt: null, paidAt: null } },
+      select: { studentId: true, student: { select: { name: true } } },
+    });
+    // Schüler mit eigener gesendeter/bezahlter Rechnung für den Monat bleiben eigenständig —
+    // ihre Lektionen dürfen nicht zusätzlich auf der Familienrechnung landen.
+    const separatelyBilled = new Set(monthInvoices.map((i) => i.studentId));
+    const billTarget = (id: string) =>
+      separatelyBilled.has(id) ? id : studentById.get(id)?.billedToId ?? id;
+
     // Export everyone billable for the month (sessions + Abo), not only students with a saved Invoice row.
     const sessionRows = await prisma.session.findMany({
       where: { year, month },
@@ -54,8 +73,9 @@ export async function GET(req: NextRequest) {
     const students = new Map<string, string>();
     for (const row of sessionRows) {
       if (row.studentId === MANUAL_BASELINE_STUDENT_ID) continue;
-      if (!students.has(row.studentId)) {
-        students.set(row.studentId, row.student.name);
+      const targetId = billTarget(row.studentId);
+      if (!students.has(targetId)) {
+        students.set(targetId, nameOf(targetId, row.student.name));
       }
     }
 
@@ -73,24 +93,19 @@ export async function GET(req: NextRequest) {
     });
     const subsByStudent = new Map<string, typeof platformSubs>();
     for (const sub of platformSubs) {
-      const list = subsByStudent.get(sub.studentId) ?? [];
+      const targetId = billTarget(sub.studentId);
+      const list = subsByStudent.get(targetId) ?? [];
       list.push(sub);
-      subsByStudent.set(sub.studentId, list);
+      subsByStudent.set(targetId, list);
     }
     for (const [studentId, subs] of Array.from(subsByStudent.entries())) {
       if (students.has(studentId)) continue;
       const lines = getSubscriptionInvoiceLines(subs, year, month);
       if (lines.length > 0) {
-        students.set(studentId, subs[0].student.name);
+        students.set(studentId, nameOf(studentId, subs[0].student.name));
       }
     }
 
-    // Sent/paid invoices belong in the export even when their sessions were
-    // since removed — they are real, delivered documents.
-    const monthInvoices = await prisma.invoice.findMany({
-      where: { year, month, NOT: { sentAt: null, paidAt: null } },
-      select: { studentId: true, student: { select: { name: true } } },
-    });
     for (const inv of monthInvoices) {
       if (!students.has(inv.studentId)) students.set(inv.studentId, inv.student.name);
     }
@@ -133,12 +148,17 @@ export async function GET(req: NextRequest) {
           continue;
         }
         // Stored PDF missing (should not happen): rebuild for the ZIP only,
-        // without touching storage or the invoice row.
-        const payload = await getInvoicePayload(studentId, year, month);
-        if (payload.totalCHF > 0) {
-          usedZipNames.add(safeNameBase);
-          zip.file(`${prefix}-${safeNameBase}.pdf`, await buildInvoicePdf(payload));
-          added += 1;
+        // without touching storage or the invoice row. Kann fehlschlagen, wenn der
+        // Schüler inzwischen über eine Familienrechnung abgerechnet wird — dann überspringen.
+        try {
+          const payload = await getInvoicePayload(studentId, year, month);
+          if (payload.totalCHF > 0) {
+            usedZipNames.add(safeNameBase);
+            zip.file(`${prefix}-${safeNameBase}.pdf`, await buildInvoicePdf(payload));
+            added += 1;
+          }
+        } catch {
+          // Rebuild nicht möglich — Eintrag auslassen statt ganzen Export abbrechen.
         }
         continue;
       }

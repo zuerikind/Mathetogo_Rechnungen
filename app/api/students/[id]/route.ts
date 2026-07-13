@@ -42,9 +42,41 @@ export async function PUT(
   const { name, subject, ratePerMin, email, active } = body;
   const recalculateAllSessions = Boolean(body.recalculateAllSessions);
   const effectiveFromRaw = body.effectiveFrom as unknown;
+  // undefined = nicht ändern; "" oder null = Verknüpfung lösen; string = neuer Rechnungsempfänger.
+  const billedToId =
+    body.billedToId === undefined ? undefined : body.billedToId ? String(body.billedToId) : null;
 
   const existing = await prisma.student.findUnique({ where: { id: params.id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  if (billedToId) {
+    if (billedToId === params.id) {
+      return NextResponse.json(
+        { error: "Ein Schüler kann nicht über sich selbst abgerechnet werden." },
+        { status: 400 }
+      );
+    }
+    const target = await prisma.student.findUnique({
+      where: { id: billedToId },
+      select: { billedToId: true },
+    });
+    if (!target) {
+      return NextResponse.json({ error: "Rechnungsempfänger nicht gefunden." }, { status: 400 });
+    }
+    if (target.billedToId) {
+      return NextResponse.json(
+        { error: "Der gewählte Schüler wird selbst über eine Familienrechnung abgerechnet." },
+        { status: 400 }
+      );
+    }
+    const hasChildren = await prisma.student.count({ where: { billedToId: params.id } });
+    if (hasChildren > 0) {
+      return NextResponse.json(
+        { error: "Dieser Schüler ist bereits Rechnungsempfänger für andere Schüler." },
+        { status: 400 }
+      );
+    }
+  }
 
   const nextRate = ratePerMin !== undefined ? Number(ratePerMin) : existing.ratePerMin;
   const rateChanged = ratePerMin !== undefined && Number(ratePerMin) !== existing.ratePerMin;
@@ -110,6 +142,7 @@ export async function PUT(
       ...(ratePerMin !== undefined && { ratePerMin: Number(ratePerMin) }),
       ...(email !== undefined && { email }),
       ...(active !== undefined && { active }),
+      ...(billedToId !== undefined && { billedToId }),
     },
   });
 

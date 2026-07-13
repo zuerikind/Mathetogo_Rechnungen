@@ -26,7 +26,7 @@ export default function StudentsPage() {
   const [error, setError] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);
   const [editing, setEditing] = useState<EditableStudent | null>(null);
-  const [form, setForm] = useState({ name: "", subject: "", ratePerMin: "", email: "" });
+  const [form, setForm] = useState({ name: "", subject: "", ratePerMin: "", email: "", billedToId: "" });
   const [tariffDialogOpen, setTariffDialogOpen] = useState(false);
   const [pendingSave, setPendingSave] = useState<{
     url: string;
@@ -83,7 +83,7 @@ export default function StudentsPage() {
     [students, sessions]
   );
 
-  const resetForm = () => setForm({ name: "", subject: "", ratePerMin: "", email: "" });
+  const resetForm = () => setForm({ name: "", subject: "", ratePerMin: "", email: "", billedToId: "" });
 
   const submitPayload = async (
     url: string,
@@ -148,7 +148,11 @@ export default function StudentsPage() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const payload: Record<string, unknown> = { ...form, ratePerMin: Number(form.ratePerMin) };
+    const payload: Record<string, unknown> = {
+      ...form,
+      ratePerMin: Number(form.ratePerMin),
+      billedToId: form.billedToId || null,
+    };
     const url = editing ? `/api/students/${editing.id}` : "/api/students";
     const method = editing ? "PUT" : "POST";
 
@@ -185,7 +189,7 @@ export default function StudentsPage() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="min-w-0 text-xl font-bold text-gray-900">Schüler</h1>
           <button
-            onClick={() => { setEditing(null); resetForm(); setPanelOpen(true); }}
+            onClick={() => { setEditing(null); resetForm(); setTariffError(""); setPanelOpen(true); }}
             className="w-full shrink-0 rounded-xl bg-[#4A7FC1] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 sm:w-auto"
           >
             + Schüler hinzufügen
@@ -205,7 +209,8 @@ export default function StudentsPage() {
             students={rows}
             onEdit={(student) => {
               setEditing(student);
-              setForm({ name: student.name, subject: student.subject, ratePerMin: String(student.ratePerMin), email: student.email ?? "" });
+              setForm({ name: student.name, subject: student.subject, ratePerMin: String(student.ratePerMin), email: student.email ?? "", billedToId: student.billedToId ?? "" });
+              setTariffError("");
               setPanelOpen(true);
             }}
             onDeactivate={async (studentId) => {
@@ -282,6 +287,30 @@ export default function StudentsPage() {
                     className={inputClass}
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                    Rechnung geht an (Familienrechnung)
+                  </label>
+                  <select
+                    value={form.billedToId}
+                    onChange={(e) => setForm((f) => ({ ...f, billedToId: e.target.value }))}
+                    className={inputClass}
+                  >
+                    <option value="">Eigene Rechnung</option>
+                    {students
+                      .filter((s) => s.active !== false && !s.billedToId && s.id !== editing?.id)
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                  </select>
+                  <p className="text-xs text-gray-500">
+                    Für Geschwister: Die Lektionen dieses Schülers erscheinen auf der Rechnung des
+                    gewählten Schülers (mit eigenem Abschnitt pro Kind).
+                  </p>
+                </div>
+                {tariffError && !tariffDialogOpen && !billedWarning && (
+                  <p className="text-sm text-red-600">{tariffError}</p>
+                )}
                 <button
                   type="submit"
                   className="mt-2 w-full rounded-xl bg-[#4A7FC1] py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"

@@ -27,6 +27,10 @@ model Student {
   currency   String    @default("CHF")
   email      String?
   active     Boolean   @default(true)
+  /// Familienrechnung: Lektionen dieses Schülers landen auf der Rechnung des verlinkten Schülers.
+  billedToId String?
+  billedTo   Student?  @relation("BillingGroup", fields: [billedToId], references: [id])
+  billingChildren Student[] @relation("BillingGroup")
   sessions       Session[]
   invoices       Invoice[]
   subscriptions  PlatformSubscription[]

@@ -3,19 +3,47 @@ import { prisma } from "@/lib/prisma";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import { INVOICE_BUCKET, invoiceStoragePath, supabase } from "@/lib/supabase";
 
-/** Live billable amount for a student/month (sessions + Rechnung-Abo). */
+/** Live billable amount for a student/month (sessions + Rechnung-Abo, inkl. Familienrechnungs-Gruppe). */
 export async function getBillableTotalCHF(
   studentId: string,
   year: number,
   month: number
 ): Promise<number> {
+  const self = await prisma.student.findUnique({
+    where: { id: studentId },
+    select: { billedToId: true },
+  });
+  // Wird über die Familienrechnung eines anderen Schülers abgerechnet → eigene Rechnung ist stale.
+  if (self?.billedToId) return 0;
+
+  const children = await prisma.student.findMany({
+    where: { billedToId: studentId },
+    select: { id: true },
+  });
+  // Gleiches Ausschluss-Kriterium wie getInvoicePayload: Kinder mit eigener
+  // gesendeter/bezahlter Rechnung für den Monat zählen nicht zur Familienrechnung.
+  const childrenBilledSeparately =
+    children.length > 0
+      ? await prisma.invoice.findMany({
+          where: {
+            studentId: { in: children.map((c) => c.id) },
+            year,
+            month,
+            NOT: { sentAt: null, paidAt: null },
+          },
+          select: { studentId: true },
+        })
+      : [];
+  const excluded = new Set(childrenBilledSeparately.map((i) => i.studentId));
+  const memberIds = [studentId, ...children.filter((c) => !excluded.has(c.id)).map((c) => c.id)];
+
   const [sessions, subscriptions] = await Promise.all([
     prisma.session.findMany({
-      where: { studentId, year, month },
+      where: { studentId: { in: memberIds }, year, month },
       select: { amountCHF: true },
     }),
     prisma.platformSubscription.findMany({
-      where: { studentId },
+      where: { studentId: { in: memberIds } },
       select: {
         id: true,
         studentId: true,

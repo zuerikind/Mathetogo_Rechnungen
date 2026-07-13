@@ -23,10 +23,20 @@ export type InvoiceSubscriptionLine = {
   amountCHF: number;
 };
 
+/** Ein Schüler-Abschnitt auf der Rechnung (Familienrechnung: einer pro Kind). */
+export type InvoiceSection = {
+  student: Pick<Student, "id" | "name" | "subject">;
+  sessions: InvoiceSession[];
+  subtotalCHF: number;
+};
+
 export type InvoicePayload = {
   student: Pick<Student, "id" | "name" | "email" | "subject" | "currency">;
   tutor: TutorProfileData;
+  /** Alle Sessions der Rechnungsgruppe, in Abschnitts-Reihenfolge. */
   sessions: InvoiceSession[];
+  /** Pro Schüler der Gruppe (Hauptschüler zuerst); Länge 1 bei Einzelrechnung. */
+  sections: InvoiceSection[];
   /** Nachhilfe-Sessions only (excludes Abo on invoice). */
   sessionsSubtotalCHF: number;
   /** Rechnung-Abo: full amount on Abo-Startmonat; Überweisung omitted. */
@@ -46,7 +56,7 @@ export async function getInvoicePayload(
   year: number,
   month: number
 ): Promise<InvoicePayload> {
-  const [student, sessions, subscriptions, existingInvoice, tutor] = await Promise.all([
+  const [student, children, existingInvoice, tutor] = await Promise.all([
     prisma.student.findUnique({
       where: { id: studentId },
       select: {
@@ -55,31 +65,14 @@ export async function getInvoicePayload(
         email: true,
         subject: true,
         currency: true,
+        billedToId: true,
+        billedTo: { select: { name: true } },
       },
     }),
-    prisma.session.findMany({
-      where: { studentId, year, month },
-      orderBy: { date: "asc" },
-      select: {
-        id: true,
-        date: true,
-        durationMin: true,
-        amountCHF: true,
-        month: true,
-        year: true,
-      },
-    }),
-    prisma.platformSubscription.findMany({
-      where: { studentId },
-      select: {
-        id: true,
-        studentId: true,
-        amountCHF: true,
-        billingMethod: true,
-        durationMonths: true,
-        startMonth: true,
-        startYear: true,
-      },
+    prisma.student.findMany({
+      where: { billedToId: studentId },
+      select: { id: true, name: true, subject: true },
+      orderBy: { name: "asc" },
     }),
     prisma.invoice.findUnique({
       where: { studentId_month_year: { studentId, month, year } },
@@ -91,10 +84,86 @@ export async function getInvoicePayload(
   if (!student) {
     throw new Error("Schüler nicht gefunden");
   }
+  if (student.billedToId) {
+    throw new Error(
+      `${student.name} wird über die Rechnung von ${student.billedTo?.name ?? "einem anderen Schüler"} abgerechnet.`
+    );
+  }
+
+  // Kinder mit bereits gesendeter/bezahlter Einzelrechnung für diesen Monat (z. B. vor der
+  // Verknüpfung) bleiben draussen — sonst würden ihre Lektionen doppelt verrechnet.
+  const childrenBilledSeparately =
+    children.length > 0
+      ? await prisma.invoice.findMany({
+          where: {
+            studentId: { in: children.map((c) => c.id) },
+            year,
+            month,
+            NOT: { sentAt: null, paidAt: null },
+          },
+          select: { studentId: true },
+        })
+      : [];
+  const excludedChildIds = new Set(childrenBilledSeparately.map((i) => i.studentId));
+
+  const members = [
+    { id: student.id, name: student.name, subject: student.subject },
+    ...children.filter((c) => !excludedChildIds.has(c.id)),
+  ];
+  const memberIds = members.map((m) => m.id);
+
+  const [groupSessions, subscriptions] = await Promise.all([
+    prisma.session.findMany({
+      where: { studentId: { in: memberIds }, year, month },
+      orderBy: { date: "asc" },
+      select: {
+        id: true,
+        studentId: true,
+        date: true,
+        durationMin: true,
+        amountCHF: true,
+        month: true,
+        year: true,
+      },
+    }),
+    prisma.platformSubscription.findMany({
+      where: { studentId: { in: memberIds } },
+      select: {
+        id: true,
+        studentId: true,
+        amountCHF: true,
+        billingMethod: true,
+        durationMonths: true,
+        startMonth: true,
+        startYear: true,
+      },
+    }),
+  ]);
 
   const roundCents = (n: number) => Math.round(n * 100) / 100;
+  const sections: InvoiceSection[] = members
+    .map((m) => {
+      const own = groupSessions.filter((s) => s.studentId === m.id);
+      return {
+        student: m,
+        sessions: own,
+        subtotalCHF: roundCents(own.reduce((acc, s) => acc + s.amountCHF, 0)),
+      };
+    })
+    // Kinder ohne Lektionen im Monat erscheinen nicht auf der Rechnung.
+    .filter((sec) => sec.student.id === student.id || sec.sessions.length > 0);
+
+  const sessions = sections.flatMap((sec) => sec.sessions);
   const sessionsSubtotalCHF = roundCents(sessions.reduce((acc, s) => acc + s.amountCHF, 0));
-  const subscriptionLines = getSubscriptionInvoiceLines(subscriptions, year, month);
+  const subscriptionLines = members.flatMap((m) =>
+    getSubscriptionInvoiceLines(
+      subscriptions.filter((s) => s.studentId === m.id),
+      year,
+      month
+    ).map((line) =>
+      members.length > 1 ? { ...line, description: `${m.name} — ${line.description}` } : line
+    )
+  );
   const subscriptionTotalCHF = subscriptionLines.reduce((acc, l) => acc + l.amountCHF, 0);
   const totalCHF = roundCents(sessionsSubtotalCHF + subscriptionTotalCHF);
   const totalMinutes = sessions.reduce((acc, s) => acc + s.durationMin, 0);
@@ -106,6 +175,7 @@ export async function getInvoicePayload(
     student,
     tutor,
     sessions,
+    sections,
     sessionsSubtotalCHF,
     subscriptionLines,
     year,
