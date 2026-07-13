@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
+import { DashboardAnalytics } from "@/components/DashboardAnalytics";
 import { MonthlyChart } from "@/components/MonthlyChart";
 import { SavingsChart, type SavingsPoint } from "@/components/SavingsChart";
 import { SessionTable, type SubscriptionAnalysisTableRow } from "@/components/SessionTable";
@@ -109,6 +110,19 @@ export default function DashboardPage() {
   const [toast, setToast] = useState("");
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
+
+  // Monatsziel: nur lokal im Browser gespeichert (localStorage), kein DB-Eintrag.
+  const [goalCHF, setGoalCHF] = useState<number | null>(null);
+  useEffect(() => {
+    const raw = window.localStorage.getItem("mathetogo-monthly-goal");
+    const parsed = raw === null ? NaN : Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) setGoalCHF(parsed);
+  }, []);
+  const handleGoalChange = useCallback((value: number | null) => {
+    setGoalCHF(value);
+    if (value && value > 0) window.localStorage.setItem("mathetogo-monthly-goal", String(value));
+    else window.localStorage.removeItem("mathetogo-monthly-goal");
+  }, []);
 
   const availableYears = useMemo(() => { const y = now.year; return [y - 2, y - 1, y, y + 1]; }, [now.year]);
 
@@ -612,7 +626,13 @@ export default function DashboardPage() {
               </div>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <div className="min-w-0">
-                  <MonthlyChart data={chartData} selectedMonth={selectedMonth} onMonthSelect={setSelectedMonth} />
+                  <MonthlyChart
+                    data={chartData}
+                    avgMonths={year < now.year ? 12 : year === now.year ? now.month : 0}
+                    selectedMonth={selectedMonth}
+                    onMonthSelect={setSelectedMonth}
+                    goalCHF={goalCHF}
+                  />
                 </div>
                 <div className="min-w-0">
                   <StudentBreakdown
@@ -632,7 +652,17 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            {/* Sessions table */}
+            {/* Neue Analysen — rein lesend */}
+            <DashboardAnalytics
+              monthIncomeCHF={globalMonthIncome}
+              ytdIncomeCHF={globalYtdIncome}
+              incomeLoading={globalIncomeLoading}
+              chartYear={year}
+              goalCHF={goalCHF}
+              onGoalChange={handleGoalChange}
+            />
+
+            {/* Sessions table — bewusst zuunterst */}
             <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <h2 className="min-w-0 text-sm font-semibold text-slate-900">

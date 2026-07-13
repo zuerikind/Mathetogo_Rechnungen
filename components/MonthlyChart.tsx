@@ -36,8 +36,11 @@ export type ChartPoint = {
 
 type Props = {
   data: ChartPoint[];
+  avgMonths: number;
   selectedMonth: number | null;
   onMonthSelect: (month: number | null) => void;
+  /** Optionales Monatsziel (nur Anzeige als Linie, verändert keine Werte). */
+  goalCHF?: number | null;
 };
 
 function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payload: ChartPoint }[] }) {
@@ -96,11 +99,10 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payl
   );
 }
 
-export function MonthlyChart({ data, selectedMonth, onMonthSelect }: Props) {
+export function MonthlyChart({ data, avgMonths, selectedMonth, onMonthSelect, goalCHF }: Props) {
   const compact = useMediaQuery("(max-width: 639px)");
-  const activeBars = data.filter((d) => d.income > 0);
-  const avg = activeBars.length > 0
-    ? activeBars.reduce((s, d) => s + d.income, 0) / activeBars.length
+  const avg = avgMonths > 0
+    ? data.reduce((s, d) => s + d.income, 0) / avgMonths
     : 0;
 
   const handleClick = (item: { payload?: ChartPoint }) => {
@@ -164,6 +166,20 @@ export function MonthlyChart({ data, selectedMonth, onMonthSelect }: Props) {
                   position: "insideTopRight",
                   fontSize: 10,
                   fill: "#9ca3af",
+                  offset: 4,
+                }}
+              />
+            )}
+            {goalCHF != null && goalCHF > 0 && (
+              <ReferenceLine
+                y={goalCHF}
+                stroke="#059669"
+                strokeDasharray="6 4"
+                label={{
+                  value: "Ziel",
+                  position: "insideTopLeft",
+                  fontSize: 10,
+                  fill: "#059669",
                   offset: 4,
                 }}
               />
