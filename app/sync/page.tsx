@@ -135,6 +135,11 @@ export default function SyncPage() {
               <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
                 ✓ {result.synced} synchronisiert
               </span>
+              {(result.removed ?? 0) > 0 && (
+                <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
+                  {result.removed} entfernt (nicht mehr im Kalender)
+                </span>
+              )}
               {result.skipped > 0 && (
                 <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600">
                   {result.skipped} übersprungen

@@ -41,6 +41,9 @@ export type SyncResponse = {
   synced: number;
   skipped: number;
   unmatched: string[];
+  /** Calendar-backed sessions deleted because their Google event is gone. */
+  removed?: number;
+  staleInvoicesRemoved?: number;
   /** From API when calendar returns events (debug / UX). */
   totalEvents?: number;
   /** Set client-side when the sync request fails (HTTP or network). */

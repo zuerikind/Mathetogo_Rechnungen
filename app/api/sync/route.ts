@@ -192,12 +192,12 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const keepIds = Array.from(new Set(tasks.map((t) => t.calEventId)));
-    // Safety default: never delete automatically unless explicitly requested.
-    // Also skip pruning while events are unmatched: a renamed/deactivated student
-    // would otherwise lose real historical sessions.
-    const allowPruneOrphans = pruneOrphans === true && unmatched.length === 0;
-    const pruneSkippedUnmatched = pruneOrphans === true && unmatched.length > 0;
+    // Keep ANY Google event id still returned for this query — matched or not.
+    // That way unmatched titles do not block orphan deletion: sessions whose
+    // Google event was deleted are removed, while sessions for unmatched titles
+    // (event still present) are preserved.
+    const googleEventIds = Array.from(new Set(eventIds));
+    const allowPruneOrphans = pruneOrphans === true;
 
     // Default interactive transaction timeout is too low for a full month of upserts + deleteMany
     // (leads to P2028 "Transaction not found" when Prisma closes the tx mid-loop).
@@ -238,7 +238,7 @@ export async function POST(req: NextRequest) {
         // sync must still lose orphaned DB rows (e.g. cancelled lesson removed from Google).
         // Sessions of deactivated students are never pruned — their events can no
         // longer match, so they would always look like orphans.
-        if (events.length === 0 || keepIds.length === 0) {
+        if (googleEventIds.length === 0) {
           return tx.session.deleteMany({
             where: { year, month, calEventId: { not: null }, student: { active: true } },
           });
@@ -247,7 +247,7 @@ export async function POST(req: NextRequest) {
           where: {
             year,
             month,
-            calEventId: { not: null, notIn: keepIds },
+            calEventId: { not: null, notIn: googleEventIds },
             student: { active: true },
           },
         });
@@ -266,7 +266,6 @@ export async function POST(req: NextRequest) {
       staleInvoicesRemoved,
       skipped: events.length - tasks.length - unmatched.length,
       unmatched,
-      pruneSkippedUnmatched,
       totalEvents: events.length,
     });
   });
