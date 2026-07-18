@@ -4,6 +4,11 @@ import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
 import { zurichYearMonth } from "@/lib/month-math";
 import { prisma } from "@/lib/prisma";
 import { rateAtDate, type RateHistoryEntry } from "@/lib/rate-history";
+import {
+  nameMatchesTitle,
+  suggestCloseStudentNames,
+  type SyncUnmatchedEvent,
+} from "@/lib/sync-unmatched";
 import { auth } from "@/auth";
 
 /** One pool slot + long tx: concurrent /api/sync causes P2024 on the second request. */
@@ -97,7 +102,13 @@ export async function POST(req: NextRequest) {
   console.log("[sync] event titles:", events.map((e) => e.summary));
 
   return runSyncDbSerialized(async () => {
-    const students = await prisma.student.findMany({ where: { active: true } });
+    const allStudents = await prisma.student.findMany({
+      select: { id: true, name: true, active: true, ratePerMin: true },
+    });
+    const students = allStudents.filter((s) => s.active);
+    const inactiveStudents = allStudents.filter((s) => !s.active);
+    const activeNames = students.map((s) => s.name);
+
     const rateHistoryRows = await prisma.studentRateHistory.findMany({
       where: { studentId: { in: students.map((s) => s.id) } },
       select: { studentId: true, ratePerMin: true, effectiveFrom: true },
@@ -109,7 +120,7 @@ export async function POST(req: NextRequest) {
       rateHistoryByStudent.set(row.studentId, list);
     }
 
-    const unmatched: string[] = [];
+    const unmatched: SyncUnmatchedEvent[] = [];
     type UpsertTask = {
       calEventId: string;
       studentId: string;
@@ -141,30 +152,48 @@ export async function POST(req: NextRequest) {
 
       if (!startStr || !endStr || !calEventId) continue;
 
-      const titleLower = title.toLowerCase();
-      const matches = students.filter((s) => {
-        const nameLower = s.name.toLowerCase();
-        const escaped = nameLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(`(?<![a-z])${escaped}(?![a-z])`, "i");
-        return regex.test(titleLower);
-      });
-
-      if (matches.length === 0) {
-        unmatched.push(title);
-        continue;
-      }
-      if (matches.length > 1) {
-        // Ambiguous: never guess which student (and thus which tariff) applies.
-        unmatched.push(`${title} (mehrdeutig: ${matches.map((s) => s.name).join(", ")})`);
-        continue;
-      }
-      const student = matches[0];
-
       const start = new Date(startStr);
       const end = new Date(endStr);
       // Bucket by Zurich calendar month — server TZ (UTC on Vercel) shifts midnight events.
       const eventYm = zurichYearMonth(start);
+      // Buffer events outside the selected month: keep for prune IDs, skip match/unmatched UX.
       if (eventYm.month !== month || eventYm.year !== year) continue;
+
+      const titleLower = title.toLowerCase();
+      const matches = students.filter((s) => nameMatchesTitle(s.name, titleLower));
+
+      if (matches.length === 0) {
+        const inactiveMatches = inactiveStudents.filter((s) => nameMatchesTitle(s.name, titleLower));
+        if (inactiveMatches.length > 0) {
+          unmatched.push({
+            title,
+            start: startStr,
+            reason: "inactive_match",
+            inactiveStudents: inactiveMatches.map((s) => s.name),
+          });
+          continue;
+        }
+        const suggestions = suggestCloseStudentNames(title, activeNames);
+        unmatched.push({
+          title,
+          start: startStr,
+          reason: "no_match",
+          ...(suggestions.length > 0 ? { suggestions } : {}),
+        });
+        continue;
+      }
+      if (matches.length > 1) {
+        // Ambiguous: never guess which student (and thus which tariff) applies.
+        unmatched.push({
+          title,
+          start: startStr,
+          reason: "ambiguous",
+          ambiguousStudents: matches.map((s) => s.name),
+        });
+        continue;
+      }
+      const student = matches[0];
+
       const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
       const existingSession = existingByEventId.get(calEventId);
       // New sessions get the tariff effective on the lesson date, not today's.

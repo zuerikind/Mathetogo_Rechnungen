@@ -1,3 +1,7 @@
+import type { SyncUnmatchedEvent } from "@/lib/sync-unmatched";
+
+export type { SyncUnmatchedEvent, SyncUnmatchedReason } from "@/lib/sync-unmatched";
+
 export type Student = {
   id: string;
   name: string;
@@ -40,7 +44,7 @@ export function isManualBaselineSession(
 export type SyncResponse = {
   synced: number;
   skipped: number;
-  unmatched: string[];
+  unmatched: SyncUnmatchedEvent[];
   /** Calendar-backed sessions deleted because their Google event is gone. */
   removed?: number;
   staleInvoicesRemoved?: number;

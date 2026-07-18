@@ -432,7 +432,14 @@ export default function DashboardPage() {
   const handleSynced = (result: SyncResponse) => {
     const parts = [`${result.synced} Sessions synchronisiert`];
     if ((result.removed ?? 0) > 0) parts.push(`${result.removed} entfernt`);
-    if (result.unmatched.length > 0) parts.push(`${result.unmatched.length} nicht zugeordnet: ${result.unmatched.join(", ")}`);
+    if (result.unmatched.length > 0) {
+      const n = result.unmatched.length;
+      parts.push(
+        n === 1
+          ? "1 Kalendereintrag ohne Schülerzuordnung — Details unter Sync"
+          : `${n} Kalendereinträge ohne Schülerzuordnung — Details unter Sync`
+      );
+    }
     setToast(parts.join(" · "));
     void loadSessions();
     setTimeout(() => setToast(""), 8000);
