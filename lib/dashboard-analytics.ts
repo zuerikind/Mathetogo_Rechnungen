@@ -14,6 +14,7 @@ export type AnalyticsInvoice = {
   year: number;
   month: number;
   totalCHF: number;
+  invoiceNumber: string;
   sentAt: string | null;
   paidAt: string | null;
   studentName: string;
@@ -106,7 +107,11 @@ export type AgingBucketKey = "notDue" | "d0_30" | "d31_60" | "d60plus";
 
 export type InvoiceAgingRow = {
   invoiceId: string;
+  invoiceNumber: string;
   studentName: string;
+  /** Rechnungsperiode — für {periode}/{faelligkeit}-Tokens der Mahnungen. */
+  year: number;
+  month: number;
   periodLabel: string;
   totalCHF: number;
   /** Negativ = noch nicht fällig. */
@@ -145,7 +150,10 @@ export function computeInvoiceAging(invoices: AnalyticsInvoice[], now: Date): In
     total += inv.totalCHF;
     rows.push({
       invoiceId: inv.id,
+      invoiceNumber: inv.invoiceNumber,
       studentName: inv.studentName,
+      year: inv.year,
+      month: inv.month,
       periodLabel: getPeriodLabel(inv.month, inv.year),
       totalCHF: inv.totalCHF,
       daysOverdue,

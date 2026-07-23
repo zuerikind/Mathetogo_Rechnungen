@@ -33,6 +33,7 @@ const invoice = (over: Partial<AnalyticsInvoice> & { id: string }): AnalyticsInv
   year: 2026,
   month: 5,
   totalCHF: 100,
+  invoiceNumber: "2026-0001",
   sentAt: null,
   paidAt: null,
   studentName: "Juri",
@@ -96,6 +97,8 @@ describe("computeInvoiceAging", () => {
     expect(aging.rows[0].daysOverdue).toBe(88);
     expect(aging.rows[2].daysOverdue).toBe(27);
     expect(aging.rows[3].daysOverdue).toBeLessThan(0);
+    // Perioden-/Nummern-Felder für die Mahnungs-Tokens durchgereicht (März-Rechnung zuerst)
+    expect(aging.rows[0]).toMatchObject({ invoiceId: "c", invoiceNumber: "2026-0001", year: 2026, month: 3 });
   });
 
   it("leer bei keinen offenen Rechnungen", () => {

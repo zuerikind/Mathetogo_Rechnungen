@@ -37,6 +37,9 @@ import {
 } from "@/lib/dashboard-analytics";
 import { CHART_TEACHING, CHART_TEACHING_DIM, LILAC, formatCHF, formatDate } from "@/lib/ui-format";
 import { isManualBaselineSession } from "@/lib/ui-types";
+import { ReminderTemplates } from "@/components/ReminderTemplates";
+import { ReminderPreview } from "@/components/ReminderPreview";
+import { ReminderCopyButtons } from "@/components/ReminderCopyButtons";
 
 type AnalyticsPayload = {
   students: AnalyticsStudent[];
@@ -387,6 +390,7 @@ export function DashboardAnalytics({
                   <th className={thCls}>Monat</th>
                   <th className={thCls}>Betrag</th>
                   <th className={thCls}>Status</th>
+                  <th className={thCls}>Nachricht</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -404,6 +408,17 @@ export function DashboardAnalytics({
                         </span>
                       )}
                     </td>
+                    <td className={tdCls}>
+                      <ReminderCopyButtons
+                        row={{
+                          studentName: r.studentName,
+                          invoiceNumber: r.invoiceNumber,
+                          totalCHF: r.totalCHF,
+                          year: r.year,
+                          month: r.month,
+                        }}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -414,6 +429,14 @@ export function DashboardAnalytics({
             Keine offenen Rechnungen aus Vormonaten — der laufende Monat wird erst am Monatsende fakturiert.
           </p>
         )}
+
+        <CollapsibleSection
+          title="Erinnerungen & Mahnungen"
+          summary="Vorlagen bearbeiten und fertige Nachrichten kopieren"
+        >
+          <ReminderTemplates />
+          <ReminderPreview />
+        </CollapsibleSection>
 
         {latePayers.length > 0 && (
           <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50/60 p-3">

@@ -172,6 +172,15 @@ model AcademigoSettings {
   updatedAt              DateTime @updatedAt
 }
 
+/// Mahnwesen: drei bearbeitbare Erinnerungs-Vorlagen (Singleton, id = "default").
+model ReminderTemplate {
+  id        String   @id @default("default")
+  stage1    String   @db.Text
+  stage2    String   @db.Text
+  stage3    String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
 model AcademigoContact {
   id          String               @id @default(cuid())
   tutor24Id   String
