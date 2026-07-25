@@ -76,6 +76,16 @@ export function dueReminderStage(daysOverdue: number): DueReminder {
   return null;
 }
 
+export type ReminderStage = 1 | 2 | 3;
+
+/**
+ * Validiert eine Mahnstufe aus fremder Quelle (Request-Body, API-Antwort).
+ * Alles ausser 1/2/3 → null, damit nie eine erfundene Stufe in die DB gelangt.
+ */
+export function parseReminderStage(value: unknown): ReminderStage | null {
+  return value === 1 || value === 2 || value === 3 ? value : null;
+}
+
 /**
  * Ersetzt alle {token}-Vorkommen (global) anhand der Rechnungsdaten.
  * Unbekannte Tokens bleiben als Literal stehen — werden nicht geleert.

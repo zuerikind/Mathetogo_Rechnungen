@@ -411,11 +411,14 @@ export function DashboardAnalytics({
                     <td className={tdCls}>
                       <ReminderCopyButtons
                         row={{
+                          invoiceId: r.invoiceId,
                           studentName: r.studentName,
                           invoiceNumber: r.invoiceNumber,
                           totalCHF: r.totalCHF,
                           year: r.year,
                           month: r.month,
+                          reminderStage: r.reminderStage,
+                          pdfPath: r.pdfPath,
                         }}
                       />
                     </td>

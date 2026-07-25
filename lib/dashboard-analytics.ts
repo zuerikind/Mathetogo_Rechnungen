@@ -17,6 +17,10 @@ export type AnalyticsInvoice = {
   invoiceNumber: string;
   sentAt: string | null;
   paidAt: string | null;
+  /** Zuletzt versendete Mahnstufe (0 = keine). */
+  reminderStage: number;
+  /** Öffentliche PDF-URL, null solange die Rechnung nie generiert wurde. */
+  pdfPath: string | null;
   studentName: string;
 };
 
@@ -117,6 +121,8 @@ export type InvoiceAgingRow = {
   /** Negativ = noch nicht fällig. */
   daysOverdue: number;
   bucket: AgingBucketKey;
+  reminderStage: number;
+  pdfPath: string | null;
 };
 
 export type InvoiceAging = {
@@ -158,6 +164,8 @@ export function computeInvoiceAging(invoices: AnalyticsInvoice[], now: Date): In
       totalCHF: inv.totalCHF,
       daysOverdue,
       bucket,
+      reminderStage: inv.reminderStage,
+      pdfPath: inv.pdfPath,
     });
   }
 

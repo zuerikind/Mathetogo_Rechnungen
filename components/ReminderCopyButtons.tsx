@@ -3,26 +3,51 @@
 import { useState } from "react";
 import { useReminderTemplates } from "@/hooks/useReminderTemplates";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
-import { renderReminder, type ReminderTokenInput } from "@/lib/reminder-tokens";
+import { renderReminder, type ReminderStage, type ReminderTokenInput } from "@/lib/reminder-tokens";
 
 /** Nur die Felder, die für die Token-Ersetzung einer Zeile gebraucht werden. */
 export type ReminderRow = {
+  invoiceId: string;
   studentName: string;
   invoiceNumber: string;
   totalCHF: number;
   year: number;
   month: number;
+  /** Zuletzt versendete Stufe aus der DB (0 = keine). */
+  reminderStage: number;
+  /** Öffentliche PDF-URL; null, wenn die Rechnung nie generiert wurde. */
+  pdfPath: string | null;
 };
 
-type Stage = 1 | 2 | 3;
+type Stage = ReminderStage;
 
 const STAGE_LABELS: Record<Stage, string> = { 1: "1. Erinnerung", 2: "2. Erinnerung", 3: "Mahnung" };
+
+/**
+ * Merkt die versendete Mahnstufe in der DB (überlebt Reload und Gerätewechsel).
+ * Nutzt den bestehenden Status-Endpoint — "reminder" setzt zusätzlich reminderSentAt.
+ */
+export async function markReminderStage(invoiceId: string, stage: Stage): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/invoices/${invoiceId}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "reminder", stage }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 export function ReminderCopyButtons({ row }: { row: ReminderRow }) {
   const { templates, status, ready } = useReminderTemplates();
   const { state, copy } = useCopyToClipboard();
-  // Zuletzt kopierte Stufe bleibt markiert (setzt sich nicht nach dem 2s-Flash zurück).
-  const [copiedStage, setCopiedStage] = useState<Stage | null>(null);
+  // Lokale Auswahl überschreibt den DB-Wert; ohne lokale Aktion gilt die gespeicherte Stufe.
+  const [localStage, setLocalStage] = useState<Stage | null>(null);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const copiedStage: Stage | null =
+    localStage ?? (row.reminderStage >= 1 && row.reminderStage <= 3 ? (row.reminderStage as Stage) : null);
 
   const input: ReminderTokenInput = {
     name: row.studentName,
@@ -36,7 +61,15 @@ export function ReminderCopyButtons({ row }: { row: ReminderRow }) {
     // Kein Kopieren, wenn die Vorlagen nicht geladen sind — nie einen leeren String kopieren.
     if (!ready || !templates) return;
     const kind = await copy(String(stage), renderReminder(templates[`stage${stage}`], input));
-    if (kind === "ok") setCopiedStage(stage);
+    if (kind !== "ok") return;
+    // Optimistisch markieren, bei fehlgeschlagenem Speichern zurücknehmen.
+    const previous = localStage;
+    setLocalStage(stage);
+    setSaveFailed(false);
+    if (!(await markReminderStage(row.invoiceId, stage))) {
+      setLocalStage(previous);
+      setSaveFailed(true);
+    }
   }
 
   return (
@@ -72,9 +105,23 @@ export function ReminderCopyButtons({ row }: { row: ReminderRow }) {
             </button>
           );
         })}
+        {row.pdfPath ? (
+          <a
+            href={row.pdfPath}
+            target="_blank"
+            rel="noreferrer"
+            title="Rechnungs-PDF öffnen"
+            className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+          >
+            PDF ↓
+          </a>
+        ) : null}
       </div>
       {status === "error" && (
         <span className="text-[10px] text-red-600">Vorlagen konnten nicht geladen werden.</span>
+      )}
+      {saveFailed && (
+        <span className="text-[10px] text-red-600">Stufe konnte nicht gespeichert werden.</span>
       )}
     </div>
   );

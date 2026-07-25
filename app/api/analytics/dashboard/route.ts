@@ -39,6 +39,8 @@ export async function GET() {
         invoiceNumber: true,
         sentAt: true,
         paidAt: true,
+        reminderStage: true,
+        pdfPath: true,
         student: { select: { name: true } },
       },
     }),
@@ -68,6 +70,8 @@ export async function GET() {
       invoiceNumber: i.invoiceNumber,
       sentAt: i.sentAt,
       paidAt: i.paidAt,
+      reminderStage: i.reminderStage,
+      pdfPath: i.pdfPath,
       studentName: i.student.name,
     })),
     extents: extents.map((e) => ({

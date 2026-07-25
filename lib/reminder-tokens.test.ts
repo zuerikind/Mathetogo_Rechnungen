@@ -4,6 +4,7 @@ import {
   formatBetrag,
   formatFaelligkeit,
   formatPeriode,
+  parseReminderStage,
   renderReminder,
   type ReminderTokenInput,
 } from "./reminder-tokens";
@@ -49,6 +50,18 @@ describe("dueReminderStage", () => {
     expect(dueReminderStage(10)?.stage).toBe(2);
     expect(dueReminderStage(19)?.stage).toBe(2);
     expect(dueReminderStage(20)?.stage).toBe(3);
+  });
+});
+
+describe("parseReminderStage", () => {
+  it("accepts only 1/2/3 and rejects everything else", () => {
+    expect(parseReminderStage(1)).toBe(1);
+    expect(parseReminderStage(3)).toBe(3);
+    expect(parseReminderStage(0)).toBeNull();
+    expect(parseReminderStage(4)).toBeNull();
+    expect(parseReminderStage("2")).toBeNull();
+    expect(parseReminderStage(undefined)).toBeNull();
+    expect(parseReminderStage(null)).toBeNull();
   });
 });
 

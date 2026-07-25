@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useReminderTemplates } from "@/hooks/useReminderTemplates";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { dueReminderStage, renderReminder, type ReminderTokenInput } from "@/lib/reminder-tokens";
+import { markReminderStage } from "@/components/ReminderCopyButtons";
 import { zurichParts } from "@/lib/dashboard-analytics";
 import { formatCHF, monthOptions } from "@/lib/ui-format";
 
@@ -17,6 +18,8 @@ type ReminderInvoice = {
   month: number;
   dueDate: string;
   daysOverdue: number;
+  reminderStage: number;
+  pdfPath: string | null;
 };
 type Stage = 1 | 2 | 3;
 
@@ -55,6 +58,9 @@ export function ReminderPreview() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tabs, setTabs] = useState<Record<string, Stage>>({});
+  // Lokal markierte Stufen (überschreiben den DB-Wert bis zum nächsten Laden).
+  const [sent, setSent] = useState<Record<string, Stage>>({});
+  const [saveFailed, setSaveFailed] = useState(false);
 
   const load = useCallback(async (period: Period) => {
     setLoading(true);
@@ -90,10 +96,26 @@ export function ReminderPreview() {
   }, [periods, defaultPeriod, nowPeriod]);
 
   const tabFor = (id: string): Stage => tabs[id] ?? 1;
+  const sentFor = (inv: ReminderInvoice): Stage | null =>
+    sent[inv.invoiceId] ??
+    (inv.reminderStage >= 1 && inv.reminderStage <= 3 ? (inv.reminderStage as Stage) : null);
 
-  function onCopy(inv: ReminderInvoice, text: string) {
+  async function onCopy(inv: ReminderInvoice, text: string, stage: Stage) {
     if (!ready) return;
-    void copy(inv.invoiceId, text);
+    if ((await copy(inv.invoiceId, text)) !== "ok") return;
+    // Kopiert = verschickt: dieselbe Stufe persistieren wie in der Tabelle oben.
+    const previous = sent[inv.invoiceId];
+    setSent((s) => ({ ...s, [inv.invoiceId]: stage }));
+    setSaveFailed(false);
+    if (!(await markReminderStage(inv.invoiceId, stage))) {
+      setSent((s) => {
+        const next = { ...s };
+        if (previous) next[inv.invoiceId] = previous;
+        else delete next[inv.invoiceId];
+        return next;
+      });
+      setSaveFailed(true);
+    }
   }
 
   return (
@@ -123,6 +145,11 @@ export function ReminderPreview() {
         {status === "error" && (
           <p className="mb-3 text-xs text-red-600">
             Vorlagen konnten nicht geladen werden — Kopieren ist deaktiviert.
+          </p>
+        )}
+        {saveFailed && (
+          <p className="mb-3 text-xs text-red-600">
+            Die verschickte Stufe konnte nicht gespeichert werden.
           </p>
         )}
 
@@ -155,6 +182,7 @@ export function ReminderPreview() {
               const rendered = ready && templates ? renderReminder(templates[`stage${stage}`], input) : "";
               const active = copyState?.key === inv.invoiceId;
               const due = dueReminderStage(inv.daysOverdue);
+              const sentStage = sentFor(inv);
               return (
                 <div key={inv.invoiceId} className="rounded-xl border border-slate-200 p-3">
                   <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -163,6 +191,23 @@ export function ReminderPreview() {
                       <span className="ml-2 text-xs text-slate-500">
                         {inv.invoiceNumber || "ohne Nr."} · {formatCHF(inv.totalCHF)}
                       </span>
+                      {inv.pdfPath ? (
+                        <a
+                          href={inv.pdfPath}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ml-2 rounded-lg border border-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                        >
+                          PDF ↓
+                        </a>
+                      ) : (
+                        <span
+                          title="Für diese Rechnung ist kein PDF gespeichert."
+                          className="ml-2 rounded-lg border border-slate-100 px-2 py-0.5 text-xs font-medium text-slate-300"
+                        >
+                          PDF ↓
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 text-xs">
                       <span className="text-slate-500">fällig {inv.dueDate}</span>
@@ -205,6 +250,7 @@ export function ReminderPreview() {
                       >
                         {label}
                         {due?.stage === s && <span className="ml-1 text-[10px]" title="empfohlen">•</span>}
+                        {sentStage === s && <span className="ml-1" title="bereits verschickt">✓</span>}
                       </button>
                     ))}
                   </div>
@@ -213,11 +259,16 @@ export function ReminderPreview() {
                     {ready ? rendered : status === "error" ? "" : "Vorlagen werden geladen …"}
                   </pre>
 
-                  <div className="mt-2 flex items-center justify-end">
+                  <div className="mt-2 flex items-center justify-end gap-2">
+                    {sentStage && (
+                      <span className="text-[11px] text-slate-500">
+                        Verschickt: Stufe {sentStage}
+                      </span>
+                    )}
                     <button
                       type="button"
                       disabled={!ready}
-                      onClick={() => onCopy(inv, rendered)}
+                      onClick={() => void onCopy(inv, rendered, stage)}
                       className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
                         active && copyState?.kind === "ok"
                           ? "border-emerald-300 bg-emerald-50 text-emerald-700"

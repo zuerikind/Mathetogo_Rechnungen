@@ -36,6 +36,8 @@ const invoice = (over: Partial<AnalyticsInvoice> & { id: string }): AnalyticsInv
   invoiceNumber: "2026-0001",
   sentAt: null,
   paidAt: null,
+  reminderStage: 0,
+  pdfPath: null,
   studentName: "Juri",
   ...over,
 });

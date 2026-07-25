@@ -50,6 +50,8 @@ export async function GET(req: NextRequest) {
     month: number;
     dueDate: string;
     daysOverdue: number;
+    reminderStage: number;
+    pdfPath: string | null;
   }[] = [];
 
   if (year !== null && month !== null) {
@@ -62,6 +64,8 @@ export async function GET(req: NextRequest) {
         totalCHF: true,
         year: true,
         month: true,
+        reminderStage: true,
+        pdfPath: true,
         student: { select: { name: true } },
       },
     });
@@ -79,6 +83,8 @@ export async function GET(req: NextRequest) {
         month: r.month,
         dueDate,
         daysOverdue,
+        reminderStage: r.reminderStage,
+        pdfPath: r.pdfPath,
       }))
       // Am längsten überfällig zuerst; bei Gleichstand alphabetisch für stabile Reihenfolge.
       .sort((a, b) => b.daysOverdue - a.daysOverdue || a.studentName.localeCompare(b.studentName));

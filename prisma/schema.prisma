@@ -81,6 +81,8 @@ model Invoice {
   invoiceNumber String    @default("")
   sentAt        DateTime?
   reminderSentAt DateTime?
+  /// Zuletzt versendete Mahnstufe: 0 = keine, 1/2 = Erinnerung, 3 = Mahnung
+  reminderStage Int       @default(0)
   paidAt        DateTime?
   pdfPath       String?
   createdAt     DateTime  @default(now())

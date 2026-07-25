@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { parseReminderStage } from "@/lib/reminder-tokens";
 
 type InvoiceStatusUpdate = "sent" | "paid" | "reminder" | "unpaid";
 
@@ -39,15 +40,18 @@ export async function PATCH(
     const now = new Date();
 
     if (status === "reminder") {
+      // stage optional: ohne Angabe (Button "Erinnerung gesendet") bleibt die bisherige Stufe stehen.
+      const stage = parseReminderStage(body?.stage);
       await prisma.$executeRaw`
         UPDATE "Invoice"
         SET "sentAt" = COALESCE("sentAt", ${now}),
-            "reminderSentAt" = ${now}
+            "reminderSentAt" = ${now},
+            "reminderStage" = COALESCE(${stage}::int, "reminderStage")
         WHERE "id" = ${invoiceId}
       `;
       const updated = await prisma.invoice.findUnique({
         where: { id: invoiceId },
-        select: { id: true, sentAt: true, paidAt: true },
+        select: { id: true, sentAt: true, paidAt: true, reminderStage: true },
       });
       return NextResponse.json({ success: true, invoice: updated });
     }
