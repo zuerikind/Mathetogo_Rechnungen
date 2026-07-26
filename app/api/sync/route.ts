@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { rateAtDate, type RateHistoryEntry } from "@/lib/rate-history";
 import {
   nameMatchesTitle,
+  preferMostSpecificMatch,
   suggestCloseStudentNames,
   type SyncUnmatchedEvent,
 } from "@/lib/sync-unmatched";
@@ -160,10 +161,14 @@ export async function POST(req: NextRequest) {
       if (eventYm.month !== month || eventYm.year !== year) continue;
 
       const titleLower = title.toLowerCase();
-      const matches = students.filter((s) => nameMatchesTitle(s.name, titleLower));
+      const matches = preferMostSpecificMatch(
+        students.filter((s) => nameMatchesTitle(s.name, titleLower))
+      );
 
       if (matches.length === 0) {
-        const inactiveMatches = inactiveStudents.filter((s) => nameMatchesTitle(s.name, titleLower));
+        const inactiveMatches = preferMostSpecificMatch(
+          inactiveStudents.filter((s) => nameMatchesTitle(s.name, titleLower))
+        );
         if (inactiveMatches.length > 0) {
           unmatched.push({
             title,

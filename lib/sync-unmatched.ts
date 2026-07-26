@@ -26,6 +26,24 @@ export function nameMatchesTitle(studentName: string, titleLower: string): boole
   return regex.test(titleLower);
 }
 
+/**
+ * «Liam Bradbury» matcht sowohl den Schüler «Liam» als auch «Liam Bradbury».
+ * Der längere, spezifischere Name gewinnt — aber nur, wenn er den kürzeren enthält.
+ * Bleiben unabhängige Namen übrig (z. B. «Liam und Sophie»), bleibt es mehrdeutig:
+ * beim Tarif wird nie geraten.
+ */
+export function preferMostSpecificMatch<T extends { name: string }>(matches: T[]): T[] {
+  if (matches.length < 2) return matches;
+  const specific = matches.filter(
+    (candidate) =>
+      !matches.some(
+        (other) => other !== candidate && nameMatchesTitle(candidate.name, other.name.toLowerCase())
+      )
+  );
+  // Namensgleiche Schüler verdrängen sich gegenseitig — dann bleibt es mehrdeutig.
+  return specific.length > 0 ? specific : matches;
+}
+
 function levenshtein(a: string, b: string): number {
   const m = a.length;
   const n = b.length;
