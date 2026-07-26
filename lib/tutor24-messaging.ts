@@ -467,7 +467,7 @@ function isExistingConversationButton(
 }
 
 /** tutor24 provider/job pages use .js-btn-send-message (not always /messages/new). */
-async function findContactButton(page: import("playwright").Page) {
+export async function findContactButton(page: import("playwright").Page) {
   const primaryCandidates = await page.$$("a.js-btn-send-message, button.js-btn-send-message");
   for (const el of primaryCandidates) {
     if (!(await el.isVisible())) continue;
@@ -513,7 +513,7 @@ async function isPremiumGateVisible(page: import("playwright").Page): Promise<bo
   ));
 }
 
-async function waitForMessageTextarea(
+export async function waitForMessageTextarea(
   page: import("playwright").Page,
   timeoutMs = 8000
 ): Promise<import("playwright").ElementHandle | null> {
@@ -660,9 +660,10 @@ async function openMessageForm(
 async function clickContactButton(
   page: import("playwright").Page,
   msgBtn: import("playwright").ElementHandle,
+  /** Vom Aufrufer gelesen, solange das Handle noch zur aktuellen Seite gehört. */
+  btnHref: string | null,
   pushLog?: (s: string) => void
 ): Promise<void> {
-  const btnHref = await msgBtn.getAttribute("href");
   await msgBtn.evaluate((node) => {
     (node as HTMLElement).scrollIntoView({ block: "center", behavior: "instant" });
   });
@@ -932,15 +933,21 @@ export async function sendMessageOnListing(
 
   pushLog(`${ts()} [${tutor24Id}] Kontakt-Button «${btnText.slice(0, 40)}» href=${btnHref ?? "(click)"}`);
 
+  let navigated = false;
   if (btnHref?.includes("/messages/new")) {
     const dest = btnHref.startsWith("http") ? btnHref : `${TUTOR24_BASE_URL}${btnHref}`;
     await gotoTutor24(page, dest, pushLog);
     await acceptTutor24Cookies(page, pushLog);
     await sleep(1200);
+    navigated = true;
   }
 
   if (!(await hasMessageTextarea(page))) {
-    await clickContactButton(page, msgBtn, pushLog);
+    // Nach der Navigation gehört msgBtn zur zerstörten Seite — jeder Zugriff darauf wirft
+    // "Execution context was destroyed". Button auf der neuen Seite frisch suchen; findet
+    // sich keiner, übernimmt openMessageForm() weiter unten per URL.
+    const freshBtn = navigated ? await findContactButton(page) : msgBtn;
+    if (freshBtn) await clickContactButton(page, freshBtn, btnHref, pushLog);
   }
   await acceptTutor24Cookies(page, pushLog);
   await sleep(1000);
