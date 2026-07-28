@@ -79,17 +79,71 @@ model Invoice {
   totalCHF      Float
   sessionIds    String
   invoiceNumber String    @default("")
+  /// Nummer vor der einmaligen Duplikat-Reparatur (P2b); null = nie umnummeriert.
+  legacyInvoiceNumber String?
   sentAt        DateTime?
   reminderSentAt DateTime?
   /// Zuletzt versendete Mahnstufe: 0 = keine, 1/2 = Erinnerung, 3 = Mahnung
   reminderStage Int       @default(0)
   paidAt        DateTime?
   pdfPath       String?
+  /// Letzter PDF-Download durch den Nutzer (jeder Download aktualisiert dies).
+  downloadedAt  DateTime?
+  /// Erster Download — ab hier gilt die Rechnung als ausgeliefert und unveränderlich.
+  firstDownloadedAt DateTime?
+  /// Sync hat nach dem ersten Download Abweichungen erkannt und wartet auf Entscheid.
+  needsReview   Boolean   @default(false)
+  /// Zeitpunkt, zu dem der Nutzer die erkannte Abweichung entschieden hat.
+  reviewedAt    DateTime?
+  /// Zeitpunkt, zu dem der Sync die Abweichung erkannt hat.
+  changeDetectedAt DateTime?
+  /// Ausgabestand; jede Neuausstellung unter gleicher Nummer erhöht ihn (P6).
+  revision      Int       @default(1)
   createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@unique([studentId, month, year])
   @@index([year, month, createdAt])
   @@index([studentId, year, month])
+  @@index([needsReview])
+}
+
+/// Eingefrorener Rechnungsstand pro Revision — geschrieben beim ersten Download (P4)
+/// und bei jeder Neuausstellung (P6). Bewusst OHNE Fremdschlüssel auf Invoice:
+/// Rechnungszeilen werden heute gelöscht (invoice-stale.ts), der Nachweis muss das überleben.
+model InvoiceSnapshot {
+  id            String   @id @default(cuid())
+  invoiceId     String
+  revision      Int
+  invoiceNumber String
+  totalCHF      Float
+  /// Vollständiger InvoicePayload zum Zeitpunkt des Einfrierens (Positionen, Beträge, Schüler).
+  payloadJson   Json
+  /// Storage-Pfad der zu dieser Revision ausgelieferten PDF.
+  pdfPath       String?
+  createdAt     DateTime @default(now())
+
+  @@unique([invoiceId, revision])
+  @@index([invoiceId, createdAt])
+}
+
+/// Lückenloser Änderungsnachweis. Ebenfalls ohne Fremdschlüssel, damit Einträge
+/// das Löschen einer Rechnung überdauern.
+model InvoiceAuditLog {
+  id         String   @id @default(cuid())
+  invoiceId  String
+  /// z. B. "created", "number_assigned", "downloaded", "change_detected",
+  /// "reviewed", "revised", "renumbered", "status_changed", "deleted"
+  action     String
+  /// E-Mail des angemeldeten Nutzers, oder "system" für automatische Vorgänge.
+  actor      String?
+  beforeJson Json?
+  afterJson  Json?
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([invoiceId, createdAt])
+  @@index([action, createdAt])
 }
 
 model TutorProfile {
