@@ -187,19 +187,92 @@ export async function getInvoicePayload(
   };
 }
 
-export async function getNextInvoiceNumber(year: number): Promise<string> {
-  // Highest existing number + 1 (not count + 1): deleting an invoice must never
-  // cause a number to be handed out twice.
-  const rows = await prisma.invoice.findMany({
-    where: { year, invoiceNumber: { startsWith: `${year}-` } },
-    select: { invoiceNumber: true },
-  });
-  let max = 0;
-  for (const row of rows) {
-    const m = /^\d{4}-(\d{4})$/.exec(row.invoiceNumber.trim());
-    if (m) max = Math.max(max, Number(m[1]));
+/**
+ * Der Client, den `prisma.$transaction` seinem Callback übergibt. Wird vom echten
+ * (per $extends erweiterten) Client abgeleitet — `Prisma.TransactionClient` passt
+ * dazu nicht, weil die Erweiterung in lib/prisma.ts den Typ verändert.
+ */
+type InvoiceTx = Omit<
+  typeof prisma,
+  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends"
+>;
+
+export function formatInvoiceNumber(year: number, sequential: number): string {
+  return `${year}-${String(sequential).padStart(4, "0")}`;
+}
+
+/**
+ * Zieht die nächste Rechnungsnummer des Jahres.
+ *
+ * Ein einziges INSERT ... ON CONFLICT DO UPDATE ... RETURNING: PostgreSQL sperrt
+ * die Zählerzeile für die Dauer des Statements, parallele Aufrufe werden serialisiert
+ * und bekommen zwingend verschiedene Nummern. Das frühere max(invoiceNumber)+1 war ein
+ * Read-Modify-Write ohne Sperre und hat im Bestand 34 doppelte Nummern erzeugt.
+ *
+ * Muss innerhalb derselben Transaktion laufen wie das Anlegen der Rechnungszeile,
+ * damit eine gezogene Nummer nicht ohne zugehörige Rechnung verfällt.
+ */
+export async function allocateInvoiceNumber(tx: InvoiceTx, year: number): Promise<string> {
+  const rows = await tx.$queryRaw<{ lastNumber: number }[]>`
+    INSERT INTO "InvoiceNumberSequence" ("year", "lastNumber", "updatedAt")
+    VALUES (${year}, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT ("year") DO UPDATE
+      SET "lastNumber" = "InvoiceNumberSequence"."lastNumber" + 1,
+          "updatedAt" = CURRENT_TIMESTAMP
+    RETURNING "lastNumber"
+  `;
+  const next = rows[0]?.lastNumber;
+  if (!Number.isInteger(next) || next < 1) {
+    throw new Error("Rechnungsnummer konnte nicht vergeben werden.");
   }
-  return `${year}-${String(max + 1).padStart(4, "0")}`;
+  return formatInvoiceNumber(year, next);
+}
+
+/**
+ * Legt die Rechnungszeile an (oder aktualisiert sie) und stellt sicher, dass sie
+ * eine endgültige Nummer trägt — beides in einer Transaktion.
+ *
+ * Bewusst VOR dem PDF-Bau aufzurufen: nur so trägt das PDF dieselbe Nummer wie die
+ * Datenbank. Früher wurde das PDF zuerst gebaut und bekam die provisorische
+ * Initialen-Nummer, während die DB eine sequenzielle speicherte.
+ *
+ * `pdfPath` wird hier NICHT gesetzt — das übernimmt der Aufrufer nach dem Upload.
+ * Schlägt der PDF-Bau fehl, bleibt die Zeile mit ihrer Nummer bestehen und ein
+ * erneuter Versuch verwendet dieselbe Nummer wieder.
+ */
+export async function reserveInvoiceRow(params: {
+  studentId: string;
+  year: number;
+  month: number;
+  totalCHF: number;
+  sessionIds: string[];
+}): Promise<{ invoiceId: string; invoiceNumber: string }> {
+  const { studentId, year, month, totalCHF, sessionIds } = params;
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.invoice.findUnique({
+      where: { studentId_month_year: { studentId, month, year } },
+      select: { invoiceNumber: true },
+    });
+    const existingNumber = existing?.invoiceNumber?.trim();
+    const invoiceNumber = existingNumber?.length
+      ? existingNumber
+      : await allocateInvoiceNumber(tx, year);
+
+    const row = await tx.invoice.upsert({
+      where: { studentId_month_year: { studentId, month, year } },
+      update: { totalCHF, sessionIds: JSON.stringify(sessionIds), invoiceNumber },
+      create: {
+        studentId,
+        month,
+        year,
+        totalCHF,
+        sessionIds: JSON.stringify(sessionIds),
+        invoiceNumber,
+      },
+      select: { id: true },
+    });
+    return { invoiceId: row.id, invoiceNumber };
+  });
 }
 
 /** Safe ASCII-ish basename for downloads, e.g. `aiyana_04_2026.pdf` */

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
-import { getInvoicePayload, getNextInvoiceNumber } from "@/lib/invoice";
+import { getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { supabase, INVOICE_BUCKET, invoiceStoragePath, invoicePublicUrl } from "@/lib/supabase";
 
@@ -43,7 +43,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const pdfBuffer = await buildInvoicePdf(payload);
+    // Nummer + Rechnungszeile zuerst (eine Transaktion), damit das PDF exakt die
+    // Nummer trägt, die auch gespeichert ist.
+    const { invoiceId, invoiceNumber } = await reserveInvoiceRow({
+      studentId,
+      year,
+      month,
+      totalCHF: payload.totalCHF,
+      sessionIds: payload.sessions.map((s) => s.id),
+    });
+
+    const pdfBuffer = await buildInvoicePdf({ ...payload, invoiceNumber });
 
     const storagePath = invoiceStoragePath(year, month, studentId);
     const { error: uploadError } = await supabase.storage
@@ -61,19 +71,9 @@ export async function POST(req: NextRequest) {
     }
 
     const pdfUrl = invoicePublicUrl(year, month, studentId);
-    const sessionIds = payload.sessions.map((s) => s.id);
-    const existingNumber = existing?.invoiceNumber?.trim();
-    const invoiceNumber = existingNumber?.length
-      ? existingNumber
-      : await getNextInvoiceNumber(year);
+    await prisma.invoice.update({ where: { id: invoiceId }, data: { pdfPath: pdfUrl } });
 
-    const invoice = await prisma.invoice.upsert({
-      where: { studentId_month_year: { studentId, month, year } },
-      update: { totalCHF: payload.totalCHF, sessionIds: JSON.stringify(sessionIds), pdfPath: pdfUrl, invoiceNumber },
-      create: { studentId, month, year, totalCHF: payload.totalCHF, sessionIds: JSON.stringify(sessionIds), pdfPath: pdfUrl, invoiceNumber },
-    });
-
-    return NextResponse.json({ invoiceId: invoice.id, pdfUrl });
+    return NextResponse.json({ invoiceId, pdfUrl, invoiceNumber });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Fehler beim Generieren." },

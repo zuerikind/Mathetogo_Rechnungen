@@ -3,7 +3,7 @@ import JSZip from "jszip";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
-import { getInvoicePayload, getNextInvoiceNumber } from "@/lib/invoice";
+import { getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import {
@@ -170,7 +170,17 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      const pdfBuffer = await buildInvoicePdf(payload);
+      // Wie in /api/invoice/generate: Nummer und Zeile vor dem PDF-Bau festlegen,
+      // damit das exportierte PDF die gespeicherte Nummer trägt.
+      const { invoiceId, invoiceNumber } = await reserveInvoiceRow({
+        studentId,
+        year,
+        month,
+        totalCHF: payload.totalCHF,
+        sessionIds: payload.sessions.map((s) => s.id),
+      });
+
+      const pdfBuffer = await buildInvoicePdf({ ...payload, invoiceNumber });
 
       const { error: uploadError } = await supabase.storage
         .from(INVOICE_BUCKET)
@@ -189,30 +199,7 @@ export async function GET(req: NextRequest) {
       }
 
       const pdfUrl = invoicePublicUrl(year, month, studentId);
-      const sessionIds = payload.sessions.map((s) => s.id);
-      const existingNumber = existing?.invoiceNumber?.trim();
-      const invoiceNumber = existingNumber?.length
-        ? existingNumber
-        : await getNextInvoiceNumber(year);
-
-      await prisma.invoice.upsert({
-        where: { studentId_month_year: { studentId, month, year } },
-        update: {
-          totalCHF: payload.totalCHF,
-          sessionIds: JSON.stringify(sessionIds),
-          pdfPath: pdfUrl,
-          invoiceNumber,
-        },
-        create: {
-          studentId,
-          month,
-          year,
-          totalCHF: payload.totalCHF,
-          sessionIds: JSON.stringify(sessionIds),
-          pdfPath: pdfUrl,
-          invoiceNumber,
-        },
-      });
+      await prisma.invoice.update({ where: { id: invoiceId }, data: { pdfPath: pdfUrl } });
 
       usedZipNames.add(safeNameBase);
       zip.file(`${prefix}-${safeNameBase}.pdf`, pdfBuffer);

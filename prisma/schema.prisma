@@ -108,6 +108,17 @@ model Invoice {
   @@index([needsReview])
 }
 
+/// Rechnungsnummern-Zähler pro Jahr. Die Vergabe läuft über ein einziges
+/// INSERT ... ON CONFLICT DO UPDATE ... RETURNING, das PostgreSQL zeilenweise
+/// sperrt — deshalb können parallele Requests nie dieselbe Nummer erhalten.
+/// Ersetzt das frühere max(invoiceNumber)+1, das genau das zuliess.
+model InvoiceNumberSequence {
+  year       Int      @id
+  /// Zuletzt vergebene laufende Nummer dieses Jahres (0 = noch keine).
+  lastNumber Int
+  updatedAt  DateTime @updatedAt
+}
+
 /// Eingefrorener Rechnungsstand pro Revision — geschrieben beim ersten Download (P4)
 /// und bei jeder Neuausstellung (P6). Bewusst OHNE Fremdschlüssel auf Invoice:
 /// Rechnungszeilen werden heute gelöscht (invoice-stale.ts), der Nachweis muss das überleben.
