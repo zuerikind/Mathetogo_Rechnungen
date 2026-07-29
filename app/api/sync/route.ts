@@ -13,6 +13,38 @@ import {
 } from "@/lib/sync-unmatched";
 import { auth } from "@/auth";
 
+/**
+ * Klärt für einzelne Kalendereinträge, ob sie wirklich gelöscht wurden.
+ *
+ * "Nicht in events.list enthalten" reicht dafür nicht: die Liste deckt nur das
+ * Sync-Fenster (Monat ± 1 Tag) ab, ein weit verschobener Termin fehlt darin
+ * genauso wie ein gelöschter. Deshalb wird jeder Kandidat einzeln geholt —
+ * nur "cancelled" oder 404 gilt als Löschung. Jede andere Antwort und jeder
+ * Fehler zählt bewusst als "nicht gelöscht": eine fälschlich als entfernt
+ * gemeldete Lektion wäre schlimmer als eine übersehene.
+ */
+async function resolveDeletedCalendarEvents(
+  calendar: ReturnType<typeof google.calendar>,
+  calendarId: string,
+  candidates: { sessionId: string; calEventId: string }[]
+): Promise<Set<string>> {
+  const deleted = new Set<string>();
+  for (const candidate of candidates) {
+    try {
+      const res = await calendar.events.get({ calendarId, eventId: candidate.calEventId });
+      if (res.data.status === "cancelled") deleted.add(candidate.sessionId);
+    } catch (err: unknown) {
+      const status = (err as { code?: number; status?: number })?.code ?? (err as { status?: number })?.status;
+      if (status === 404 || status === 410) {
+        deleted.add(candidate.sessionId);
+      } else {
+        console.warn("[sync] Kalenderstatus unklar, gilt als NICHT geloescht:", candidate.calEventId, err);
+      }
+    }
+  }
+  return deleted;
+}
+
 /** One pool slot + long tx: concurrent /api/sync causes P2024 on the second request. */
 let syncDbChain = Promise.resolve();
 
@@ -325,6 +357,27 @@ export async function POST(req: NextRequest) {
       staleInvoicesRemoved = await pruneStaleInvoicesInScope({ year, month });
     }
 
+    // Der H3-Guard bewahrt die DB-Zeilen ausgelieferter Monate — dadurch sieht ein
+    // reiner DB-Vergleich eine im Kalender gelöschte Lektion nicht. Deshalb hier
+    // die Kandidaten sammeln und ihren Kalenderstatus einzeln klären.
+    let calendarDeletedSessionIds = new Set<string>();
+    if (protectedStudentIds.length > 0) {
+      const kept = await prisma.session.findMany({
+        where: {
+          year,
+          month,
+          studentId: { in: protectedStudentIds },
+          calEventId: { not: null, notIn: googleEventIds },
+        },
+        select: { id: true, calEventId: true },
+      });
+      calendarDeletedSessionIds = await resolveDeletedCalendarEvents(
+        calendar,
+        calendarId,
+        kept.map((s) => ({ sessionId: s.id, calEventId: s.calEventId as string }))
+      );
+    }
+
     // Nach dem Abgleich prüfen, ob ausgelieferte Rechnungen dieses Monats vom
     // heutigen Stand abweichen. Nur erkennen und protokollieren.
     const changes = await detectInvoiceChangesInScope({
@@ -332,6 +385,7 @@ export async function POST(req: NextRequest) {
       month,
       trigger: "Kalender-Sync",
       actor: session.user?.email ?? "system",
+      calendarDeletedSessionIds,
     });
 
     return NextResponse.json({

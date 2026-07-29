@@ -30,9 +30,15 @@ export async function detectInvoiceChangesInScope(opts: {
   /** Auslösender Vorgang, landet im Change Log (z. B. "Kalender-Sync"). */
   trigger: string;
   actor?: string;
+  /**
+   * Sessions mit nachweislich gelöschtem Kalendereintrag, deren DB-Zeile der
+   * H3-Guard bewahrt hat. Nur der Sync kann das feststellen.
+   */
+  calendarDeletedSessionIds?: Set<string>;
 }): Promise<ChangeDetectionResult> {
   const { year, month, trigger } = opts;
   const actor = opts.actor ?? "system";
+  const calendarDeletedSessionIds = opts.calendarDeletedSessionIds ?? new Set<string>();
 
   const invoices = await prisma.invoice.findMany({
     where: { year, month, firstDownloadedAt: { not: null } },
@@ -41,7 +47,12 @@ export async function detectInvoiceChangesInScope(opts: {
 
   let flagged = 0;
   for (const invoice of invoices) {
-    const detected = await detectChangesForInvoice(invoice, trigger, actor);
+    const detected = await detectChangesForInvoice(
+      invoice,
+      trigger,
+      actor,
+      calendarDeletedSessionIds
+    );
     if (detected) flagged += 1;
   }
 
@@ -51,7 +62,8 @@ export async function detectInvoiceChangesInScope(opts: {
 async function detectChangesForInvoice(
   invoice: { id: string; studentId: string; year: number; month: number; invoiceNumber: string },
   trigger: string,
-  actor: string
+  actor: string,
+  calendarDeletedSessionIds: Set<string>
 ): Promise<boolean> {
   const snapshot = await prisma.invoiceSnapshot.findFirst({
     where: { invoiceId: invoice.id },
@@ -121,6 +133,7 @@ async function detectChangesForInvoice(
     liveSubscriptionLines,
     liveTotalCHF,
     unbillableReason,
+    calendarDeletedSessionIds,
   });
 
   if (diff.changes.length === 0) return false;

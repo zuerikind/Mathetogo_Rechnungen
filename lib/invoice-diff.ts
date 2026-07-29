@@ -77,6 +77,16 @@ export type DiffInput = {
   liveTotalCHF: number | null;
   /** Grund, falls die Rechnung heute nicht mehr berechenbar ist. */
   unbillableReason?: string | null;
+  /**
+   * Sessions, deren Kalendereintrag nachweislich gelöscht wurde, deren DB-Zeile
+   * aber absichtlich stehen blieb (H3-Guard schützt ausgelieferte Monate).
+   *
+   * Ohne diese Information wäre eine im Kalender gelöschte Lektion unsichtbar:
+   * Der Guard bewahrt die Zeile, und ein Vergleich allein gegen die Datenbank
+   * sieht dann keinen Unterschied. Nur nachgewiesene Löschungen gehören hier
+   * hinein — "nicht im Sync-Fenster gefunden" ist kein Nachweis.
+   */
+  calendarDeletedSessionIds?: Set<string>;
 };
 
 export type InvoiceDiff = {
@@ -134,6 +144,20 @@ export function diffInvoiceAgainstLive(input: DiffInput): InvoiceDiff {
         `${day(snap.date)}, ${snap.durationMin} Min, ${money(snap.amountCHF)}`,
         null,
         `Lektion vom ${day(snap.date)} wurde gelöscht.`
+      );
+      continue;
+    }
+
+    // Im Kalender gelöscht, in der Datenbank behalten: dieselbe Abweichung, nur
+    // auf dem anderen Weg entdeckt. Die übrigen Felder sind unverändert und
+    // müssen nicht mehr verglichen werden.
+    if (input.calendarDeletedSessionIds?.has(id)) {
+      push(
+        "session_removed",
+        [id],
+        `${day(snap.date)}, ${snap.durationMin} Min, ${money(snap.amountCHF)}`,
+        null,
+        `Lektion vom ${day(snap.date)} wurde im Kalender gelöscht. Die Position bleibt auf der ausgelieferten Rechnung.`
       );
       continue;
     }

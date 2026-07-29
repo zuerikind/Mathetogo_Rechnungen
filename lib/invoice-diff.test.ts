@@ -47,6 +47,7 @@ function input(over: Partial<DiffInput> = {}): DiffInput {
     // Nicht ?? — ein explizit übergebenes null bedeutet "nicht mehr berechenbar".
     liveTotalCHF: over.liveTotalCHF === undefined ? 60 : over.liveTotalCHF,
     unbillableReason: over.unbillableReason,
+    calendarDeletedSessionIds: over.calendarDeletedSessionIds,
   };
 }
 
@@ -63,6 +64,34 @@ describe("diffInvoiceAgainstLive", () => {
     );
     expect(types(d)).toEqual(["session_removed"]);
     expect(d.changes[0].sessionIds).toEqual(["x1"]);
+  });
+
+  it("erkennt eine im Kalender gelöschte Lektion, deren DB-Zeile der Guard behalten hat", () => {
+    // Der H3-Guard bewahrt die Zeile in ausgelieferten Monaten. Ein reiner
+    // DB-Vergleich sähe hier nichts — die Löschung kommt aus dem Kalenderstatus.
+    const d = diffInvoiceAgainstLive(
+      input({
+        liveInvoiceSessions: [live()],
+        liveSessionsById: new Map([["x1", live()]]),
+        calendarDeletedSessionIds: new Set(["x1"]),
+      })
+    );
+    expect(types(d)).toEqual(["session_removed"]);
+    expect(d.changes[0].sessionIds).toEqual(["x1"]);
+    expect(d.changes[0].detail).toContain("im Kalender gelöscht");
+  });
+
+  it("meldet nichts, wenn der Kalenderstatus unklar blieb", () => {
+    // Nicht im Sync-Fenster gefunden ist kein Löschnachweis: dann steht die ID
+    // nicht in calendarDeletedSessionIds und es darf kein Befund entstehen.
+    const d = diffInvoiceAgainstLive(
+      input({
+        liveInvoiceSessions: [live()],
+        liveSessionsById: new Map([["x1", live()]]),
+        calendarDeletedSessionIds: new Set<string>(),
+      })
+    );
+    expect(d.changes).toEqual([]);
   });
 
   it("erkennt eine neu hinzugekommene Lektion", () => {
