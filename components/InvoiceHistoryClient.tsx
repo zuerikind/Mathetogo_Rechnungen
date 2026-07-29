@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
@@ -24,7 +24,19 @@ type InvoiceRow = {
   /** Sent/paid invoice whose stored total no longer matches the live recalculation. */
   divergesFromLive?: boolean;
   liveTotalCHF?: number | null;
+  /** Sync hat nach der Auslieferung Abweichungen erkannt; Entscheid steht aus. */
+  needsReview?: boolean;
+  changeDetectedAt?: string | null;
   student: { name: string };
+};
+
+/** Eine erkannte Abweichung, wie sie /api/invoices/[id]/changes liefert. */
+type InvoiceChangeEntry = {
+  detectedAt: string;
+  trigger: string | null;
+  totalBeforeCHF: number | null;
+  totalAfterCHF: number | null;
+  changes: { type: string; detail: string; sessionIds: string[] }[];
 };
 
 type Student = { id: string; name: string };
@@ -102,6 +114,8 @@ export function InvoiceHistoryClient() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [zipDownloading, setZipDownloading] = useState(false);
+  const [openChangesFor, setOpenChangesFor] = useState<string | null>(null);
+  const [changeEntries, setChangeEntries] = useState<Record<string, InvoiceChangeEntry[]>>({});
   const [selectedYearYtd, setSelectedYearYtd] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -349,6 +363,24 @@ export function InvoiceHistoryClient() {
     if (error) alert(error);
   };
 
+  /** Abweichungen erst auf Klick nachladen — die Liste soll dadurch nicht langsamer werden. */
+  const toggleChanges = async (invoiceId: string) => {
+    if (openChangesFor === invoiceId) {
+      setOpenChangesFor(null);
+      return;
+    }
+    setOpenChangesFor(invoiceId);
+    if (changeEntries[invoiceId]) return;
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/changes`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { entries: InvoiceChangeEntry[] };
+      setChangeEntries((old) => ({ ...old, [invoiceId]: data.entries }));
+    } catch {
+      // Anzeige ist optional — ein Fehlschlag darf die Liste nicht stören.
+    }
+  };
+
   const downloadMonthZip = async () => {
     if (!year || !month) {
       alert("Bitte Jahr und Monat wählen, um alle Rechnungen des Monats herunterzuladen.");
@@ -573,7 +605,8 @@ export function InvoiceHistoryClient() {
                 const isBusy = actionBusyId === invoice.id;
                 const sessionCount = safeSessionCount(invoice.sessionIds);
                 return (
-                  <tr key={invoice.id} className={`transition-colors ${getRowClasses(rowState)}`}>
+                  <Fragment key={invoice.id}>
+                  <tr className={`transition-colors ${getRowClasses(rowState)}`}>
                     <td className="px-3 py-3 sm:px-5">
                       <input
                         type="checkbox"
@@ -614,6 +647,16 @@ export function InvoiceHistoryClient() {
                         <div className="mt-1 text-[11px] text-gray-500">
                           Fällig bis {formatDate(dueDate)}
                         </div>
+                      ) : null}
+                      {invoice.needsReview ? (
+                        <button
+                          type="button"
+                          onClick={() => void toggleChanges(invoice.id)}
+                          title="Seit der Auslieferung wurden Abweichungen erkannt — anzeigen"
+                          className="mt-1 block rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900 transition hover:bg-amber-200"
+                        >
+                          Abweichung {openChangesFor === invoice.id ? "▴" : "▾"}
+                        </button>
                       ) : null}
                     </td>
                     <td className="px-3 py-3 sm:px-5">
@@ -679,6 +722,45 @@ export function InvoiceHistoryClient() {
                       </div>
                     </td>
                   </tr>
+                  {openChangesFor === invoice.id ? (
+                    <tr className="bg-amber-50/60">
+                      <td colSpan={7} className="px-3 py-3 sm:px-5">
+                        {(changeEntries[invoice.id] ?? []).length === 0 ? (
+                          <p className="text-xs text-gray-500">Änderungen werden geladen…</p>
+                        ) : (
+                          <div className="space-y-3">
+                            {(changeEntries[invoice.id] ?? []).map((entry, i) => (
+                              <div key={`${entry.detectedAt}-${i}`} className="min-w-0">
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+                                  {entry.trigger ?? "Abweichung"} · {formatDate(new Date(entry.detectedAt))}
+                                  {typeof entry.totalBeforeCHF === "number" ? (
+                                    <>
+                                      {" · "}
+                                      {formatAmount(entry.totalBeforeCHF)} →{" "}
+                                      {typeof entry.totalAfterCHF === "number"
+                                        ? formatAmount(entry.totalAfterCHF)
+                                        : "nicht mehr abrechenbar"}
+                                    </>
+                                  ) : null}
+                                </p>
+                                <ul className="mt-1 space-y-0.5">
+                                  {entry.changes.map((change, j) => (
+                                    <li key={j} className="text-xs text-gray-700">
+                                      • {change.detail}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                            <p className="text-[11px] text-gray-500">
+                              Nur erkannt und festgehalten — die Rechnung bleibt unverändert.
+                            </p>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 );
               })}
             </tbody>

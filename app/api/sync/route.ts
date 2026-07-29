@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
+import { detectInvoiceChangesInScope } from "@/lib/invoice-change-detection";
 import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
 import { zurichYearMonth } from "@/lib/month-math";
 import { prisma } from "@/lib/prisma";
@@ -233,6 +234,29 @@ export async function POST(req: NextRequest) {
     const googleEventIds = Array.from(new Set(eventIds));
     const allowPruneOrphans = pruneOrphans === true;
 
+    // Lektionen in Monaten mit bereits ausgelieferter Rechnung werden nie gelöscht:
+    // der Snapshot verweist auf sie, und die Rechnung ist ab dem Download unveränderlich.
+    // Eine im Kalender gelöschte Lektion soll hier als Abweichung auffallen, nicht
+    // stillschweigend die Belegkette zerreissen.
+    const deliveredInvoices = await prisma.invoice.findMany({
+      where: { year, month, firstDownloadedAt: { not: null } },
+      select: { studentId: true },
+    });
+    const deliveredStudentIds = deliveredInvoices.map((i) => i.studentId);
+    // Familienrechnung: die Lektionen der Kinder stehen auf der Rechnung des Hauptschülers.
+    const billedChildren =
+      deliveredStudentIds.length > 0
+        ? await prisma.student.findMany({
+            where: { billedToId: { in: deliveredStudentIds } },
+            select: { id: true },
+          })
+        : [];
+    const protectedStudentIds = Array.from(
+      new Set([...deliveredStudentIds, ...billedChildren.map((c) => c.id)])
+    );
+    const notDelivered =
+      protectedStudentIds.length > 0 ? { studentId: { notIn: protectedStudentIds } } : {};
+
     // Default interactive transaction timeout is too low for a full month of upserts + deleteMany
     // (leads to P2028 "Transaction not found" when Prisma closes the tx mid-loop).
     const removed = await prisma.$transaction(
@@ -274,7 +298,13 @@ export async function POST(req: NextRequest) {
         // longer match, so they would always look like orphans.
         if (googleEventIds.length === 0) {
           return tx.session.deleteMany({
-            where: { year, month, calEventId: { not: null }, student: { active: true } },
+            where: {
+              year,
+              month,
+              calEventId: { not: null },
+              student: { active: true },
+              ...notDelivered,
+            },
           });
         }
         return tx.session.deleteMany({
@@ -283,6 +313,7 @@ export async function POST(req: NextRequest) {
             month,
             calEventId: { not: null, notIn: googleEventIds },
             student: { active: true },
+            ...notDelivered,
           },
         });
       },
@@ -294,10 +325,21 @@ export async function POST(req: NextRequest) {
       staleInvoicesRemoved = await pruneStaleInvoicesInScope({ year, month });
     }
 
+    // Nach dem Abgleich prüfen, ob ausgelieferte Rechnungen dieses Monats vom
+    // heutigen Stand abweichen. Nur erkennen und protokollieren.
+    const changes = await detectInvoiceChangesInScope({
+      year,
+      month,
+      trigger: "Kalender-Sync",
+      actor: session.user?.email ?? "system",
+    });
+
     return NextResponse.json({
       synced: tasks.length,
       removed: removed.count,
       staleInvoicesRemoved,
+      invoicesChecked: changes.checked,
+      invoicesFlagged: changes.flagged,
       skipped: events.length - tasks.length - unmatched.length,
       unmatched,
       totalEvents: events.length,

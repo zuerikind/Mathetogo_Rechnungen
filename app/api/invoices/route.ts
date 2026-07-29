@@ -286,8 +286,11 @@ export async function GET(req: NextRequest) {
       const nextTotal = effectiveTotals.get(key);
       const liveTotal =
         typeof nextTotal === "number" ? Math.round(nextTotal * 100) / 100 : null;
-      // Sent/paid invoices show what was actually billed; only drafts track live data.
-      const locked = Boolean(invoice.sentAt || invoice.paidAt);
+      // Ausgelieferte Rechnungen zeigen, was fakturiert wurde; nur Entwürfe folgen
+      // dem Live-Stand. firstDownloadedAt gehört dazu: ab dem Download ist die
+      // Rechnung raus, eine Abweichung davon wird als solche markiert (needsReview),
+      // nicht stillschweigend in den angezeigten Betrag übernommen.
+      const locked = Boolean(invoice.sentAt || invoice.paidAt || invoice.firstDownloadedAt);
       const totalCHF = locked ? invoice.totalCHF : liveTotal ?? invoice.totalCHF;
       const divergesFromLive =
         locked && liveTotal !== null && Math.abs(liveTotal - invoice.totalCHF) > 0.005;
