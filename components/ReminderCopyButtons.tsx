@@ -107,10 +107,9 @@ export function ReminderCopyButtons({ row }: { row: ReminderRow }) {
         })}
         {row.pdfPath ? (
           <a
-            href={row.pdfPath}
-            target="_blank"
+            href={`/api/invoices/${row.invoiceId}/download`}
             rel="noreferrer"
-            title="Rechnungs-PDF öffnen"
+            title="Rechnungs-PDF herunterladen"
             className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
           >
             PDF ↓

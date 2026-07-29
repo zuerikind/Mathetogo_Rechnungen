@@ -625,10 +625,11 @@ export function InvoiceHistoryClient() {
                         >
                           Vorschau
                         </Link>
-                        {invoice.pdfPath ? (
+                        {invoice.pdfPath && !invoice.isVirtual ? (
                           <a
-                            href={invoice.pdfPath}
-                            target="_blank"
+                            // Über die App-Route statt direkt auf den Storage: nur so
+                            // wird der Download erfasst und der Stand eingefroren.
+                            href={`/api/invoices/${invoice.id}/download`}
                             rel="noreferrer"
                             className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
                           >

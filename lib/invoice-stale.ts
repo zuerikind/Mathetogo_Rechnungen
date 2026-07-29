@@ -91,10 +91,13 @@ export async function removeInvoiceWhenUnbillable(
 
   const invoice = await prisma.invoice.findUnique({
     where: { studentId_month_year: { studentId, month, year } },
-    select: { id: true, sentAt: true, paidAt: true },
+    select: { id: true, sentAt: true, paidAt: true, firstDownloadedAt: true },
   });
   if (!invoice) return false;
   if (invoice.paidAt) return false;
+  // Heruntergeladene Rechnungen sind ausgeliefert und damit unveränderlich —
+  // sie werden nie automatisch entfernt. Korrektur läuft über eine Revision/Storno.
+  if (invoice.firstDownloadedAt) return false;
   if (invoice.sentAt && !opts?.includeSent) return false;
 
   await prisma.invoice.delete({ where: { id: invoice.id } });

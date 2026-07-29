@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
 import { getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
+import { recordInvoiceDownload } from "@/lib/invoice-download";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import {
@@ -121,6 +122,10 @@ export async function GET(req: NextRequest) {
     const prefix = `${year}-${String(month).padStart(2, "0")}`;
     let added = 0;
     const usedZipNames = new Set<string>();
+    // Der ZIP-Export liefert dieselben Dokumente aus wie der Einzeldownload und wird
+    // deshalb genauso erfasst: erster Download friert den Stand ein.
+    const actor = userSession.user?.email ?? "unbekannt";
+    const exportedAt = new Date();
 
     for (const [studentId, studentName] of Array.from(students.entries()).sort((a, b) =>
       a[1].localeCompare(b[1], "de-CH")
@@ -145,6 +150,7 @@ export async function GET(req: NextRequest) {
           usedZipNames.add(safeNameBase);
           zip.file(`${prefix}-${safeNameBase}.pdf`, Buffer.from(await storedFile.arrayBuffer()));
           added += 1;
+          await recordInvoiceDownload(existing.id, actor, "Monatsexport (ZIP)", exportedAt);
           continue;
         }
         // Stored PDF missing (should not happen): rebuild for the ZIP only,
@@ -156,6 +162,7 @@ export async function GET(req: NextRequest) {
             usedZipNames.add(safeNameBase);
             zip.file(`${prefix}-${safeNameBase}.pdf`, await buildInvoicePdf(payload));
             added += 1;
+            await recordInvoiceDownload(existing.id, actor, "Monatsexport (ZIP)", exportedAt);
           }
         } catch {
           // Rebuild nicht möglich — Eintrag auslassen statt ganzen Export abbrechen.
@@ -204,6 +211,8 @@ export async function GET(req: NextRequest) {
       usedZipNames.add(safeNameBase);
       zip.file(`${prefix}-${safeNameBase}.pdf`, pdfBuffer);
       added += 1;
+      // Nach dem pdfPath-Update, damit der eingefrorene Stand den Speicherort kennt.
+      await recordInvoiceDownload(invoiceId, actor, "Monatsexport (ZIP)", exportedAt);
     }
 
     if (added === 0) {

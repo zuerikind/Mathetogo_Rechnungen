@@ -193,8 +193,7 @@ export function ReminderPreview() {
                       </span>
                       {inv.pdfPath ? (
                         <a
-                          href={inv.pdfPath}
-                          target="_blank"
+                          href={`/api/invoices/${inv.invoiceId}/download`}
                           rel="noreferrer"
                           className="ml-2 rounded-lg border border-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
                         >

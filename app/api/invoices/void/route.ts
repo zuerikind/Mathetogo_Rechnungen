@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
 import { getBillableTotalCHF, removeInvoiceWhenUnbillable } from "@/lib/invoice-stale";
 
 /** Remove invoice for a month when there is nothing left to bill (incl. mistaken sent invoices). */
@@ -31,6 +32,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error: `Für diesen Monat sind noch CHF ${billable.toFixed(2)} abrechenbar — Rechnung kann nicht entfernt werden.`,
+      },
+      { status: 409 }
+    );
+  }
+
+  // Klare Meldung statt des generischen 404 aus removeInvoiceWhenUnbillable.
+  const downloaded = await prisma.invoice.findUnique({
+    where: { studentId_month_year: { studentId, month, year } },
+    select: { firstDownloadedAt: true, invoiceNumber: true },
+  });
+  if (downloaded?.firstDownloadedAt) {
+    return NextResponse.json(
+      {
+        error: `Rechnung ${downloaded.invoiceNumber} wurde bereits heruntergeladen und gilt als ausgeliefert — sie kann nicht mehr entfernt werden.`,
       },
       { status: 409 }
     );
