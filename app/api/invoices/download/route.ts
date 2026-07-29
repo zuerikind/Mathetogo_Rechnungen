@@ -24,7 +24,14 @@ function sanitizeFileName(value: string): string {
     .toLowerCase();
 }
 
-export async function GET(req: NextRequest) {
+/**
+ * Monatsexport als ZIP — bewusst POST, nicht GET.
+ *
+ * Der Export erfasst die enthaltenen Rechnungen als ausgeliefert und generiert
+ * fehlende PDFs nach. Beides darf nicht passieren, weil ein Browser eine URL
+ * spekulativ vorablädt; POST wird nie vorabgeladen.
+ */
+export async function POST(req: NextRequest) {
   try {
     const userSession = await auth();
     if (!userSession) {

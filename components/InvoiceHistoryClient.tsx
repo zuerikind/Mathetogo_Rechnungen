@@ -6,6 +6,7 @@ import { DashboardShell } from "@/components/DashboardShell";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { useMounted } from "@/hooks/use-mounted";
+import { downloadInvoicePdf, saveBlob } from "@/lib/download-invoice-pdf";
 import { formatAmount, formatDate, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice-format";
 import { formatCHF, getCurrentMonthYear, monthOptions } from "@/lib/ui-format";
 
@@ -343,6 +344,11 @@ export function InvoiceHistoryClient() {
     [selectedRows, ensurePersistedInvoice, updateRowStatusLocally]
   );
 
+  const handleDownload = async (invoiceId: string) => {
+    const error = await downloadInvoicePdf(invoiceId);
+    if (error) alert(error);
+  };
+
   const downloadMonthZip = async () => {
     if (!year || !month) {
       alert("Bitte Jahr und Monat wählen, um alle Rechnungen des Monats herunterzuladen.");
@@ -352,7 +358,7 @@ export function InvoiceHistoryClient() {
     setZipDownloading(true);
     try {
       const url = `/api/invoices/download?year=${year}&month=${month}`;
-      const response = await fetch(url);
+      const response = await fetch(url, { method: "POST" });
       if (!response.ok) {
         let message = "ZIP-Download fehlgeschlagen.";
         try {
@@ -369,14 +375,7 @@ export function InvoiceHistoryClient() {
       }
 
       const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = `rechnungen-${year}-${String(month).padStart(2, "0")}.zip`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
+      saveBlob(blob, `rechnungen-${year}-${String(month).padStart(2, "0")}.zip`);
     } catch {
       alert("ZIP-Download fehlgeschlagen. Bitte erneut versuchen.");
     } finally {
@@ -626,15 +625,16 @@ export function InvoiceHistoryClient() {
                           Vorschau
                         </Link>
                         {invoice.pdfPath && !invoice.isVirtual ? (
-                          <a
-                            // Über die App-Route statt direkt auf den Storage: nur so
-                            // wird der Download erfasst und der Stand eingefroren.
-                            href={`/api/invoices/${invoice.id}/download`}
-                            rel="noreferrer"
+                          <button
+                            type="button"
+                            // Button statt Link: der Download wird serverseitig als
+                            // Auslieferung festgehalten, und einen Link würde der
+                            // Browser beim Hover vorabladen.
+                            onClick={() => void handleDownload(invoice.id)}
                             className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
                           >
                             Download
-                          </a>
+                          </button>
                         ) : (
                           <span className="rounded-lg border border-gray-100 px-2.5 py-1 text-xs font-medium text-gray-300">
                             PDF View

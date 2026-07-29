@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useReminderTemplates } from "@/hooks/useReminderTemplates";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { downloadInvoicePdf } from "@/lib/download-invoice-pdf";
 import { renderReminder, type ReminderStage, type ReminderTokenInput } from "@/lib/reminder-tokens";
 
 /** Nur die Felder, die für die Token-Ersetzung einer Zeile gebraucht werden. */
@@ -15,7 +16,7 @@ export type ReminderRow = {
   month: number;
   /** Zuletzt versendete Stufe aus der DB (0 = keine). */
   reminderStage: number;
-  /** Öffentliche PDF-URL; null, wenn die Rechnung nie generiert wurde. */
+  /** Vermerkter Speicherort der PDF; null, wenn die Rechnung nie generiert wurde. */
   pdfPath: string | null;
 };
 
@@ -106,14 +107,19 @@ export function ReminderCopyButtons({ row }: { row: ReminderRow }) {
           );
         })}
         {row.pdfPath ? (
-          <a
-            href={`/api/invoices/${row.invoiceId}/download`}
-            rel="noreferrer"
+          <button
+            type="button"
+            // POST statt Link: der Download gilt als Auslieferung und darf nicht
+            // durch das blosse Vorabladen des Browsers ausgelöst werden.
+            onClick={async () => {
+              const error = await downloadInvoicePdf(row.invoiceId);
+              if (error) alert(error);
+            }}
             title="Rechnungs-PDF herunterladen"
             className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
           >
             PDF ↓
-          </a>
+          </button>
         ) : null}
       </div>
       {status === "error" && (

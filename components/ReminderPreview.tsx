@@ -5,6 +5,7 @@ import { useReminderTemplates } from "@/hooks/useReminderTemplates";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { dueReminderStage, renderReminder, type ReminderTokenInput } from "@/lib/reminder-tokens";
 import { markReminderStage } from "@/components/ReminderCopyButtons";
+import { downloadInvoicePdf } from "@/lib/download-invoice-pdf";
 import { zurichParts } from "@/lib/dashboard-analytics";
 import { formatCHF, monthOptions } from "@/lib/ui-format";
 
@@ -192,13 +193,18 @@ export function ReminderPreview() {
                         {inv.invoiceNumber || "ohne Nr."} · {formatCHF(inv.totalCHF)}
                       </span>
                       {inv.pdfPath ? (
-                        <a
-                          href={`/api/invoices/${inv.invoiceId}/download`}
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          // POST statt Link, sonst löst schon der Prefetch des
+                          // Browsers eine Auslieferung aus.
+                          onClick={async () => {
+                            const error = await downloadInvoicePdf(inv.invoiceId);
+                            if (error) alert(error);
+                          }}
                           className="ml-2 rounded-lg border border-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
                         >
                           PDF ↓
-                        </a>
+                        </button>
                       ) : (
                         <span
                           title="Für diese Rechnung ist kein PDF gespeichert."
