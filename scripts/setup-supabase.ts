@@ -10,21 +10,34 @@ if (!url || !key) {
 
 const supabase = createClient(url, key);
 
+// Der Bucket ist privat: Rechnungen enthalten IBAN, Beträge und Namen und werden
+// ausschliesslich über den authentifizierten Download der App ausgeliefert
+// (app/api/invoices/[id]/download). Ein öffentlicher Bucket würde dieses Tracking
+// umgehbar machen und die Dokumente ohne Login lesbar lassen.
 async function setup() {
   const { data: buckets } = await supabase.storage.listBuckets();
-  const exists = buckets?.some((b) => b.name === "invoices");
+  const existing = buckets?.find((b) => b.name === "invoices");
 
-  if (exists) {
-    console.log("✓ invoices bucket already exists");
+  if (existing) {
+    if (!existing.public) {
+      console.log("✓ invoices bucket already exists and is private");
+      return;
+    }
+    const { error } = await supabase.storage.updateBucket("invoices", { public: false });
+    if (error) {
+      console.error("✗ Failed to make bucket private:", error.message);
+      process.exit(1);
+    }
+    console.log("✓ invoices bucket switched to private");
     return;
   }
 
-  const { error } = await supabase.storage.createBucket("invoices", { public: true });
+  const { error } = await supabase.storage.createBucket("invoices", { public: false });
   if (error) {
     console.error("✗ Failed to create bucket:", error.message);
     process.exit(1);
   }
-  console.log("✓ invoices bucket created");
+  console.log("✓ invoices bucket created (private)");
 }
 
 setup();

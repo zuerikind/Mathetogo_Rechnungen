@@ -256,12 +256,15 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
     return renderWhatsAppTemplate(template, values);
   }, [student?.name, parentName, year, month, totals.totalCHF, invoice?.invoiceNumber, template, settings?.name]);
 
-  const openWhatsAppWithPdf = async () => {
-    const generated = invoice?.id ? { invoiceId: invoice.id, pdfUrl: generatedPdfUrl ?? undefined } : await generateInvoice();
-    if (!generated) return;
-    const pdfLink = generated.pdfUrl ?? generatedPdfUrl ?? previewUrl;
-    window.open(buildWhatsAppUrl(`${waMessage}\n\nPDF: ${pdfLink}`, parentPhone), "_blank");
-  };
+  // DEAKTIVIERT (Bucket privat): verschickte die öffentliche Supabase-URL an die Eltern.
+  // Seit der Bucket privat ist, wäre dieser Link tot. Bleibt stehen, damit der Versand
+  // reaktivierbar ist — dann aber nicht mit pdfUrl, sondern über einen signierten Link.
+  // const openWhatsAppWithPdf = async () => {
+  //   const generated = invoice?.id ? { invoiceId: invoice.id, pdfUrl: generatedPdfUrl ?? undefined } : await generateInvoice();
+  //   if (!generated) return;
+  //   const pdfLink = generated.pdfUrl ?? generatedPdfUrl ?? previewUrl;
+  //   window.open(buildWhatsAppUrl(`${waMessage}\n\nPDF: ${pdfLink}`, parentPhone), "_blank");
+  // };
 
   const copyWhatsAppText = async () => {
     try {
@@ -498,13 +501,15 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
               >
                 WhatsApp öffnen
               </button>
+              {/* DEAKTIVIERT (Bucket privat): verschickte die öffentliche PDF-URL.
+                  Auslieferung läuft über den authentifizierten Download in der App.
               <button
                 type="button"
                 onClick={() => void openWhatsAppWithPdf()}
                 className="rounded-xl border border-[#4A7FC1] bg-white px-3 py-2 text-xs font-semibold text-[#4A7FC1] transition hover:bg-[#EBF4FF]"
               >
                 WhatsApp + PDF
-              </button>
+              </button> */}
             </div>
             {copyState && <p className="mt-2 text-xs text-[#4A7FC1]">{copyState}</p>}
           </div>
