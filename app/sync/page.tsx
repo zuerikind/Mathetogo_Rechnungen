@@ -187,6 +187,19 @@ export default function SyncPage() {
                   ⚠ {result.unmatched.length} ohne Schülerzuordnung
                 </span>
               )}
+              {(result.invoicesFlagged ?? 0) > 0 && (
+                <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900">
+                  {result.invoicesFlagged} Rechnung(en) mit neuer Abweichung
+                </span>
+              )}
+              {result.detectionError ? (
+                <span
+                  className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-800"
+                  title={result.detectionError}
+                >
+                  ⚠ Abweichungserkennung lief nicht — ausgelieferte Rechnungen ungeprüft
+                </span>
+              ) : null}
             </div>
 
             {/* Synced sessions */}

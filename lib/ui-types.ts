@@ -50,6 +50,15 @@ export type SyncResponse = {
   staleInvoicesRemoved?: number;
   /** From API when calendar returns events (debug / UX). */
   totalEvents?: number;
+  /** Ausgelieferte Rechnungen des Monats, die auf Abweichungen geprüft wurden. */
+  invoicesChecked?: number | null;
+  /** Davon mit neu erkannter Abweichung (needsReview gesetzt). */
+  invoicesFlagged?: number | null;
+  /**
+   * Gesetzt, wenn die Abweichungserkennung fehlschlug. Der Sync selbst war dann
+   * trotzdem erfolgreich — nur ausgelieferte Rechnungen wurden nicht geprüft.
+   */
+  detectionError?: string | null;
   /** Set client-side when the sync request fails (HTTP or network). */
   clientError?: string;
   sessions?: SessionWithStudent[];

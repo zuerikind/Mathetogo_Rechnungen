@@ -357,43 +357,62 @@ export async function POST(req: NextRequest) {
       staleInvoicesRemoved = await pruneStaleInvoicesInScope({ year, month });
     }
 
-    // Der H3-Guard bewahrt die DB-Zeilen ausgelieferter Monate — dadurch sieht ein
-    // reiner DB-Vergleich eine im Kalender gelöschte Lektion nicht. Deshalb hier
-    // die Kandidaten sammeln und ihren Kalenderstatus einzeln klären.
-    let calendarDeletedSessionIds = new Set<string>();
-    if (protectedStudentIds.length > 0) {
-      const kept = await prisma.session.findMany({
-        where: {
-          year,
-          month,
-          studentId: { in: protectedStudentIds },
-          calEventId: { not: null, notIn: googleEventIds },
-        },
-        select: { id: true, calEventId: true },
-      });
-      calendarDeletedSessionIds = await resolveDeletedCalendarEvents(
-        calendar,
-        calendarId,
-        kept.map((s) => ({ sessionId: s.id, calEventId: s.calEventId as string }))
-      );
-    }
+    // Ab hier kommt nur noch Zusatzarbeit: Der Kalenderabgleich ist committet, die
+    // Sessions stehen. Ein Fehler in der Abweichungserkennung darf diese bereits
+    // erledigte Arbeit nicht als Fehlschlag erscheinen lassen — er wird geloggt
+    // und in der Antwort markiert, statt den Sync mit 500 zu beenden.
+    let detectionChecked: number | null = null;
+    let detectionFlagged: number | null = null;
+    let detectionError: string | null = null;
+    try {
+      // Der H3-Guard bewahrt die DB-Zeilen ausgelieferter Monate — dadurch sieht ein
+      // reiner DB-Vergleich eine im Kalender gelöschte Lektion nicht. Deshalb hier
+      // die Kandidaten sammeln und ihren Kalenderstatus einzeln klären.
+      let calendarDeletedSessionIds = new Set<string>();
+      if (protectedStudentIds.length > 0) {
+        const kept = await prisma.session.findMany({
+          where: {
+            year,
+            month,
+            studentId: { in: protectedStudentIds },
+            calEventId: { not: null, notIn: googleEventIds },
+          },
+          select: { id: true, calEventId: true },
+        });
+        calendarDeletedSessionIds = await resolveDeletedCalendarEvents(
+          calendar,
+          calendarId,
+          kept.map((s) => ({ sessionId: s.id, calEventId: s.calEventId as string }))
+        );
+      }
 
-    // Nach dem Abgleich prüfen, ob ausgelieferte Rechnungen dieses Monats vom
-    // heutigen Stand abweichen. Nur erkennen und protokollieren.
-    const changes = await detectInvoiceChangesInScope({
-      year,
-      month,
-      trigger: "Kalender-Sync",
-      actor: session.user?.email ?? "system",
-      calendarDeletedSessionIds,
-    });
+      // Nach dem Abgleich prüfen, ob ausgelieferte Rechnungen dieses Monats vom
+      // heutigen Stand abweichen. Nur erkennen und protokollieren.
+      const changes = await detectInvoiceChangesInScope({
+        year,
+        month,
+        trigger: "Kalender-Sync",
+        actor: session.user?.email ?? "system",
+        calendarDeletedSessionIds,
+      });
+      detectionChecked = changes.checked;
+      detectionFlagged = changes.flagged;
+    } catch (err: unknown) {
+      detectionError = err instanceof Error ? err.message : String(err);
+      // Sichtbar loggen statt schlucken: sonst tauscht man einen falschen 500
+      // gegen stille Blindheit — der Sync meldet Erfolg und niemand merkt, dass
+      // ausgelieferte Rechnungen diesmal nicht geprüft wurden.
+      console.error("[sync] Abweichungserkennung fehlgeschlagen:", err);
+    }
 
     return NextResponse.json({
       synced: tasks.length,
       removed: removed.count,
       staleInvoicesRemoved,
-      invoicesChecked: changes.checked,
-      invoicesFlagged: changes.flagged,
+      invoicesChecked: detectionChecked,
+      invoicesFlagged: detectionFlagged,
+      /** null = Erkennung lief; Text = sie lief nicht, Sync selbst war erfolgreich. */
+      detectionError,
       skipped: events.length - tasks.length - unmatched.length,
       unmatched,
       totalEvents: events.length,
