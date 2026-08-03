@@ -166,9 +166,19 @@ export async function PUT(
           data: { studentId: params.id, ratePerMin: existing.ratePerMin, effectiveFrom: new Date(0) },
         });
       }
-      await prisma.studentRateHistory.create({
-        data: { studentId: params.id, ratePerMin: nextRate, effectiveFrom: effectiveDay },
-      });
+      // Eine Tarifaenderung ab X rechnet oben JEDE Lektion ab X auf nextRate um.
+      // Spaetere Verlaufseintraege widersprechen dem und bepreisen neu
+      // synchronisierte Lektionen still mit dem alten Satz weiter — genau so blieb
+      // am 10.07.2026 ein 1.20-Eintrag ab 01.07. stehen, obwohl die Korrektur
+      // (1.30 ab 01.06.) laengst erfasst war. Ab Stichtag gilt nur noch nextRate.
+      await prisma.$transaction([
+        prisma.studentRateHistory.deleteMany({
+          where: { studentId: params.id, effectiveFrom: { gte: effectiveDay } },
+        }),
+        prisma.studentRateHistory.create({
+          data: { studentId: params.id, ratePerMin: nextRate, effectiveFrom: effectiveDay },
+        }),
+      ]);
     }
 
     if (updates.length > 0) {
