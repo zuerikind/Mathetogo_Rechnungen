@@ -1,19 +1,70 @@
-# Nachhilfe Tracker — daily database backup to Google Drive
-$source = "$PSScriptRoot\prisma\dev.db"
-$dest   = "H:\Meine Ablage\Daten von tracker"
-$date   = Get-Date -Format "yyyy-MM-dd"
-$file   = "nachhilfe-$date.db"
+# Nachhilfe Tracker - taegliches Backup der PostgreSQL-Datenbank nach Google Drive.
+#
+# Sicherte frueher prisma/dev.db. Diese SQLite-Datei ist seit dem Umzug auf
+# Supabase tot - das taegliche Backup hat monatelang eine Datei kopiert, in der
+# keine Produktivdaten mehr stehen. Jetzt: echtes pg_dump im Custom-Format.
+#
+# Verbindung ueber den IPv4-Session-Pooler (Port 5432). Der direkte Host aus
+# DIRECT_URL (db.<ref>.supabase.co) ist hier nur ueber IPv6 erreichbar und
+# laeuft deshalb in einen Timeout.
+#
+# Bewusst reines ASCII: PowerShell 5.1 liest .ps1 ohne BOM als ANSI, ein
+# Gedankenstrich im Kommentar zerlegt dann den Parser.
 
-if (-not (Test-Path $dest)) {
-    New-Item -ItemType Directory -Path $dest | Out-Null
+$ErrorActionPreference = "Stop"
+
+$dest      = "H:\Meine Ablage\Daten von tracker"
+$keepCount = 14
+$envFile   = "$PSScriptRoot\.env.local"
+$date      = Get-Date -Format "yyyy-MM-dd"
+$file      = "mathetogo-$date.dump"
+$target    = Join-Path $dest $file
+
+if (-not (Get-Command pg_dump -ErrorAction SilentlyContinue)) {
+    throw "pg_dump nicht gefunden. PostgreSQL-Client installieren: winget install PostgreSQL.PostgreSQL"
 }
+if (-not (Test-Path $envFile)) { throw "Keine .env.local gefunden: $envFile" }
 
-Copy-Item -Path $source -Destination "$dest\$file" -Force
+# DATABASE_URL lesen, ohne sie auszugeben.
+$line = Select-String -Path $envFile -Pattern '^\s*DATABASE_URL\s*=' | Select-Object -First 1
+if (-not $line) { throw "DATABASE_URL steht nicht in .env.local" }
+$dbUrl = ($line.Line -replace '^\s*DATABASE_URL\s*=\s*', '').Trim().Trim('"').Trim("'")
 
-# Keep only the 30 most recent backups
-Get-ChildItem -Path $dest -Filter "nachhilfe-*.db" |
+# Auf den Session-Pooler umbiegen: Port 6543 (Transaction-Pooler, pgbouncer)
+# kann kein pg_dump bedienen, 5432 auf demselben Host schon.
+$uri = [System.Uri]$dbUrl
+if ($uri.Host -notlike "*pooler.supabase.com") {
+    Write-Warning "Host $($uri.Host) ist nicht der Pooler - bei IPv6-Problemen schlaegt der Dump fehl."
+}
+$builder = [System.UriBuilder]::new($uri)
+$builder.Port = 5432
+$builder.Query = "sslmode=require"
+$conn = $builder.Uri.AbsoluteUri
+
+if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
+
+# -Fc: Custom-Format, komprimiert und von pg_restore selektiv wiederherstellbar.
+& pg_dump --dbname=$conn --format=custom --no-owner --no-privileges --file=$target
+if ($LASTEXITCODE -ne 0) { throw "pg_dump ist mit Code $LASTEXITCODE fehlgeschlagen - kein Backup geschrieben." }
+
+# Ein leeres oder abgeschnittenes Dump ist schlimmer als keines, weil es wie eines
+# aussieht. Deshalb Groesse pruefen UND das Inhaltsverzeichnis lesen lassen.
+$sizeKb = [math]::Round((Get-Item $target).Length / 1KB, 1)
+if ($sizeKb -lt 20) {
+    Remove-Item $target -Force
+    throw "Dump war nur $sizeKb KB gross - verworfen."
+}
+$toc = & pg_restore --list $target 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item $target -Force
+    throw "pg_restore --list konnte das Dump nicht lesen - verworfen."
+}
+$tables = ($toc | Select-String -Pattern "TABLE DATA").Count
+
+# Alte Backups aufraeumen (der Kommentar sagte frueher 30, der Code behielt 7).
+Get-ChildItem -Path $dest -Filter "mathetogo-*.dump" |
     Sort-Object LastWriteTime -Descending |
-    Select-Object -Skip 7 |
+    Select-Object -Skip $keepCount |
     Remove-Item -Force
 
-Write-Output "$(Get-Date) - backup saved: $dest\$file"
+Write-Output "$(Get-Date -Format 'yyyy-MM-dd HH:mm') - Backup: $target ($sizeKb KB, $tables Tabellen)"
