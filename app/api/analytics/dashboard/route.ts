@@ -29,7 +29,8 @@ export async function GET() {
       orderBy: { date: "asc" },
     }),
     prisma.invoice.findMany({
-      where: { NOT: { sentAt: null, paidAt: null } },
+      // Stornierte zaehlen weder als Umsatz noch als Forderung.
+      where: { NOT: { sentAt: null, paidAt: null }, voidedAt: null },
       select: {
         id: true,
         studentId: true,
@@ -39,6 +40,7 @@ export async function GET() {
         invoiceNumber: true,
         sentAt: true,
         paidAt: true,
+        voidedAt: true,
         reminderStage: true,
         pdfPath: true,
         student: { select: { name: true } },
@@ -70,6 +72,7 @@ export async function GET() {
       invoiceNumber: i.invoiceNumber,
       sentAt: i.sentAt,
       paidAt: i.paidAt,
+      voidedAt: i.voidedAt,
       reminderStage: i.reminderStage,
       pdfPath: i.pdfPath,
       studentName: i.student.name,

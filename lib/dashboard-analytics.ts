@@ -17,6 +17,8 @@ export type AnalyticsInvoice = {
   invoiceNumber: string;
   sentAt: string | null;
   paidAt: string | null;
+  /** Storniert: gegenstandslos, zählt weder als Ertrag noch als Forderung. */
+  voidedAt?: string | null;
   /** Zuletzt versendete Mahnstufe (0 = keine). */
   reminderStage: number;
   /** Öffentliche PDF-URL, null solange die Rechnung nie generiert wurde. */
@@ -144,6 +146,7 @@ export function computeInvoiceAging(invoices: AnalyticsInvoice[], now: Date): In
   let total = 0;
 
   for (const inv of invoices) {
+    if (inv.voidedAt) continue; // storniert = gegenstandslos, keine Forderung
     if (!inv.sentAt || inv.paidAt) continue; // offen = gesendet, aber nicht bezahlt
     // Der laufende Monat wird erst am Monatsende fakturiert — auf Zahlung wartet
     // man nur für Vormonate (z. B. im Juli auf die Juni-Rechnungen).

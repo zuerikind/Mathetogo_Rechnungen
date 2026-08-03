@@ -99,6 +99,11 @@ model Invoice {
   changeDetectedAt DateTime?
   /// Ausgabestand; jede Neuausstellung unter gleicher Nummer erhöht ihn (P6).
   revision      Int       @default(1)
+  /// Storniert: die Rechnung ist gegenstandslos, bleibt aber samt Nummer und PDF
+  /// bestehen. Zählt danach weder als Ertrag noch als offene Forderung. Bewusst
+  /// ein eigenes Feld: "offen" wird an vier Stellen als sentAt && !paidAt
+  /// berechnet, und ein Storno nur im Audit-Log wäre dort nicht sichtbar.
+  voidedAt      DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

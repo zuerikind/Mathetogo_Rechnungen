@@ -57,7 +57,8 @@ export async function GET(req: NextRequest) {
   if (year !== null && month !== null) {
     // Gesendet, aber nicht bezahlt (schliesst Entwürfe aus: sentAt = null). Kein Status-Feld im Schema.
     const rows = await prisma.invoice.findMany({
-      where: { year, month, sentAt: { not: null }, paidAt: null },
+      // Stornierte Rechnungen sind keine Forderung mehr und werden nicht gemahnt.
+      where: { year, month, sentAt: { not: null }, paidAt: null, voidedAt: null },
       select: {
         id: true,
         invoiceNumber: true,

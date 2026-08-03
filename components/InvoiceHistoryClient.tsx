@@ -28,6 +28,8 @@ type InvoiceRow = {
   /** Sync hat nach der Auslieferung Abweichungen erkannt; Entscheid steht aus. */
   needsReview?: boolean;
   changeDetectedAt?: string | null;
+  /** Storniert: gegenstandslos, bleibt aber mit Nummer und PDF sichtbar. */
+  voidedAt?: string | null;
   /** Ausgabestand; ab 2 wurde die Rechnung neu ausgestellt. */
   revision?: number;
   /** Abweichungen, die als "Original bleibt gültig" abgehakt wurden. */
@@ -99,6 +101,9 @@ function endOfDay(date: Date): Date {
 }
 
 function getRowUiState(invoice: InvoiceRow, now: Date | null): InvoiceRowUiState {
+  // Storniert: neutral einfaerben. Ohne das saehe die Zeile weiter nach
+  // "gesendet, unbezahlt" und damit irgendwann nach ueberfaellig aus.
+  if (invoice.voidedAt) return "draft";
   if (invoice.paidAt) return "paid";
   if (invoice.sentAt) {
     if (!now) return "sent";
@@ -117,6 +122,7 @@ function getRowClasses(state: InvoiceRowUiState): string {
 }
 
 function getStatusLabel(invoice: InvoiceRow, now: Date | null): string {
+  if (invoice.voidedAt) return "Storniert";
   const state = getRowUiState(invoice, now);
   if (state === "paid") return "Bezahlt";
   if (state === "overdue") return "Überfällig";
@@ -131,6 +137,7 @@ const statusBadge: Record<string, string> = {
   "Überfällig": "bg-red-100 text-red-700",
   Erstellt: "bg-gray-100 text-gray-600",
   Ausstehend: "bg-orange-50 text-orange-700",
+  Storniert: "bg-gray-200 text-gray-600 line-through",
 };
 
 /** Archiv: feste Jahres-Verdienste (nicht aus der Tabelle berechnet). */
@@ -791,7 +798,7 @@ export function InvoiceHistoryClient() {
                         </button>
                         <button
                           type="button"
-                          disabled={Boolean(invoice.isVirtual) || !invoice.sentAt || Boolean(invoice.paidAt) || isBusy}
+                          disabled={Boolean(invoice.isVirtual) || !invoice.sentAt || Boolean(invoice.paidAt) || Boolean(invoice.voidedAt) || isBusy}
                           onClick={() => void updateSingleStatus(invoice, "reminder")}
                           className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
                             rowState === "overdue"
@@ -803,7 +810,7 @@ export function InvoiceHistoryClient() {
                         </button>
                         <button
                           type="button"
-                          disabled={Boolean(invoice.isVirtual) || Boolean(invoice.paidAt) || isBusy}
+                          disabled={Boolean(invoice.isVirtual) || Boolean(invoice.paidAt) || Boolean(invoice.voidedAt) || isBusy}
                           onClick={() => void updateSingleStatus(invoice, "paid")}
                           className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
                         >

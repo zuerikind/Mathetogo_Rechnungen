@@ -148,6 +148,81 @@ export async function reissueInvoice(invoiceId: string, actor: string): Promise<
 }
 
 /**
+ * Storniert eine ausgelieferte Rechnung, ohne sie zu loeschen.
+ *
+ * Die Zeile bleibt, die Nummer bleibt vergeben (keine Luecke in der Folge), die
+ * PDF bleibt unangetastet. Ab jetzt zaehlt sie weder als Ertrag noch als offene
+ * Forderung. Gegenstueck zum alten Weg ueber /api/invoices/void, der die Zeile
+ * samt PDF geloescht und keinerlei Spur hinterlassen hat.
+ *
+ * Ein faelschlich gesetztes paidAt wird dabei zurueckgenommen: eine Rechnung
+ * kann nicht gleichzeitig bezahlt und gegenstandslos sein, und ohne die
+ * Ruecknahme bliebe sie im rechnungsbasierten Umsatz stehen.
+ */
+export async function voidInvoice(
+  invoiceId: string,
+  actor: string,
+  reason: string
+): Promise<{ invoiceNumber: string; clearedPaidAt: Date | null }> {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: {
+      id: true, invoiceNumber: true, totalCHF: true, revision: true,
+      sentAt: true, paidAt: true, firstDownloadedAt: true, voidedAt: true,
+    },
+  });
+  if (!invoice) throw new RevisionError("Rechnung nicht gefunden.", 404);
+  if (invoice.voidedAt) {
+    throw new RevisionError(
+      `Rechnung ${invoice.invoiceNumber} ist bereits storniert.`,
+      409
+    );
+  }
+  if (!isDelivered(invoice)) {
+    throw new RevisionError(
+      "Diese Rechnung ist noch nicht ausgeliefert — ein Entwurf braucht keinen Storno und kann entfernt werden.",
+      409
+    );
+  }
+
+  const now = new Date();
+  const clearedPaidAt = invoice.paidAt;
+  await prisma.$transaction([
+    prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { voidedAt: now, paidAt: null, needsReview: false, reviewedAt: now },
+    }),
+    prisma.invoiceAuditLog.create({
+      data: {
+        invoiceId: invoice.id,
+        action: "voided",
+        actor,
+        beforeJson: {
+          totalCHF: invoice.totalCHF,
+          paidAt: clearedPaidAt?.toISOString() ?? null,
+          revision: invoice.revision,
+        },
+        afterJson: {
+          voidedAt: now.toISOString(),
+          paidAt: null,
+          paidAtCleared: clearedPaidAt !== null,
+          reason,
+        },
+        note:
+          `Storniert: ${reason}. Rechnung ${invoice.invoiceNumber} über ` +
+          `CHF ${invoice.totalCHF.toFixed(2)} bleibt mit Nummer und PDF bestehen, ` +
+          `zählt aber weder als Ertrag noch als offene Forderung.` +
+          (clearedPaidAt
+            ? ` Zahlungsvermerk vom ${clearedPaidAt.toISOString().slice(0, 10)} zurückgenommen — er war keine echte Zahlung.`
+            : ""),
+      },
+    }),
+  ]);
+
+  return { invoiceNumber: invoice.invoiceNumber, clearedPaidAt };
+}
+
+/**
  * "Original bleibt gültig": nimmt den Alarm weg, ohne etwas zu aendern.
  *
  * Der akzeptierte Fingerabdruck wandert ins Audit-Log. Die Erkennung

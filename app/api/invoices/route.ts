@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
       ...(status === "paid"
         ? { paidAt: { not: null } }
         : status === "sent"
-          ? { sentAt: { not: null }, paidAt: null }
+          ? { sentAt: { not: null }, paidAt: null, voidedAt: null }
         : status === "created"
           ? { sentAt: null, paidAt: null, pdfPath: { not: null } }
           : status === "pending"
