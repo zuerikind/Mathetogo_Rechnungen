@@ -20,8 +20,23 @@ $date      = Get-Date -Format "yyyy-MM-dd"
 $file      = "mathetogo-$date.dump"
 $target    = Join-Path $dest $file
 
-if (-not (Get-Command pg_dump -ErrorAction SilentlyContinue)) {
-    throw "pg_dump nicht gefunden. PostgreSQL-Client installieren: winget install PostgreSQL.PostgreSQL"
+# Der PostgreSQL-Installer legt die Binaries nicht zwingend in den PATH. Erst dort
+# suchen, dann in den Standard-Installationspfaden - und die neueste Version nehmen,
+# denn pg_dump muss mindestens so neu sein wie der Server.
+function Find-PgTool([string]$name) {
+    $onPath = Get-Command $name -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+    $candidates = Get-ChildItem "C:\Program Files\PostgreSQL" -Directory -ErrorAction SilentlyContinue |
+        Sort-Object { [int]($_.Name -replace '\D','0') } -Descending |
+        ForEach-Object { Join-Path $_.FullName "bin\$name.exe" } |
+        Where-Object { Test-Path $_ }
+    return $candidates | Select-Object -First 1
+}
+
+$pgDump    = Find-PgTool "pg_dump"
+$pgRestore = Find-PgTool "pg_restore"
+if (-not $pgDump) {
+    throw "pg_dump nicht gefunden. PostgreSQL-Client installieren: winget install PostgreSQL.PostgreSQL.17"
 }
 if (-not (Test-Path $envFile)) { throw "Keine .env.local gefunden: $envFile" }
 
@@ -44,7 +59,7 @@ $conn = $builder.Uri.AbsoluteUri
 if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
 
 # -Fc: Custom-Format, komprimiert und von pg_restore selektiv wiederherstellbar.
-& pg_dump --dbname=$conn --format=custom --no-owner --no-privileges --file=$target
+& $pgDump --dbname=$conn --format=custom --no-owner --no-privileges --file=$target
 if ($LASTEXITCODE -ne 0) { throw "pg_dump ist mit Code $LASTEXITCODE fehlgeschlagen - kein Backup geschrieben." }
 
 # Ein leeres oder abgeschnittenes Dump ist schlimmer als keines, weil es wie eines
@@ -54,7 +69,7 @@ if ($sizeKb -lt 20) {
     Remove-Item $target -Force
     throw "Dump war nur $sizeKb KB gross - verworfen."
 }
-$toc = & pg_restore --list $target 2>&1
+$toc = if ($pgRestore) { & $pgRestore --list $target 2>&1 } else { @() }
 if ($LASTEXITCODE -ne 0) {
     Remove-Item $target -Force
     throw "pg_restore --list konnte das Dump nicht lesen - verworfen."
