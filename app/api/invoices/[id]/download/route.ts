@@ -15,7 +15,7 @@ type LoadResult =
  * Auth prüfen und die PDF aus dem privaten Bucket holen — ohne jede Nebenwirkung.
  * Beide Methoden teilen sich das; nur POST protokolliert anschliessend.
  */
-async function loadInvoicePdf(invoiceId: string): Promise<LoadResult> {
+async function loadInvoicePdf(invoiceId: string, revisionParam: string | null): Promise<LoadResult> {
   const session = await auth();
   if (!session) {
     return { ok: false, response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
@@ -29,6 +29,7 @@ async function loadInvoicePdf(invoiceId: string): Promise<LoadResult> {
       year: true,
       month: true,
       pdfPath: true,
+      revision: true,
       student: { select: { name: true } },
     },
   });
@@ -49,9 +50,23 @@ async function loadInvoicePdf(invoiceId: string): Promise<LoadResult> {
     };
   }
 
+  // Ohne Parameter die aktuelle Fassung; ?revision=n liefert eine frueher
+  // ausgelieferte. Ausgeliefert bleibt ausgeliefert — alte Revisionen muessen
+  // abrufbar sein, sonst ist die Versionierung nur halb.
+  const revision = revisionParam === null ? invoice.revision : Number(revisionParam);
+  if (!Number.isInteger(revision) || revision < 1 || revision > invoice.revision) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: `Revision ${revisionParam} existiert nicht (vorhanden: 1–${invoice.revision}).` },
+        { status: 404 }
+      ),
+    };
+  }
+
   const { data: file, error: downloadError } = await supabase.storage
     .from(INVOICE_BUCKET)
-    .download(invoiceStoragePath(invoice.year, invoice.month, invoice.studentId));
+    .download(invoiceStoragePath(invoice.year, invoice.month, invoice.studentId, revision));
 
   if (downloadError || !file) {
     return {
@@ -63,11 +78,14 @@ async function loadInvoicePdf(invoiceId: string): Promise<LoadResult> {
     };
   }
 
+  const baseName = getInvoicePdfDownloadBaseName(invoice.student.name, invoice.month, invoice.year);
   return {
     ok: true,
     invoiceId: invoice.id,
     pdfBuffer: Buffer.from(await file.arrayBuffer()),
-    fileName: getInvoicePdfDownloadBaseName(invoice.student.name, invoice.month, invoice.year),
+    // Nur aeltere Fassungen tragen die Revision im Dateinamen — die aktuelle
+    // heisst weiter wie bisher, damit sich fuer den Normalfall nichts aendert.
+    fileName: revision > 1 ? baseName.replace(/\.pdf$/, `_r${revision}.pdf`) : baseName,
   };
 }
 
@@ -88,8 +106,8 @@ function pdfResponse(pdfBuffer: Buffer, fileName: string): Response {
  * spekulativ vor. Als das Einfrieren noch an diesem GET hing, hat ein solcher
  * Prefetch eine Rechnung als ausgeliefert markiert, ohne dass jemand geklickt hat.
  */
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const loaded = await loadInvoicePdf(params.id);
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const loaded = await loadInvoicePdf(params.id, req.nextUrl.searchParams.get("revision"));
   if (!loaded.ok) return loaded.response;
   return pdfResponse(loaded.pdfBuffer, loaded.fileName);
 }
@@ -99,8 +117,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
  * festgehalten (beim ersten Mal Snapshot + Audit-Log). Das ist der Weg, den die
  * Download-Buttons der App nehmen — POST, weil kein Browser POST vorablädt.
  */
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
-  const loaded = await loadInvoicePdf(params.id);
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const loaded = await loadInvoicePdf(params.id, req.nextUrl.searchParams.get("revision"));
   if (!loaded.ok) return loaded.response;
 
   const session = await auth();

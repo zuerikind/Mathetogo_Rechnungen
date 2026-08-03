@@ -48,7 +48,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const storagePath = invoiceStoragePath(invoice.year, invoice.month, invoice.studentId);
+    // Immer die aktuelle Revision versenden, nicht die erste.
+    const storagePath = invoiceStoragePath(
+      invoice.year,
+      invoice.month,
+      invoice.studentId,
+      invoice.revision
+    );
     const { data: fileData, error: downloadError } = await supabase.storage
       .from(INVOICE_BUCKET)
       .download(storagePath);

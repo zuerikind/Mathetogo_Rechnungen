@@ -137,10 +137,12 @@ export async function POST(req: NextRequest) {
     for (const [studentId, studentName] of Array.from(students.entries()).sort((a, b) =>
       a[1].localeCompare(b[1], "de-CH")
     )) {
-      const storagePath = invoiceStoragePath(year, month, studentId);
       const existing = await prisma.invoice.findUnique({
         where: { studentId_month_year: { studentId, month, year } },
       });
+      // Ausgelieferte Rechnungen kommen in ihrer aktuellen Revision in den Export;
+      // fuer noch nicht angelegte Entwuerfe gilt Revision 1.
+      const storagePath = invoiceStoragePath(year, month, studentId, existing?.revision ?? 1);
 
       let safeNameBase = sanitizeFileName(studentName);
       if (usedZipNames.has(safeNameBase)) {
