@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
 import { zurichYearMonth } from "@/lib/month-math";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
@@ -117,7 +118,9 @@ export async function PUT(
         where: {
           studentId: params.id,
           OR: affected.map((a) => ({ year: a.year, month: a.month })),
-          NOT: { sentAt: null, paidAt: null },
+          // Heruntergeladen zaehlt mit: die Rechnung ist raus, ihre Lektionen
+          // duerfen nicht unbemerkt neu bepreist werden.
+          ...DELIVERED_INVOICE_WHERE,
         },
         select: { year: true, month: true },
         orderBy: [{ year: "asc" }, { month: "asc" }],
@@ -125,7 +128,7 @@ export async function PUT(
       if (billedInvoices.length > 0) {
         return NextResponse.json(
           {
-            error: "Tarifaenderung betrifft bereits gesendete/bezahlte Monate.",
+            error: "Tarifaenderung betrifft bereits ausgelieferte Monate (gesendet, bezahlt oder heruntergeladen).",
             billedMonths: billedInvoices.map((i) => ({ year: i.year, month: i.month })),
           },
           { status: 409 }

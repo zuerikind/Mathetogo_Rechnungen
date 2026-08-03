@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { detectInvoiceChangesInScope } from "@/lib/invoice-change-detection";
+import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
 import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
 import { zurichYearMonth } from "@/lib/month-math";
 import { prisma } from "@/lib/prisma";
@@ -171,10 +172,13 @@ export async function POST(req: NextRequest) {
       (
         await prisma.session.findMany({
           where: { calEventId: { in: eventIds } },
-          select: { calEventId: true, durationMin: true, amountCHF: true },
+          select: { calEventId: true, studentId: true, durationMin: true, amountCHF: true },
         })
       )
-        .filter((s): s is { calEventId: string; durationMin: number; amountCHF: number } => typeof s.calEventId === "string")
+        .filter(
+          (s): s is { calEventId: string; studentId: string; durationMin: number; amountCHF: number } =>
+            typeof s.calEventId === "string"
+        )
         .map((s) => [s.calEventId, s] as const)
     );
 
@@ -236,7 +240,10 @@ export async function POST(req: NextRequest) {
       const existingSession = existingByEventId.get(calEventId);
       // New sessions get the tariff effective on the lesson date, not today's.
       let amountCHF = durationMin * rateAtDate(rateHistoryByStudent.get(student.id) ?? [], student.ratePerMin, start);
-      if (existingSession) {
+      // Nur beim SELBEN Schueler. Wird ein Kalendertitel korrigiert, haengt der
+      // Upsert die Lektion um (siehe studentId unten) — dann muss der Tarif des
+      // neuen Schuelers gelten, nicht der aus dem Betrag des alten abgeleitete.
+      if (existingSession && existingSession.studentId === student.id) {
         if (existingSession.durationMin > 0) {
           // Keep historical session rate on re-syncs so tariff changes with effective dates are not overwritten.
           const historicalRate = existingSession.amountCHF / existingSession.durationMin;
@@ -271,7 +278,9 @@ export async function POST(req: NextRequest) {
     // Eine im Kalender gelöschte Lektion soll hier als Abweichung auffallen, nicht
     // stillschweigend die Belegkette zerreissen.
     const deliveredInvoices = await prisma.invoice.findMany({
-      where: { year, month, firstDownloadedAt: { not: null } },
+      // Gesendet und bezahlt zaehlen mit: auch ohne Download ist die Rechnung raus,
+      // ihre Lektionen duerfen nicht weggeprunt werden.
+      where: { year, month, ...DELIVERED_INVOICE_WHERE },
       select: { studentId: true },
     });
     const deliveredStudentIds = deliveredInvoices.map((i) => i.studentId);

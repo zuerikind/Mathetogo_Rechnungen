@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getEffectiveManualBaseline, mergeManualBaselineSessions } from "@/lib/manual-revenue";
+import { isDelivered } from "@/lib/invoice-delivery";
 import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
 import { prisma } from "@/lib/prisma";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
@@ -290,7 +291,7 @@ export async function GET(req: NextRequest) {
       // dem Live-Stand. firstDownloadedAt gehört dazu: ab dem Download ist die
       // Rechnung raus, eine Abweichung davon wird als solche markiert (needsReview),
       // nicht stillschweigend in den angezeigten Betrag übernommen.
-      const locked = Boolean(invoice.sentAt || invoice.paidAt || invoice.firstDownloadedAt);
+      const locked = isDelivered(invoice);
       const totalCHF = locked ? invoice.totalCHF : liveTotal ?? invoice.totalCHF;
       const divergesFromLive =
         locked && liveTotal !== null && Math.abs(liveTotal - invoice.totalCHF) > 0.005;
