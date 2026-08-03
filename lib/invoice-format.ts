@@ -30,6 +30,21 @@ export function getInvoiceDueDate(year: number, month: number): Date {
   return new Date(year, month, 15);
 }
 
+/**
+ * Kopfzeile einer neu ausgestellten Rechnung. Die Rechnungsnummer bleibt
+ * unveraendert — der Empfaenger haelt also zwei Dokumente mit derselben Nummer
+ * in der Hand. Genau deshalb muss hier stehen, welches das juengere ist und
+ * welche Fassung es ersetzt; sonst wirkt die Neuausstellung wie ein Duplikat.
+ *
+ * null fuer Revision 1: die Erstausstellung ersetzt nichts.
+ */
+export function getRevisionNotice(revision: number, replacedAt: Date | null): string | null {
+  if (revision <= 1) return null;
+  return replacedAt
+    ? `Revision ${revision} — ersetzt die Fassung vom ${formatDate(replacedAt)}`
+    : `Revision ${revision} — ersetzt die vorherige Fassung`;
+}
+
 export function getStudentInitials(name: string): string {
   return name
     .split(/\s+/)

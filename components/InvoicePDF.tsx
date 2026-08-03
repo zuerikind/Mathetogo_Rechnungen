@@ -13,6 +13,7 @@ import {
   getInvoiceDueDate,
   InvoicePayload,
 } from "@/lib/invoice";
+import { getRevisionNotice } from "@/lib/invoice-format";
 
 type InvoicePDFProps = {
   payload: InvoicePayload;
@@ -39,6 +40,25 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     paddingHorizontal: 48,
     lineHeight: 1.45,
+  },
+  /**
+   * Revisionsvermerk: ganz oben, vor dem Briefkopf, mit kraeftigem Rahmen.
+   * Bewusst nicht im Kleingedruckten — der Empfaenger soll auf den ersten Blick
+   * Korrektur statt Duplikat erkennen.
+   */
+  revisionBanner: {
+    borderWidth: 1.5,
+    borderColor: "#8a5a00",
+    backgroundColor: "#fdf3e0",
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    marginBottom: 18,
+  },
+  revisionBannerText: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 11.5,
+    color: "#8a5a00",
+    letterSpacing: 0.2,
   },
   /** Kopf: zwei feste Spalten ohne `gap` (react-pdf). */
   headerRow: {
@@ -255,10 +275,19 @@ export function InvoicePDF({
     paymentSlipSrc && paymentSlipWidthPt && paymentSlipHeightPt
       ? { ...styles.paymentSlip, width: paymentSlipWidthPt, height: paymentSlipHeightPt }
       : styles.paymentSlip;
+  const revisionNotice = getRevisionNotice(
+    payload.revision ?? 1,
+    payload.replacesDeliveredAt ?? null
+  );
 
   return (
     <Document>
       <Page size="A4" style={styles.page}>
+        {revisionNotice ? (
+          <View style={styles.revisionBanner}>
+            <Text style={styles.revisionBannerText}>{revisionNotice}</Text>
+          </View>
+        ) : null}
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
             {logoSrc ? (

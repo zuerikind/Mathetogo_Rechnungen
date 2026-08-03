@@ -47,6 +47,10 @@ export type InvoicePayload = {
   totalCHF: number;
   totalMinutes: number;
   invoiceNumber: string;
+  /** Ausgabestand. Fehlt/1 = Erstausstellung, ab 2 traegt das PDF den Revisionsvermerk. */
+  revision?: number;
+  /** Auslieferungszeitpunkt der Fassung, die diese Revision ersetzt. */
+  replacesDeliveredAt?: Date | null;
 };
 
 export { formatAmount, formatDate, formatDuration, getInvoiceDueDate, getPeriodLabel };
