@@ -9,6 +9,13 @@ export default auth((req) => {
   }
 
   if (!req.auth) {
+    // API-Routen bekommen 401 statt einer Weiterleitung: fetch folgt Redirects
+    // automatisch, und die Login-Seite antwortet mit 200. Ein Aufruf mit
+    // abgelaufener Sitzung sah dadurch wie ein Erfolg aus — die Oberflaeche
+    // haette eine nie ausgefuehrte Aktion als erledigt gemeldet.
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const loginUrl = new URL("/login", req.url);
     return NextResponse.redirect(loginUrl);
   }

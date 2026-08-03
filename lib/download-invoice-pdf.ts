@@ -40,10 +40,15 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
  * Lädt die Rechnungs-PDF herunter und lässt den Download serverseitig erfassen.
  * Gibt null zurück, wenn alles geklappt hat, sonst die Fehlermeldung.
  */
-export async function downloadInvoicePdf(invoiceId: string): Promise<string | null> {
+export async function downloadInvoicePdf(
+  invoiceId: string,
+  /** Ohne Angabe die aktuelle Fassung; sonst eine frueher ausgelieferte Revision. */
+  revision?: number
+): Promise<string | null> {
+  const query = revision === undefined ? "" : `?revision=${revision}`;
   let res: Response;
   try {
-    res = await fetch(`/api/invoices/${invoiceId}/download`, { method: "POST" });
+    res = await fetch(`/api/invoices/${invoiceId}/download${query}`, { method: "POST" });
   } catch {
     return "Download fehlgeschlagen. Bitte erneut versuchen.";
   }

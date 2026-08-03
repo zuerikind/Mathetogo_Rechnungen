@@ -17,6 +17,7 @@ type InvoiceRow = {
   year: number;
   totalCHF: number;
   sessionIds: string;
+  invoiceNumber?: string | null;
   sentAt: string | null;
   paidAt: string | null;
   pdfPath: string | null;
@@ -27,6 +28,10 @@ type InvoiceRow = {
   /** Sync hat nach der Auslieferung Abweichungen erkannt; Entscheid steht aus. */
   needsReview?: boolean;
   changeDetectedAt?: string | null;
+  /** Ausgabestand; ab 2 wurde die Rechnung neu ausgestellt. */
+  revision?: number;
+  /** Abweichungen, die als "Original bleibt gültig" abgehakt wurden. */
+  acceptedChangeCount?: number;
   student: { name: string };
 };
 
@@ -37,6 +42,40 @@ type InvoiceChangeEntry = {
   totalBeforeCHF: number | null;
   totalAfterCHF: number | null;
   changes: { type: string; detail: string; sessionIds: string[] }[];
+};
+
+type AcceptedEntry = {
+  acceptedAt: string;
+  actor: string | null;
+  note: string | null;
+  totalCHF: number | null;
+  liveTotalCHF: number | null;
+};
+
+type RevisionEntry = {
+  revision: number;
+  invoiceNumber: string;
+  totalCHF: number;
+  createdAt: string;
+};
+
+/** Alles, was das Abweichungs-Panel einer Rechnung braucht. */
+type ChangeDetail = {
+  entries: InvoiceChangeEntry[];
+  accepted: AcceptedEntry[];
+  revisions: RevisionEntry[];
+  revision: number;
+};
+
+/** Was der Bestätigungsdialog vor einer Entscheidung anzeigt. */
+type PendingDecision = {
+  invoiceId: string;
+  invoiceNumber: string;
+  studentName: string;
+  kind: "accept" | "reissue";
+  currentTotalCHF: number;
+  liveTotalCHF: number | null;
+  nextRevision: number;
 };
 
 type Student = { id: string; name: string };
@@ -115,7 +154,9 @@ export function InvoiceHistoryClient() {
   const [listLoading, setListLoading] = useState(true);
   const [zipDownloading, setZipDownloading] = useState(false);
   const [openChangesFor, setOpenChangesFor] = useState<string | null>(null);
-  const [changeEntries, setChangeEntries] = useState<Record<string, InvoiceChangeEntry[]>>({});
+  const [changeDetails, setChangeDetails] = useState<Record<string, ChangeDetail>>({});
+  const [pendingDecision, setPendingDecision] = useState<PendingDecision | null>(null);
+  const [decisionBusy, setDecisionBusy] = useState(false);
   const [selectedYearYtd, setSelectedYearYtd] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -370,14 +411,48 @@ export function InvoiceHistoryClient() {
       return;
     }
     setOpenChangesFor(invoiceId);
-    if (changeEntries[invoiceId]) return;
+    await loadChanges(invoiceId);
+  };
+
+  const loadChanges = async (invoiceId: string, force = false) => {
+    if (!force && changeDetails[invoiceId]) return;
     try {
       const res = await fetch(`/api/invoices/${invoiceId}/changes`);
       if (!res.ok) return;
-      const data = (await res.json()) as { entries: InvoiceChangeEntry[] };
-      setChangeEntries((old) => ({ ...old, [invoiceId]: data.entries }));
+      const data = (await res.json()) as ChangeDetail;
+      setChangeDetails((old) => ({ ...old, [invoiceId]: data }));
     } catch {
       // Anzeige ist optional — ein Fehlschlag darf die Liste nicht stören.
+    }
+  };
+
+  /** Download einer bestimmten früheren Fassung. */
+  const handleRevisionDownload = async (invoiceId: string, revision: number) => {
+    const error = await downloadInvoicePdf(invoiceId, revision);
+    if (error) alert(error);
+  };
+
+  /**
+   * Führt den bestätigten Entscheid aus. Erst nach Erfolg wird neu geladen —
+   * ein fehlgeschlagener Aufruf darf die Zeile nicht als erledigt zeigen.
+   */
+  const confirmDecision = async () => {
+    if (!pendingDecision) return;
+    const { invoiceId, kind } = pendingDecision;
+    setDecisionBusy(true);
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/${kind}`, { method: "POST" });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        alert(body.error ?? "Aktion fehlgeschlagen.");
+        return;
+      }
+      setPendingDecision(null);
+      await Promise.all([loadInvoices(), loadChanges(invoiceId, true)]);
+    } catch {
+      alert("Aktion fehlgeschlagen — keine Änderung vorgenommen.");
+    } finally {
+      setDecisionBusy(false);
     }
   };
 
@@ -658,6 +733,29 @@ export function InvoiceHistoryClient() {
                           Abweichung {openChangesFor === invoice.id ? "▴" : "▾"}
                         </button>
                       ) : null}
+                      {/* Leises Dauerzeichen: kein Alarm, aber passiv auffindbar. */}
+                      {!invoice.needsReview && (invoice.acceptedChangeCount ?? 0) > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => void toggleChanges(invoice.id)}
+                          title="Abweichung geprüft und akzeptiert — das Original bleibt gültig"
+                          className="mt-1 block rounded-full border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-500 transition hover:border-gray-300 hover:text-gray-700"
+                        >
+                          {invoice.acceptedChangeCount} akzeptierte Abweichung
+                          {(invoice.acceptedChangeCount ?? 0) > 1 ? "en" : ""}{" "}
+                          {openChangesFor === invoice.id ? "▴" : "▾"}
+                        </button>
+                      ) : null}
+                      {(invoice.revision ?? 1) > 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => void toggleChanges(invoice.id)}
+                          title="Diese Rechnung wurde neu ausgestellt — frühere Fassungen anzeigen"
+                          className="mt-1 block rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-900 transition hover:bg-sky-200"
+                        >
+                          r{invoice.revision} {openChangesFor === invoice.id ? "▴" : "▾"}
+                        </button>
+                      ) : null}
                     </td>
                     <td className="px-3 py-3 sm:px-5">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -725,11 +823,11 @@ export function InvoiceHistoryClient() {
                   {openChangesFor === invoice.id ? (
                     <tr className="bg-amber-50/60">
                       <td colSpan={7} className="px-3 py-3 sm:px-5">
-                        {(changeEntries[invoice.id] ?? []).length === 0 ? (
+                        {!changeDetails[invoice.id] ? (
                           <p className="text-xs text-gray-500">Änderungen werden geladen…</p>
                         ) : (
                           <div className="space-y-3">
-                            {(changeEntries[invoice.id] ?? []).map((entry, i) => (
+                            {(changeDetails[invoice.id]?.entries ?? []).map((entry, i) => (
                               <div key={`${entry.detectedAt}-${i}`} className="min-w-0">
                                 <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
                                   {entry.trigger ?? "Abweichung"} · {formatDate(new Date(entry.detectedAt))}
@@ -752,9 +850,79 @@ export function InvoiceHistoryClient() {
                                 </ul>
                               </div>
                             ))}
-                            <p className="text-[11px] text-gray-500">
-                              Nur erkannt und festgehalten — die Rechnung bleibt unverändert.
-                            </p>
+                            {(changeDetails[invoice.id]?.accepted ?? []).map((acc, i) => (
+                              <div key={`acc-${i}`} className="min-w-0 border-t border-gray-200 pt-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                                  Akzeptiert · {formatDate(new Date(acc.acceptedAt))}
+                                  {acc.actor ? ` · ${acc.actor}` : ""}
+                                </p>
+                                <p className="mt-0.5 text-xs text-gray-600">{acc.note}</p>
+                              </div>
+                            ))}
+
+                            {(changeDetails[invoice.id]?.revisions ?? []).length > 1 ? (
+                              <div className="border-t border-gray-200 pt-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                                  Ausgelieferte Fassungen
+                                </p>
+                                <div className="mt-1 flex flex-wrap gap-2">
+                                  {(changeDetails[invoice.id]?.revisions ?? []).map((rev) => (
+                                    <button
+                                      key={rev.revision}
+                                      type="button"
+                                      onClick={() => void handleRevisionDownload(invoice.id, rev.revision)}
+                                      className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
+                                    >
+                                      r{rev.revision} · {formatAmount(rev.totalCHF)} ·{" "}
+                                      {formatDate(new Date(rev.createdAt))}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {invoice.needsReview ? (
+                              <div className="flex flex-wrap items-center gap-2 border-t border-amber-200 pt-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPendingDecision({
+                                      invoiceId: invoice.id,
+                                      invoiceNumber: invoice.invoiceNumber ?? "",
+                                      studentName: invoice.student.name,
+                                      kind: "accept",
+                                      currentTotalCHF: invoice.totalCHF,
+                                      liveTotalCHF: invoice.liveTotalCHF ?? null,
+                                      nextRevision: (invoice.revision ?? 1) + 1,
+                                    })
+                                  }
+                                  className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:border-gray-400"
+                                >
+                                  Original bleibt gültig
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPendingDecision({
+                                      invoiceId: invoice.id,
+                                      invoiceNumber: invoice.invoiceNumber ?? "",
+                                      studentName: invoice.student.name,
+                                      kind: "reissue",
+                                      currentTotalCHF: invoice.totalCHF,
+                                      liveTotalCHF: invoice.liveTotalCHF ?? null,
+                                      nextRevision: (invoice.revision ?? 1) + 1,
+                                    })
+                                  }
+                                  className="rounded-lg bg-[#4A7FC1] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#3d6ba5]"
+                                >
+                                  Neu ausstellen als r{(invoice.revision ?? 1) + 1}
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-gray-500">
+                                Nur erkannt und festgehalten — die Rechnung bleibt unverändert.
+                              </p>
+                            )}
                           </div>
                         )}
                       </td>
@@ -767,6 +935,72 @@ export function InvoiceHistoryClient() {
           </table>
         </div>
       </div>
+
+      {/* Entscheid-Bestätigung: zeigt alt/neu im Klartext, BEVOR etwas passiert. */}
+      {pendingDecision ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+            <h3 className="text-base font-semibold text-gray-900">
+              {pendingDecision.kind === "accept"
+                ? "Original bleibt gültig?"
+                : `Neu ausstellen als r${pendingDecision.nextRevision}?`}
+            </h3>
+            <p className="mt-1 text-sm text-gray-600">
+              {pendingDecision.invoiceNumber} · {pendingDecision.studentName}
+            </p>
+
+            <div className="mt-3 rounded-xl bg-gray-50 p-3 text-sm">
+              {pendingDecision.kind === "reissue" ? (
+                <>
+                  <p className="font-semibold text-gray-900">
+                    {formatAmount(pendingDecision.currentTotalCHF)}
+                    {" → "}
+                    {typeof pendingDecision.liveTotalCHF === "number"
+                      ? formatAmount(pendingDecision.liveTotalCHF)
+                      : "aktueller Stand"}
+                  </p>
+                  <ul className="mt-2 space-y-1 text-xs text-gray-600">
+                    <li>• Rechnungsnummer bleibt {pendingDecision.invoiceNumber}</li>
+                    <li>• Neue Fassung wird Revision {pendingDecision.nextRevision}</li>
+                    <li>• Das PDF trägt oben den Revisionsvermerk</li>
+                    <li>• Die bisherige PDF bleibt erhalten und abrufbar</li>
+                  </ul>
+                </>
+              ) : (
+                <>
+                  <p className="font-semibold text-gray-900">
+                    Betrag bleibt {formatAmount(pendingDecision.currentTotalCHF)}
+                  </p>
+                  <ul className="mt-2 space-y-1 text-xs text-gray-600">
+                    <li>• Keine neue Revision, kein neues PDF</li>
+                    <li>• Die ausgelieferte Fassung bleibt die gültige</li>
+                    <li>• Die Abweichung bleibt als Vermerk dauerhaft sichtbar</li>
+                  </ul>
+                </>
+              )}
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={decisionBusy}
+                onClick={() => setPendingDecision(null)}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-600 transition hover:border-gray-300 disabled:opacity-40"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                disabled={decisionBusy}
+                onClick={() => void confirmDecision()}
+                className="rounded-lg bg-[#4A7FC1] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#3d6ba5] disabled:opacity-40"
+              >
+                {decisionBusy ? "Läuft…" : "Bestätigen"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </DashboardShell>
   );
 }

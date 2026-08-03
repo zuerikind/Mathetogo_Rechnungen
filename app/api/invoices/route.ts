@@ -281,6 +281,19 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Akzeptierte Abweichungen bleiben als leises Dauerzeichen sichtbar: needsReview
+  // ist weg (kein Alarm), aber die Spur soll man passiv sehen und nicht im
+  // Audit-Log suchen muessen.
+  const acceptedCounts = new Map<string, number>(
+    (
+      await prisma.invoiceAuditLog.groupBy({
+        by: ["invoiceId"],
+        where: { action: "reviewed", invoiceId: { in: invoicesAfterPrune.map((i) => i.id) } },
+        _count: { _all: true },
+      })
+    ).map((row) => [row.invoiceId, row._count._all])
+  );
+
   const realRows = invoicesAfterPrune
     .map((invoice) => {
       const key = `${invoice.studentId}-${invoice.year}-${invoice.month}`;
@@ -300,6 +313,7 @@ export async function GET(req: NextRequest) {
         totalCHF,
         divergesFromLive,
         liveTotalCHF: liveTotal,
+        acceptedChangeCount: acceptedCounts.get(invoice.id) ?? 0,
         isVirtual: false as const,
       };
     })
