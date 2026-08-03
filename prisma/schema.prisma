@@ -64,6 +64,11 @@ model Session {
   month       Int
   year        Int
   notes       String?
+  /// Kalendereintrag nachweislich geloescht — die Lektion wartet auf Bestaetigung.
+  /// Der Sync loescht sie nicht mehr selbst; bis zur Entscheidung zaehlt sie
+  /// weiter zum Betrag, damit sich ohne Zutun keine Summe bewegt. Taucht der
+  /// Termin wieder auf, hebt der Upsert die Vormerkung auf.
+  pendingDeletionAt DateTime?
   createdAt   DateTime @default(now())
 
   @@index([year, month, date])

@@ -431,7 +431,9 @@ export default function DashboardPage() {
 
   const handleSynced = (result: SyncResponse) => {
     const parts = [`${result.synced} Sessions synchronisiert`];
-    if ((result.removed ?? 0) > 0) parts.push(`${result.removed} entfernt`);
+    if ((result.pendingDeletionsTotal ?? 0) > 0) {
+      parts.push(`${result.pendingDeletionsTotal} warten auf Löschbestätigung`);
+    }
     if (result.unmatched.length > 0) {
       const n = result.unmatched.length;
       parts.push(

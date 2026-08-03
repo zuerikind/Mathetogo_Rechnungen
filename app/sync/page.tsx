@@ -172,9 +172,18 @@ export default function SyncPage() {
               <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
                 ✓ {result.synced} synchronisiert
               </span>
-              {(result.removed ?? 0) > 0 && (
-                <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
-                  {result.removed} entfernt (nicht mehr im Kalender)
+              {(result.pendingDeletionsTotal ?? 0) > 0 && (
+                <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-800">
+                  {result.pendingDeletionsTotal} Lektion(en) warten auf Löschbestätigung
+                  {(result.pendingDeletions ?? 0) > 0 ? ` · ${result.pendingDeletions} neu` : ""}
+                </span>
+              )}
+              {(result.pendingUnverified ?? 0) > 0 && (
+                <span
+                  className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600"
+                  title="Pro Lauf werden höchstens 50 Kalendereinträge einzeln geprüft — der Rest kommt beim nächsten Sync dran."
+                >
+                  {result.pendingUnverified} ungeprüft (Limit)
                 </span>
               )}
               {result.skipped > 0 && (

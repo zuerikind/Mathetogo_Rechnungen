@@ -45,8 +45,12 @@ export type SyncResponse = {
   synced: number;
   skipped: number;
   unmatched: SyncUnmatchedEvent[];
-  /** Calendar-backed sessions deleted because their Google event is gone. */
-  removed?: number;
+  /** In diesem Lauf zur Löschung vorgemerkt (Kalendereintrag nachweislich weg). */
+  pendingDeletions?: number;
+  /** Offene Vormerkungen im Monat insgesamt — warten auf eine Entscheidung. */
+  pendingDeletionsTotal?: number;
+  /** Kandidaten, die diesmal nicht mehr einzeln geprüft wurden (Limit pro Lauf). */
+  pendingUnverified?: number;
   staleInvoicesRemoved?: number;
   /** From API when calendar returns events (debug / UX). */
   totalEvents?: number;

@@ -6,6 +6,7 @@ import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
 import { zurichYearMonth } from "@/lib/month-math";
 import { prisma } from "@/lib/prisma";
 import { rateAtDate, type RateHistoryEntry } from "@/lib/rate-history";
+import { resolveDeletedCalendarEvents } from "@/lib/calendar-deletions";
 import {
   nameMatchesTitle,
   preferMostSpecificMatch,
@@ -14,37 +15,8 @@ import {
 } from "@/lib/sync-unmatched";
 import { auth } from "@/auth";
 
-/**
- * Klärt für einzelne Kalendereinträge, ob sie wirklich gelöscht wurden.
- *
- * "Nicht in events.list enthalten" reicht dafür nicht: die Liste deckt nur das
- * Sync-Fenster (Monat ± 1 Tag) ab, ein weit verschobener Termin fehlt darin
- * genauso wie ein gelöschter. Deshalb wird jeder Kandidat einzeln geholt —
- * nur "cancelled" oder 404 gilt als Löschung. Jede andere Antwort und jeder
- * Fehler zählt bewusst als "nicht gelöscht": eine fälschlich als entfernt
- * gemeldete Lektion wäre schlimmer als eine übersehene.
- */
-async function resolveDeletedCalendarEvents(
-  calendar: ReturnType<typeof google.calendar>,
-  calendarId: string,
-  candidates: { sessionId: string; calEventId: string }[]
-): Promise<Set<string>> {
-  const deleted = new Set<string>();
-  for (const candidate of candidates) {
-    try {
-      const res = await calendar.events.get({ calendarId, eventId: candidate.calEventId });
-      if (res.data.status === "cancelled") deleted.add(candidate.sessionId);
-    } catch (err: unknown) {
-      const status = (err as { code?: number; status?: number })?.code ?? (err as { status?: number })?.status;
-      if (status === 404 || status === 410) {
-        deleted.add(candidate.sessionId);
-      } else {
-        console.warn("[sync] Kalenderstatus unklar, gilt als NICHT geloescht:", candidate.calEventId, err);
-      }
-    }
-  }
-  return deleted;
-}
+/** Kalenderabfragen pro Sync-Lauf fuer die Loeschpruefung — deckelt die Laufzeit. */
+const PENDING_VERIFY_LIMIT = 50;
 
 /** One pool slot + long tx: concurrent /api/sync causes P2024 on the second request. */
 let syncDbChain = Promise.resolve();
@@ -298,9 +270,9 @@ export async function POST(req: NextRequest) {
     const notDelivered =
       protectedStudentIds.length > 0 ? { studentId: { notIn: protectedStudentIds } } : {};
 
-    // Default interactive transaction timeout is too low for a full month of upserts + deleteMany
+    // Default interactive transaction timeout is too low for a full month of upserts
     // (leads to P2028 "Transaction not found" when Prisma closes the tx mid-loop).
-    const removed = await prisma.$transaction(
+    await prisma.$transaction(
       async (tx) => {
         for (const t of tasks) {
           await tx.session.upsert({
@@ -314,6 +286,10 @@ export async function POST(req: NextRequest) {
               month: t.month,
               year: t.year,
               notes: t.notes,
+              // Der Termin ist wieder da — eine offene Loeschvormerkung ist damit
+              // gegenstandslos. Greift auch, wenn er in einem anderen Monat
+              // auftaucht: derselbe calEventId, der Upsert zieht die Zeile um.
+              pendingDeletionAt: null,
             },
             create: {
               studentId: t.studentId,
@@ -328,39 +304,69 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        if (!allowPruneOrphans) {
-          return { count: 0 };
-        }
-        // Remove calendar-backed sessions for this month that no longer exist in Google.
-        // Manual sessions (calEventId = null) are never touched.
-        // Do not scope by affectedStudentIds — students with zero calendar events this
-        // sync must still lose orphaned DB rows (e.g. cancelled lesson removed from Google).
-        // Sessions of deactivated students are never pruned — their events can no
-        // longer match, so they would always look like orphans.
-        if (googleEventIds.length === 0) {
-          return tx.session.deleteMany({
-            where: {
-              year,
-              month,
-              calEventId: { not: null },
-              student: { active: true },
-              ...notDelivered,
-            },
-          });
-        }
-        return tx.session.deleteMany({
-          where: {
-            year,
-            month,
-            calEventId: { not: null, notIn: googleEventIds },
-            student: { active: true },
-            ...notDelivered,
-          },
-        });
       },
       { maxWait: 20_000, timeout: 180_000 }
     );
 
+    // Waisen werden nicht mehr geloescht, sondern zur Loeschung vorgemerkt.
+    //
+    // Frueher lief hier ein deleteMany ueber alles, was nicht in events.list stand.
+    // Das war zu grob: das Sync-Fenster deckt nur Monat +/- 1 Tag ab, ein weit
+    // verschobener Termin fehlt darin genauso wie ein geloeschter — und wurde
+    // stillschweigend entfernt. Jetzt wird jeder Kandidat einzeln geprueft
+    // (dieselbe Logik, die ausgelieferte Monate schon immer benutzt haben), und
+    // nur eine nachgewiesene Loeschung fuehrt zur Vormerkung. Die Lektion bleibt
+    // bis zur Bestaetigung bestehen und zaehlt weiter zum Betrag.
+    let pendingMarked = 0;
+    let pendingUnverified = 0;
+    let pendingTotal = 0;
+    if (allowPruneOrphans) {
+      const candidates = await prisma.session.findMany({
+        where: {
+          year,
+          month,
+          // Manuelle Lektionen (calEventId = null) werden nie angetastet.
+          ...(googleEventIds.length === 0
+            ? { calEventId: { not: null } }
+            : { calEventId: { not: null, notIn: googleEventIds } }),
+          // Lektionen deaktivierter Schueler koennen nicht mehr matchen und saehen
+          // deshalb immer wie Waisen aus.
+          student: { active: true },
+          // Ausgelieferte Monate laufen unveraendert ueber den H3-Guard und P5.
+          ...notDelivered,
+          // Schon vorgemerkte nicht erneut pruefen.
+          pendingDeletionAt: null,
+        },
+        select: { id: true, calEventId: true },
+        orderBy: { date: "asc" },
+      });
+
+      // Eine Kalenderabfrage pro Kandidat: bei einem grossen Aufraeumen wuerde das
+      // sonst in die 60-Sekunden-Grenze der Function laufen. Der Rest kommt beim
+      // naechsten Lauf dran.
+      const toVerify = candidates.slice(0, PENDING_VERIFY_LIMIT);
+      pendingUnverified = candidates.length - toVerify.length;
+
+      const confirmedDeleted = await resolveDeletedCalendarEvents(
+        calendar,
+        calendarId,
+        toVerify.map((s) => ({ sessionId: s.id, calEventId: s.calEventId as string }))
+      );
+      if (confirmedDeleted.size > 0) {
+        const marked = await prisma.session.updateMany({
+          where: { id: { in: Array.from(confirmedDeleted) } },
+          data: { pendingDeletionAt: new Date() },
+        });
+        pendingMarked = marked.count;
+      }
+      pendingTotal = await prisma.session.count({
+        where: { year, month, pendingDeletionAt: { not: null } },
+      });
+    }
+
+    // Entwurfs-Rechnungen bleiben erhalten, solange die Lektionen nur vorgemerkt
+    // sind — sie sind ja weiterhin abrechenbar. Geprunt wird erst, wenn eine
+    // Vormerkung bestaetigt wurde.
     let staleInvoicesRemoved = 0;
     if (allowPruneOrphans) {
       staleInvoicesRemoved = await pruneStaleInvoicesInScope({ year, month });
@@ -416,7 +422,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       synced: tasks.length,
-      removed: removed.count,
+      /** Zur Loeschung vorgemerkt in diesem Lauf (frueher: sofort geloescht). */
+      pendingDeletions: pendingMarked,
+      /** Offene Vormerkungen im Monat insgesamt — die warten auf eine Entscheidung. */
+      pendingDeletionsTotal: pendingTotal,
+      /** Kandidaten, die diesmal nicht mehr geprueft wurden (Limit). */
+      pendingUnverified,
       staleInvoicesRemoved,
       invoicesChecked: detectionChecked,
       invoicesFlagged: detectionFlagged,
