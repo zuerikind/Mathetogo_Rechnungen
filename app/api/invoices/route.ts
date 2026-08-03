@@ -142,11 +142,11 @@ export async function GET(req: NextRequest) {
   });
 
   const existingKeys = new Set(invoicesAfterPrune.map((i) => `${i.studentId}-${i.year}-${i.month}`));
-  // Monate, in denen ein Schüler bereits eine eigene gesendete/bezahlte Rechnung hat
+  // Monate, in denen ein Schüler bereits eine eigene AUSGELIEFERTE Rechnung hat
   // (z. B. vor der Familien-Verknüpfung): seine Beträge bleiben bei ihm statt beim Hauptschüler.
   const separatelyBilledKeys = new Set(
     invoicesAfterPrune
-      .filter((i) => i.sentAt || i.paidAt)
+      .filter(isDelivered)
       .map((i) => `${i.studentId}-${i.year}-${i.month}`)
   );
   const effTarget = (id: string, y: number, m: number) =>

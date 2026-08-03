@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
+import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import { INVOICE_BUCKET, invoiceStoragePath, supabase } from "@/lib/supabase";
 
@@ -21,7 +22,7 @@ export async function getBillableTotalCHF(
     select: { id: true },
   });
   // Gleiches Ausschluss-Kriterium wie getInvoicePayload: Kinder mit eigener
-  // gesendeter/bezahlter Rechnung für den Monat zählen nicht zur Familienrechnung.
+  // AUSGELIEFERTER Rechnung für den Monat zählen nicht zur Familienrechnung.
   const childrenBilledSeparately =
     children.length > 0
       ? await prisma.invoice.findMany({
@@ -29,7 +30,7 @@ export async function getBillableTotalCHF(
             studentId: { in: children.map((c) => c.id) },
             year,
             month,
-            NOT: { sentAt: null, paidAt: null },
+            ...DELIVERED_INVOICE_WHERE,
           },
           select: { studentId: true },
         })

@@ -4,7 +4,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
 import { getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
-import { isDelivered } from "@/lib/invoice-delivery";
+import { DELIVERED_INVOICE_WHERE, isDelivered } from "@/lib/invoice-delivery";
 import { recordInvoiceDownload } from "@/lib/invoice-download";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
@@ -57,13 +57,13 @@ export async function POST(req: NextRequest) {
     const studentById = new Map(allStudents.map((s) => [s.id, s]));
     const nameOf = (id: string, fallback: string) => studentById.get(id)?.name ?? fallback;
 
-    // Sent/paid invoices belong in the export even when their sessions were
-    // since removed — they are real, delivered documents.
+    // Ausgelieferte Rechnungen gehören in den Export, auch wenn ihre Lektionen
+    // inzwischen entfernt wurden — es sind echte, zugestellte Dokumente.
     const monthInvoices = await prisma.invoice.findMany({
-      where: { year, month, NOT: { sentAt: null, paidAt: null } },
+      where: { year, month, ...DELIVERED_INVOICE_WHERE },
       select: { studentId: true, student: { select: { name: true } } },
     });
-    // Schüler mit eigener gesendeter/bezahlter Rechnung für den Monat bleiben eigenständig —
+    // Schüler mit eigener ausgelieferter Rechnung für den Monat bleiben eigenständig —
     // ihre Lektionen dürfen nicht zusätzlich auf der Familienrechnung landen.
     const separatelyBilled = new Set(monthInvoices.map((i) => i.studentId));
     const billTarget = (id: string) =>

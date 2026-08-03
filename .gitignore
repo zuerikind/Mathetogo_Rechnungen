@@ -45,3 +45,4 @@ prisma/prisma/
 .claude/
 
 .vercel
+tmp-tsconfig.json

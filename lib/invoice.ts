@@ -9,6 +9,7 @@ import {
   getPeriodLabel,
   getStudentInitials,
 } from "@/lib/invoice-format";
+import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
 import { getTutorProfile, TutorProfileData } from "@/lib/tutor-profile";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 
@@ -94,8 +95,9 @@ export async function getInvoicePayload(
     );
   }
 
-  // Kinder mit bereits gesendeter/bezahlter Einzelrechnung für diesen Monat (z. B. vor der
+  // Kinder mit bereits AUSGELIEFERTER Einzelrechnung für diesen Monat (z. B. vor der
   // Verknüpfung) bleiben draussen — sonst würden ihre Lektionen doppelt verrechnet.
+  // Heruntergeladen zählt dazu: das Dokument ist raus, die Lektionen sind fakturiert.
   const childrenBilledSeparately =
     children.length > 0
       ? await prisma.invoice.findMany({
@@ -103,7 +105,7 @@ export async function getInvoicePayload(
             studentId: { in: children.map((c) => c.id) },
             year,
             month,
-            NOT: { sentAt: null, paidAt: null },
+            ...DELIVERED_INVOICE_WHERE,
           },
           select: { studentId: true },
         })
