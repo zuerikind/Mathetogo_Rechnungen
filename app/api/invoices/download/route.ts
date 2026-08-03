@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
 import { getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
+import { isDelivered } from "@/lib/invoice-delivery";
 import { recordInvoiceDownload } from "@/lib/invoice-download";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
@@ -149,9 +150,11 @@ export async function POST(req: NextRequest) {
         safeNameBase = `${safeNameBase}-${studentId.slice(0, 8)}`;
       }
 
-      // Sent/paid invoices are frozen: serve the stored PDF exactly as delivered,
-      // never regenerate or update the invoice row.
-      if (existing?.sentAt || existing?.paidAt) {
+      // Ausgelieferte Rechnungen sind eingefroren: die gespeicherte PDF wird
+      // genau so ausgegeben, wie sie zugestellt wurde — nie neu gebaut, nie die
+      // Rechnungszeile angefasst. "Heruntergeladen" zaehlt dazu; frueher fielen
+      // solche Rechnungen in den Entwurfszweig und wurden dort still ueberschrieben.
+      if (existing && isDelivered(existing)) {
         const { data: storedFile } = await supabase.storage
           .from(INVOICE_BUCKET)
           .download(storagePath);
@@ -202,7 +205,9 @@ export async function POST(req: NextRequest) {
         .from(INVOICE_BUCKET)
         .upload(storagePath, pdfBuffer, {
           contentType: "application/pdf",
-          upsert: true,
+          // Nur Entwuerfe landen hier (siehe Guard oben) — das Schloss bleibt
+          // trotzdem gesetzt, damit ein kuenftiger Pfad nicht still ueberschreibt.
+          upsert: !existing || !isDelivered(existing),
         });
 
       if (uploadError) {

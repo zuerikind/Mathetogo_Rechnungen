@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
 import { getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
+import { isDelivered } from "@/lib/invoice-delivery";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { supabase, INVOICE_BUCKET, invoiceStoragePath, invoicePublicUrl } from "@/lib/supabase";
 
@@ -23,10 +24,19 @@ export async function POST(req: NextRequest) {
       where: { studentId_month_year: { studentId, month, year } },
     });
 
-    // force=true: explicit regeneration after a confirmed tariff change on a billed month.
-    if (existing?.sentAt && body.force !== true) {
+    // Ausgeliefert = unveraenderlich. Es gibt bewusst KEIN force mehr: der frueher
+    // erlaubte Ueberschreibpfad hat PDF und Betrag einer bereits zugestellten
+    // Rechnung unter derselben Nummer ersetzt, ohne Spur. Korrekturen laufen ab
+    // jetzt ausschliesslich ueber die Neuausstellung, die die alte Fassung erhaelt.
+    if (existing && isDelivered(existing)) {
       return NextResponse.json(
-        { error: "Rechnung wurde bereits gesendet und darf nicht neu generiert werden." },
+        {
+          error:
+            `Rechnung ${existing.invoiceNumber} ist bereits ausgeliefert und darf nicht ` +
+            `überschrieben werden. Korrektur über "Neu ausstellen" in der Rechnungsübersicht.`,
+          invoiceId: existing.id,
+          reissueRequired: true,
+        },
         { status: 409 }
       );
     }
@@ -60,7 +70,10 @@ export async function POST(req: NextRequest) {
       .from(INVOICE_BUCKET)
       .upload(storagePath, pdfBuffer, {
         contentType: "application/pdf",
-        upsert: true,
+        // Zweites Schloss hinter dem 409: ein Entwurf darf beliebig oft neu
+        // gebaut werden, eine ausgelieferte Fassung nie ueberschrieben. Greift
+        // der Guard oben einmal nicht, scheitert der Upload laut statt still.
+        upsert: !existing || !isDelivered(existing),
       });
 
     if (uploadError) {
