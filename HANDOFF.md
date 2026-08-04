@@ -18,19 +18,20 @@ Dieses Dokument beim Wiedereinstieg vollständig hereingeben.
 
 ---
 
-## ⚠️ Zustand beim Wiedereinstieg zuerst prüfen
+## Zustand beim Wiedereinstieg
 
-**Produktion läuft auf `cc7c71c` — das Pending-Deletion-Feature ist dort nur zur
-Hälfte live.** Der Sync merkt gelöschte Lektionen vor, aber die Auflösung
-(`9aab272`) ist **committet und gepusht, jedoch NICHT deployt**.
+**Pending-Deletion ist VOLLSTÄNDIG live** (`cc7c71c` vormerken + `9aab272`
+auflösen). Production-Stand: **`05e4809`**, Deployment **`51wu8agyu`**.
+**0 offene Vormerkungen.**
 
-Solange das so ist:
-- Keinen Sync fahren, bei dem Kalendereinträge gelöscht wurden — die Vormerkungen
-  liessen sich nicht auflösen und würden den Betrag oben halten.
-- Keine Rechnung mit offenen Vormerkungen erstellen.
+Es gibt keine offenen Sperren — Sync und Rechnungserstellung laufen normal.
 
-**Erster Schritt nach dem Neustart:** `9aab272` deployen, dann ist das Feature
-vollständig (vormerken **und** auflösen). Stand jetzt: **0 offene Vormerkungen**.
+> Eine frühere Fassung dieses Dokuments warnte, `9aab272` sei nicht deployt. Das
+> war schon beim Schreiben überholt: die Vercel-GitHub-Integration deployt bei
+> jedem Push auf `main` automatisch, `9aab272` ging als `khfd11410` um 07:58 live,
+> `05e4809` als `51wu8agyu` um 08:00. **Merke für künftige Übergaben:** Push auf
+> `main` = Production-Deploy. Den Live-Stand nie aus dem Gedächtnis notieren,
+> sondern gegen `vercel ls --prod` bzw. die Deployment-Metadaten prüfen.
 
 ---
 
@@ -45,7 +46,8 @@ vollständig (vormerken **und** auflösen). Stand jetzt: **0 offene Vormerkungen
 | *(childrenBilled)* | Familienrechnung: ausgeliefertes Kind wird nicht doppelt fakturiert | `e9s7boigr` |
 | `0d6cb9d` + `e8e9df1` | **Storno** (`voidedAt`) + Löschweg-Guard | `mnsl4axrr` |
 | `cc7c71c` | **Sync merkt vor statt zu löschen** (erste Hälfte) | `1h5we7nif` |
-| `9aab272` | **Vormerkungen auflösen** (zweite Hälfte) | **NICHT DEPLOYT** |
+| `9aab272` | **Vormerkungen auflösen** (zweite Hälfte) | `khfd11410` |
+| `05e4809` | HANDOFF.md (nur Doku) — **aktueller Production-Stand** | `51wu8agyu` |
 
 ---
 
