@@ -80,7 +80,8 @@ einen Timeout. Vorher auf den IPv4-Session-Pooler umbiegen — derselbe Host wie
 | Dump | `H:\Meine Ablage\Daten von tracker\mathetogo-2026-08-03.dump`, 344 KB |
 | Archiv lesbar | ✅ `pg_restore --list` exit 0, 465 TOC-Einträge |
 | Inhalt geprüft | ✅ 1689 Zeilen, zeilengenau gegen Produktion |
-| **Ladeprobe** | ⚠️ **fehlt** |
+| **Ladeprobe** | ✅ **BESTANDEN am 04.08.2026** (siehe unten) |
+| **PDF-Bytes** | ❌ **nicht im Dump** — siehe offener Punkt „PDFs sind ungesichert" |
 | Notfallexport | `mathetogo-notfallexport-2026-08-03.json`, 621 KB, verifiziert — Brücke |
 
 `backup-db.ps1` ist auf `pg_dump` umgestellt (vorher sicherte es die tote
@@ -88,24 +89,63 @@ einen Timeout. Vorher auf den IPv4-Session-Pooler umbiegen — derselbe Host wie
 auch ohne PATH und verwirft ein Dump, das die Grössen- oder
 `pg_restore --list`-Prüfung nicht besteht.
 
-**Warum die Ladeprobe fehlt:** Die lokale Installation enthält nur die
-Command-Line-Tools — `share/` ist leer, `initdb` scheitert mit
-`postgres.bki does not exist`, kein Dienst. Ein Wegwerf-Cluster lässt sich damit
-nicht starten.
+### Ladeprobe — bestanden am 04.08.2026
 
-Ersatzweise wurde das Dump in ein Schema `restore_probe` der Produktions-DB
-geladen, **innerhalb einer Transaktion mit Rollback**: 20 Tabellen, 43 Indizes,
-26 Constraints, alle Zeilen — danach `ROLLBACK`, Schema weg, Produktion
-unberührt. Das beweist, dass ein echter Server das Dump lädt; **nicht** bewiesen
-ist eine Wiederherstellung auf einer anderen Maschine.
+Das Dump wurde auf einer **unabhängigen PostgreSQL-Instanz** wiederhergestellt,
+nicht gegen den Produktionsserver.
 
-**Vor P2c/P2b:** entweder die Server-Komponente nachinstallieren
-(`winget install PostgreSQL.PostgreSQL.17`, ~350 MB, Windows-Dienst) und einen
-echten Restore fahren, oder die Schema-Probe erneut als Nachweis akzeptieren.
+**Methode.** Die lokale Installation unter `C:\Program Files\PostgreSQL\17`
+enthält nur `bin\` — `share\` fehlt, deshalb scheiterte `initdb` bisher an
+`postgres.bki does not exist`. Lösung ohne Systemeingriff: das
+**Binaries-only-ZIP** von EnterpriseDB
+(`postgresql-17.10-1-windows-x64-binaries.zip`, 318 MB, SHA256 `F9AAFCA5…4F5A821`)
+in einen Wegwerf-Ordner entpacken — nur `bin`, `lib`, `share`, denn die tiefen
+`pgAdmin 4`-Pfade reissen sonst das 260-Zeichen-Limit. Daraus `initdb`, Cluster
+auf Port 55432 an `127.0.0.1`, `pg_restore --no-owner --no-privileges`, prüfen,
+`pg_ctl stop`, Ordner löschen. **Kein Administrator, kein Dienst, keine
+Installation** — die Maschine bleibt unverändert.
+
+**Ergebnis.** 43 Indizes, 26 Constraints, 20 Tabellen — identisch zu Produktion.
+Der Zeilenabgleich erfolgte gegen den **Produktionsstand zum Dump-Zeitpunkt**
+(03.08. 13:08:32), nicht gegen den heutigen: jede Tabelle trifft exakt, die
+`public`-Summe ohne `_prisma_migrations` ergibt wieder **1689**. Keine einzige
+Tabelle hat weniger Zeilen als das Dump enthielt.
+
+> **Der Exit-Code 1 ist erwartet — kein Fehlschlag.** `pg_restore` meldet
+> `errors ignored on restore: 3`, alle drei aus derselben Ursache: die Extension
+> `supabase_vault` existiert auf normalem PostgreSQL nicht, dadurch entsteht
+> `vault.secrets` nicht und das zugehörige `COPY` scheitert. **In Produktion hat
+> `vault.secrets` 0 Zeilen — es geht nichts verloren.** Bei einem echten Restore
+> also entweder `--no-comments` setzen oder diese drei Fehler bewusst ignorieren,
+> sonst sieht ein geglückter Restore wie ein gescheiterter aus. Die zusätzliche
+> Warnung zu `wal_level` betrifft logische Replikation und ist folgenlos.
+
+**Für P2c/P2b ist das DB-Backup damit ausreichend** — beide fassen die Datenbank
+an, nicht den Storage.
 
 ---
 
 ## Offen — grosse Punkte
+
+### PDFs sind ungesichert — das Backup deckt sie nicht ab
+**Gefunden am 04.08.2026 im Zuge der Ladeprobe.**
+
+`pg_dump` sichert die Datenbank, **nicht die PDF-Bytes**. Die Dateien liegen im
+Supabase-Storage-Bucket `invoices` (privat); in Postgres steht unter
+`storage.objects` nur die Metadatenzeile. Beleg: das Dump ist 344 KB gross, der
+Bucket **22,2 MB über 120 Objekte** — die Dateien können darin nicht stecken.
+
+**Warum das zählt:** Arbeitsregel 4 verlangt, dass ausgelieferte Rechnungen nie
+verschwinden und r1-PDFs bytegleich erhalten bleiben. Geht der Bucket verloren,
+sind alle Belege weg und **das DB-Backup kann sie nicht wiederherstellen** — die
+Datenbank wüsste dann nur noch, dass es sie gab. Das Backup ist also für die
+Datenbank verifiziert und für die Belege gar nicht vorhanden.
+
+**Voraussetzungen sind da:** `SUPABASE_URL` und `SUPABASE_SERVICE_ROLE_KEY`
+stehen bereits in `.env.local`. Ein Mitsichern braucht damit **keine neuen
+Zugangsdaten und keine neue Abhängigkeit** — `backup-db.ps1` kann den Bucket über
+die Storage-REST-API in denselben Zielordner ziehen. **Nichts gebaut, eigener
+Durchgang.**
 
 ### Fund 3 — gesendet, aber nie heruntergeladen
 Die Abweichungserkennung (P5) läuft nur für Rechnungen mit Snapshot, und
