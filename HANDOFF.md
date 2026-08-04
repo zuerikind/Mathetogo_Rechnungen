@@ -81,13 +81,40 @@ einen Timeout. Vorher auf den IPv4-Session-Pooler umbiegen — derselbe Host wie
 | Archiv lesbar | ✅ `pg_restore --list` exit 0, 465 TOC-Einträge |
 | Inhalt geprüft | ✅ 1689 Zeilen, zeilengenau gegen Produktion |
 | **Ladeprobe** | ✅ **BESTANDEN am 04.08.2026** (siehe unten) |
-| **PDF-Bytes** | ❌ **nicht im Dump** — siehe offener Punkt „PDFs sind ungesichert" |
+| **PDF-Bytes** | ✅ **gesichert seit 04.08.2026** — `mathetogo-pdfs\`, 120 Dateien, 22,2 MB |
 | Notfallexport | `mathetogo-notfallexport-2026-08-03.json`, 621 KB, verifiziert — Brücke |
 
 `backup-db.ps1` ist auf `pg_dump` umgestellt (vorher sicherte es die tote
 `prisma/dev.db`; letzte Sicherung dort war vom 20.04.). Es findet die Binaries
 auch ohne PATH und verwirft ein Dump, das die Grössen- oder
 `pg_restore --list`-Prüfung nicht besteht.
+
+### PDF-Sicherung — aktiv seit 04.08.2026
+
+`backup-db.ps1` hat einen zweiten Teil, der die Belege aus dem Storage-Bucket
+`invoices` nach `H:\Meine Ablage\Daten von tracker\mathetogo-pdfs\` zieht.
+
+- **Ein mitwachsender Ordner**, kein Ordner pro Tag: die Objekte sind
+  unveränderlich (P6.1-Pfade, r1 bleibt bytegleich), tägliche Kopien wären
+  vierzehnmal dasselbe. Der Name endet nicht auf `.dump` und fällt damit nicht
+  unter die 14-Tage-Rotation.
+- **Inkrementell** — geladen wird nur, was lokal fehlt. Kein Hash-Vergleich, weil
+  bestehende Objekte sich nie ändern.
+- Auflistung über die **Storage-REST-API**, nicht per SQL: sonst hinge der
+  PDF-Teil an derselben Verbindung wie das Dump und fiele mit ihr aus. Nutzt
+  `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` aus `.env.local` — keine neue
+  Abhängigkeit, kein neuer Token.
+- Download erst nach `.part`, dann umbenennen: ein Abbruch darf beim nächsten
+  Lauf nicht als fertige Datei durchgehen.
+
+**Die beiden Teile sind unabhängig** und beide Richtungen sind geprüft: bei
+kaputtem Bucket lief das Dump vollständig durch, bei nicht erreichbarer Datenbank
+lief der PDF-Teil vollständig durch. Jeder Teil meldet sich einzeln, der
+Exit-Code kommt erst nach beiden.
+
+**Verifiziert am 04.08.2026:** erster Lauf 120 neu geladen, lokal
+**23'263'538 Bytes — exakt die Bucket-Grösse**, keine `.part`-Reste. Zweiter Lauf
+**0 neu geladen** (idempotent).
 
 ### Ladeprobe — bestanden am 04.08.2026
 
@@ -126,26 +153,6 @@ an, nicht den Storage.
 ---
 
 ## Offen — grosse Punkte
-
-### PDFs sind ungesichert — das Backup deckt sie nicht ab
-**Gefunden am 04.08.2026 im Zuge der Ladeprobe.**
-
-`pg_dump` sichert die Datenbank, **nicht die PDF-Bytes**. Die Dateien liegen im
-Supabase-Storage-Bucket `invoices` (privat); in Postgres steht unter
-`storage.objects` nur die Metadatenzeile. Beleg: das Dump ist 344 KB gross, der
-Bucket **22,2 MB über 120 Objekte** — die Dateien können darin nicht stecken.
-
-**Warum das zählt:** Arbeitsregel 4 verlangt, dass ausgelieferte Rechnungen nie
-verschwinden und r1-PDFs bytegleich erhalten bleiben. Geht der Bucket verloren,
-sind alle Belege weg und **das DB-Backup kann sie nicht wiederherstellen** — die
-Datenbank wüsste dann nur noch, dass es sie gab. Das Backup ist also für die
-Datenbank verifiziert und für die Belege gar nicht vorhanden.
-
-**Voraussetzungen sind da:** `SUPABASE_URL` und `SUPABASE_SERVICE_ROLE_KEY`
-stehen bereits in `.env.local`. Ein Mitsichern braucht damit **keine neuen
-Zugangsdaten und keine neue Abhängigkeit** — `backup-db.ps1` kann den Bucket über
-die Storage-REST-API in denselben Zielordner ziehen. **Nichts gebaut, eigener
-Durchgang.**
 
 ### Fund 3 — gesendet, aber nie heruntergeladen
 Die Abweichungserkennung (P5) läuft nur für Rechnungen mit Snapshot, und
