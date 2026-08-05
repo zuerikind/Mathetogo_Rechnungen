@@ -1,4 +1,4 @@
-# Übergabe — Stand 4. August 2026
+# Übergabe — Stand 6. August 2026
 
 Dieses Dokument beim Wiedereinstieg vollständig hereingeben.
 
@@ -20,11 +20,20 @@ Dieses Dokument beim Wiedereinstieg vollständig hereingeben.
 
 ## Zustand beim Wiedereinstieg
 
+**P2c ist live und verifiziert.** Production-Stand: **`1ccd89e`**. Die Geldfelder
+liegen als `numeric` in der Datenbank, das Dashboard zeigt geprüfte Zahlen.
+
 **Pending-Deletion ist VOLLSTÄNDIG live** (`cc7c71c` vormerken + `9aab272`
-auflösen). Production-Stand: **`05e4809`**, Deployment **`51wu8agyu`**.
-**0 offene Vormerkungen.**
+auflösen), inzwischen ergänzt um das Löschband auf dem Dashboard (`7bd6439`).
+Es hat in Produktion bereits gearbeitet: am 05.08. wurden drei Vormerkungen
+bestätigt (CHF 78 + 65 + 78 = **221.00**), Sessions 658 → **655**.
 
 Es gibt keine offenen Sperren — Sync und Rechnungserstellung laufen normal.
+
+**Der nächste Durchgang ist P2b** — von den offenen Migrationsschritten der
+einzige verbliebene. Der Plan steht, die Entscheidung des Nutzers liegt vor,
+gebaut ist nichts. (Daneben bleibt „Fund 3" offen: Analyse liegt vor, nichts
+gebaut, kein Migrationsschritt.)
 
 > Eine frühere Fassung dieses Dokuments warnte, `9aab272` sei nicht deployt. Das
 > war schon beim Schreiben überholt: die Vercel-GitHub-Integration deployt bei
@@ -47,7 +56,17 @@ Es gibt keine offenen Sperren — Sync und Rechnungserstellung laufen normal.
 | `0d6cb9d` + `e8e9df1` | **Storno** (`voidedAt`) + Löschweg-Guard | `mnsl4axrr` |
 | `cc7c71c` | **Sync merkt vor statt zu löschen** (erste Hälfte) | `1h5we7nif` |
 | `9aab272` | **Vormerkungen auflösen** (zweite Hälfte) | `khfd11410` |
-| `05e4809` | HANDOFF.md (nur Doku) — **aktueller Production-Stand** | `51wu8agyu` |
+| `05e4809` | HANDOFF.md (nur Doku) | `51wu8agyu` |
+| `c913779` | Backup sichert auch die Rechnungs-PDFs | — |
+| `a801ace` | **P2c** — 18 Geldfelder auf `numeric`, Decimal-Extender in `lib/prisma.ts` | — |
+| `7bd6439` | **Löschband auch auf dem Dashboard** (`PendingDeletionBanner`) | — |
+| `1ccd89e` | **P2c-Nachtrag** — `aggregate`/`groupBy` im `$allOperations`-Hook wandeln — **aktueller Production-Stand** | — |
+
+> Die Deployment-IDs der letzten fünf Commits sind hier **nicht** eingetragen:
+> in dieser Sitzung war keine Vercel CLI installiert, und geraten wird nichts.
+> Bei Bedarf mit `vercel ls --prod` nachtragen. Dass sie live sind, ist anders
+> belegt — Push auf `main` deployt automatisch, und der Nutzer hat Dashboard und
+> Rechnungsübersicht nach dem Deploy geprüft.
 
 ---
 
@@ -60,11 +79,55 @@ Es gibt keine offenen Sperren — Sync und Rechnungserstellung laufen normal.
 20260729000000_p3_invoice_number_sequence
 20260803140000_add_invoice_voided_at          ← Storno
 20260803230000_add_session_pending_deletion   ← Vormerkung
+20260804100000_p2c_money_decimal              ← P2c, angewendet 05.08. 09:42 UTC
 ```
 
-Beide neuen Spalten sind **additiv und nullable**, kein Backfill.
+Die Spalten aus Storno und Vormerkung sind **additiv und nullable**, kein Backfill.
 
-**Stand:** Nummernzähler `2026 = 117` · 117 Rechnungen · 658 Sessions · **0 offene Vormerkungen**
+**Geldspalten seit P2c:** **18 von 18 auf `numeric`**, keine mehr `double
+precision`. Beträge `numeric(10,2)` · **Raten `numeric(6,4)`** · FX `numeric(12,6)`.
+
+> **Raten bewusst (6,4), nicht (6,2).** `ratePerMin` ist ein Preis pro Minute; auf
+> zwei Stellen gerundet wäre der kleinste Schritt 0.01/Min = **0.60/Stunde**, und
+> ein Stundensatz, der nicht auf 0.60 aufgeht, liesse sich nicht eintragen.
+> Obergrenze ist damit 99.9999 — aktuell liegen alle Raten zwischen 1.0 und 1.8.
+
+**Stand:** Nummernzähler `2026 = 117` · 117 Rechnungen · **655 Sessions** · **0 offene Vormerkungen**
+
+### Falle: `extra_float_digits = 0`
+
+Die Produktions-DB steht auf `extra_float_digits = 0`. Damit druckt
+`"totalCHF"::text` auf einer Float-Spalte den Wert `495.0000000000001` als
+schlichtes **`495`** — und `::numeric` kollabiert ihn genauso.
+
+Bei P2c hat das die erste Vorher-Aufnahme fast wertlos gemacht: sie meldete **0
+Rauschwerte**, obwohl 31 existierten. **Vor jeder Geld- oder Float-Prüfung gegen
+diese DB `SET extra_float_digits = 3;` setzen.** Als Vergleichsschlüssel zwischen
+zwei Typzuständen taugt nur `round(x::numeric, n)` — das ist vor und nach einer
+Migration identisch darstellbar.
+
+### Decimal an der Grenze — zwei Wege, beide nötig
+
+`lib/prisma.ts` wandelt Decimal zurück auf `number`, sonst macht `JSON.stringify`
+daraus eine **Zeichenkette** und aus `a + b` eine Konkatenation.
+
+1. **`result`-Extender** für die 18 Felder — greift auf Feldern eines Datensatzes
+   (`findMany`, `findUnique`) und fliesst in die generierten Typen ein.
+2. **`$allOperations`-Hook** für `aggregate` und `groupBy` — die liefern kein
+   Datensatzobjekt, sondern `_sum`/`_avg`, und **der `result`-Extender erreicht
+   sie grundsätzlich nicht**. Genau das war der Fehler nach dem ersten P2c-Push:
+   Einzelbeträge stimmten, aber Summen-Kacheln standen auf CHF 0.00 und
+   Diagrammachsen gingen bis 60'000'000.
+
+**`$queryRaw` umgeht beide Wege.** Deshalb lesen die manuellen Q1-Felder jetzt
+über `prisma.tutorProfile.findUnique` mit `MANUAL_Q1_SELECT` aus
+`lib/manual-revenue.ts` — dasselbe SQL stand vorher sechsmal da, und derselbe
+Fehler entstand sechsmal.
+
+**Prüfwerkzeug:** `npx dotenv -e .env.local -- npx tsx scripts/verify-money-types.ts`
+vergleicht den Typ **nach JSON-Rundlauf** gegen die SQL-Summe der Datenbank. Die
+Sollwerte kommen aus der DB selbst, nicht aus festen Zahlen — feste Beträge
+veralten bei jedem Sync und melden dann einen Fehler, wo keiner ist.
 
 **Migrationen ausführen:** `DIRECT_URL` zeigt auf den IPv6-Host und läuft in
 einen Timeout. Vorher auf den IPv4-Session-Pooler umbiegen — derselbe Host wie
@@ -77,7 +140,8 @@ einen Timeout. Vorher auf den IPv4-Session-Pooler umbiegen — derselbe Host wie
 | | |
 |---|---|
 | `pg_dump` | vorhanden unter `C:\Program Files\PostgreSQL\17\bin` (**nicht im PATH**) |
-| Dump | `H:\Meine Ablage\Daten von tracker\mathetogo-2026-08-03.dump`, 344 KB |
+| Dump | `H:\Meine Ablage\Daten von tracker\mathetogo-2026-08-05-vor-p2c.dump`, 346 KB, **54 Tabellen mit Daten** (`pg_restore --list` gelesen) — vor P2c gezogen |
+| Älteres Dump | `mathetogo-2026-08-03.dump`, 344 KB (Basis der Ladeprobe unten) |
 | Archiv lesbar | ✅ `pg_restore --list` exit 0, 465 TOC-Einträge |
 | Inhalt geprüft | ✅ 1689 Zeilen, zeilengenau gegen Produktion |
 | **Ladeprobe** | ✅ **BESTANDEN am 04.08.2026** (siehe unten) |
@@ -147,8 +211,13 @@ Tabelle hat weniger Zeilen als das Dump enthielt.
 > sonst sieht ein geglückter Restore wie ein gescheiterter aus. Die zusätzliche
 > Warnung zu `wal_level` betrifft logische Replikation und ist folgenlos.
 
-**Für P2c/P2b ist das DB-Backup damit ausreichend** — beide fassen die Datenbank
-an, nicht den Storage.
+**Für P2b ist das DB-Backup ausreichend** — P2b fasst die Datenbank an, nicht den
+Storage. **Trotzdem gilt: erster Schritt der nächsten Sitzung ist ein frisches
+`pg_dump`**, siehe unten. Das vorhandene Dump ist vom 05.08. und altert.
+
+**Aufräumen bei Gelegenheit:** `rollback-p2c.sql` liegt noch im Scratchpad-Ordner
+der P2c-Sitzung. P2c ist verifiziert live, der Rückrollweg wird nicht mehr
+gebraucht und kann weg.
 
 ---
 
@@ -162,20 +231,7 @@ Betroffen sind vier der fünf bekannten Divergenzen (Leo 04, Una 04, Joseph 06,
 Liam 06; Raffael 05 ist inzwischen storniert). **Analyse liegt vor, nichts
 gebaut.**
 
-### P2c — Float → Decimal
-**R2-Verlustprüfung wiederholt: 0 verlustbehaftete Werte** über alle 18
-Geldfelder. Vorgesehen: `Decimal(10,2)` für Beträge, `Decimal(6,2)` für Raten,
-`Decimal(12,6)` für FX.
-
-Die Migration ist trivial, **der Aufwand liegt in der Code-Umstellung**: Prisma
-liefert danach `Decimal` statt `number`, das berührt jede Betragsaddition
-(`reduce`, `invoice-diff.ts`, `dashboard-analytics.ts`, `income-summary.ts`, die
-JSON-Serialisierung an die UI). **Eigener Durchgang**, mit Vorher/Nachher-Abgleich
-über alle 117 Rechnungssummen.
-
-Motivation nebenbei: Ruby 2026-02 steht mit `495.0000000000001` in der DB.
-
-### P2b — Umnummerierung + Unique-Constraint
+### P2b — Umnummerierung + Unique-Constraint  ← **nächster Durchgang**
 **11 Nummern mehrfach vergeben über 45 Zeilen, davon 34 umzunummerieren.** Alle
 betroffenen Rechnungen sind gesendet *und* bezahlt, alle `revision = 1`.
 `legacyInvoiceNumber` ist bei 0 Zeilen gesetzt — P2b ist nie gelaufen.
@@ -190,6 +246,32 @@ Erst danach `@unique` auf `invoiceNumber` — als **Teil-Index**
 (`WHERE "invoiceNumber" <> ''`), weil das Feld den Default `""` hat.
 
 **Eigener Durchgang, nur nach ausdrücklichem „ja", nur nach Backup.**
+
+**Ablauf für die nächste Sitzung — vom Nutzer so festgelegt:**
+
+1. **Erster Schritt: frisches `pg_dump`**, lesbar bestätigt (`pg_restore --list`).
+2. Dann P2b als **eigener kontrollierter Durchgang**, Schritt für Schritt gezeigt.
+3. **Kein Schreibzugriff ohne ausdrückliches „ja" des Nutzers.**
+
+Das Vorgehen aus P2c hat sich bewährt und ist die Vorlage: Vorher-Aufnahme
+ziehen → Migration zeigen, nicht fahren → Freigabe abwarten → migrieren →
+sofort Nachher-Aufnahme und Abgleich → erst bei grünem Abgleich pushen. Und
+**vor jeder Prüfabfrage `SET extra_float_digits = 3;`**, siehe die Falle oben.
+
+### P2c — Float → Decimal  ✅ **ERLEDIGT, live seit 05.08.2026**
+Migration `20260804100000_p2c_money_decimal` angewendet, Code live als `a801ace`
++ `1ccd89e`. 18/18 Geldspalten `numeric`, Raten `(6,4)`.
+
+Abgleich über alle **902 Einzelwerte**: gerundete Differenz **exakt 0**, verändert
+haben sich **nur die 31 bekannten Rauschwerte** (Ruby 2026-02
+`495.0000000000001` → `495`, dazu 30 Session-Beträge um 1e-14). Aggregate
+unverändert: Invoice **41923.50**, Snapshots **9755.00**, MonthlyExpense
+**25390.44**. Session lag bei 55267.40 und steht seit den drei bestätigten
+Löschvormerkungen bei **55046.40** — die Differenz von 221.00 ist Absicht und im
+Audit-Log belegt.
+
+Nachgereicht in `1ccd89e`: `aggregate`/`groupBy` liefen am `result`-Extender
+vorbei, siehe „Decimal an der Grenze" oben. Details dort, nicht hier.
 
 ---
 
