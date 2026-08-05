@@ -13,10 +13,14 @@ import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
 import { getTutorProfile, TutorProfileData } from "@/lib/tutor-profile";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 
+// amountCHF bewusst neu gesetzt statt aus Session gepickt: das Prisma-Modell
+// fuehrt es seit P2c als Decimal, der erweiterte Client in lib/prisma.ts liefert
+// aber number. Wer hier den rohen Modelltyp picken wuerde, bekaeme Decimal und
+// damit einen Typ, den es zur Laufzeit nie gibt.
 export type InvoiceSession = Pick<
   Session,
-  "id" | "date" | "durationMin" | "amountCHF" | "month" | "year"
->;
+  "id" | "date" | "durationMin" | "month" | "year"
+> & { amountCHF: number };
 
 export type InvoiceSubscriptionLine = {
   id: string;

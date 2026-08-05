@@ -23,7 +23,7 @@ model Student {
   id         String    @id @default(cuid())
   name       String    @unique
   subject    String
-  ratePerMin Float
+  ratePerMin Decimal @db.Decimal(6, 4)
   currency   String    @default("CHF")
   email      String?
   active     Boolean   @default(true)
@@ -46,7 +46,7 @@ model StudentRateHistory {
   id            String   @id @default(cuid())
   studentId     String
   student       Student  @relation(fields: [studentId], references: [id])
-  ratePerMin    Float
+  ratePerMin    Decimal @db.Decimal(6, 4)
   effectiveFrom DateTime
   createdAt     DateTime @default(now())
 
@@ -59,7 +59,7 @@ model Session {
   student     Student  @relation(fields: [studentId], references: [id])
   date        DateTime
   durationMin Int
-  amountCHF   Float
+  amountCHF   Decimal @db.Decimal(10, 2)
   calEventId  String?  @unique
   month       Int
   year        Int
@@ -81,7 +81,7 @@ model Invoice {
   student       Student   @relation(fields: [studentId], references: [id])
   month         Int
   year          Int
-  totalCHF      Float
+  totalCHF      Decimal @db.Decimal(10, 2)
   sessionIds    String
   invoiceNumber String    @default("")
   /// Nummer vor der einmaligen Duplikat-Reparatur (P2b); null = nie umnummeriert.
@@ -137,7 +137,7 @@ model InvoiceSnapshot {
   invoiceId     String
   revision      Int
   invoiceNumber String
-  totalCHF      Float
+  totalCHF      Decimal @db.Decimal(10, 2)
   /// Vollständiger InvoicePayload zum Zeitpunkt des Einfrierens (Positionen, Beträge, Schüler).
   payloadJson   Json
   /// Storage-Pfad der zu dieser Revision ausgelieferten PDF.
@@ -178,9 +178,9 @@ model TutorProfile {
   /// Jahr für manuelle Q1-Summen (Jan.–Mär.); nur für dieses Jahr
   manualQ1Year   Int?
   /// CHF; wenn alle drei null, gelten die Defaults aus lib/manual-revenue
-  manualQ1M1Chf  Float?
-  manualQ1M2Chf  Float?
-  manualQ1M3Chf  Float?
+  manualQ1M1Chf  Decimal? @db.Decimal(10, 2)
+  manualQ1M2Chf  Decimal? @db.Decimal(10, 2)
+  manualQ1M3Chf  Decimal? @db.Decimal(10, 2)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -189,7 +189,7 @@ model PlatformSubscription {
   id             String           @id @default(cuid())
   studentId      String
   student        Student          @relation(fields: [studentId], references: [id])
-  amountCHF      Float
+  amountCHF      Decimal @db.Decimal(10, 2)
   billingMethod  String           // "invoice" | "direct"
   durationMonths Int              // 1 or 6
   startMonth     Int              // 1–12
@@ -209,7 +209,7 @@ model PlatformCharge {
   subscription   PlatformSubscription @relation(fields: [subscriptionId], references: [id])
   month          Int
   year           Int
-  amountCHF      Float
+  amountCHF      Decimal @db.Decimal(10, 2)
   paidAt         DateTime?
   createdAt      DateTime             @default(now())
 
@@ -220,7 +220,7 @@ model MiscEarning {
   id        String            @id @default(cuid())
   year      Int
   month     Int
-  amountCHF Float
+  amountCHF Decimal @db.Decimal(10, 2)
   label     String?
   source    MiscEarningSource @default(manual)
   createdAt DateTime          @default(now())
@@ -271,8 +271,8 @@ model AcademigoContact {
 
 model FxRateSnapshot {
   id         String   @id @default("default")
-  chfPerEur  Float
-  chfPerMxn  Float
+  chfPerEur  Decimal @db.Decimal(12, 6)
+  chfPerMxn  Decimal @db.Decimal(12, 6)
   source     String?
   fetchedAt  DateTime @default(now())
   createdAt  DateTime @default(now())
@@ -283,10 +283,10 @@ model DanceEarning {
   id             String       @id @default(cuid())
   date           DateTime
   payerName      String
-  amountOriginal Float
+  amountOriginal Decimal @db.Decimal(10, 2)
   currency       CurrencyCode
-  chfRate        Float
-  amountCHF      Float
+  chfRate        Decimal @db.Decimal(12, 6)
+  amountCHF      Decimal @db.Decimal(10, 2)
   year           Int
   month          Int
   notes          String?
@@ -301,7 +301,7 @@ model AdditionalEarning {
   year      Int
   month     Int
   name      String
-  amountCHF Float
+  amountCHF Decimal @db.Decimal(10, 2)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -312,7 +312,7 @@ model MonthlyExpense {
   id        String   @id @default(cuid())
   year      Int
   month     Int
-  amountCHF Float
+  amountCHF Decimal @db.Decimal(10, 2)
   notes     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

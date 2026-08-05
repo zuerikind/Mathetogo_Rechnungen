@@ -1,7 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+// Der erweiterte Client aus lib/prisma.ts, nicht ein eigener: nur er wandelt die
+// Decimal-Geldfelder an der Grenze zurueck auf number (P2c).
+import { prisma } from "@/lib/prisma";
 import { subscriptionProrationForMonth } from "@/lib/subscription-billing";
-
-const prisma = new PrismaClient();
 
 // Source-of-truth from PDF (student breakdown only, excluding subscriptions).
 const PDF_TUTORING_TOTALS: Record<1 | 2 | 3, number> = {
@@ -23,16 +23,17 @@ async function main() {
     },
   });
 
-  const rows = await prisma.$queryRaw<
-    {
-      manualQ1Year: number | null;
-      manualQ1M1Chf: number | null;
-      manualQ1M2Chf: number | null;
-      manualQ1M3Chf: number | null;
-    }[]
-  >`SELECT "manualQ1Year", "manualQ1M1Chf", "manualQ1M2Chf", "manualQ1M3Chf" FROM "TutorProfile" WHERE id = 'default' LIMIT 1`;
-
-  const manual = rows[0] ?? null;
+  // Bewusst kein $queryRaw: Rohabfragen umgehen den Decimal-Extender und
+  // liefern fuer die manualQ1*-Betraege ein Decimal, das als number getippt waere.
+  const manual = await prisma.tutorProfile.findUnique({
+    where: { id: "default" },
+    select: {
+      manualQ1Year: true,
+      manualQ1M1Chf: true,
+      manualQ1M2Chf: true,
+      manualQ1M3Chf: true,
+    },
+  });
   const year = manual?.manualQ1Year ?? 2026;
 
   for (const month of [1, 2, 3] as const) {

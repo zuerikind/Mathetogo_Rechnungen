@@ -1,7 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+// Der erweiterte Client aus lib/prisma.ts, nicht ein eigener: nur er wandelt die
+// Decimal-Geldfelder an der Grenze zurueck auf number (P2c).
+import { prisma } from "@/lib/prisma";
 import { MANUAL_BASELINE_YEAR } from "@/lib/manual-revenue";
-
-const prisma = new PrismaClient();
 
 const MONTHLY_AMOUNTS: ReadonlyArray<{
   month: 1 | 2 | 3;

@@ -12,9 +12,9 @@
  * Trockenlauf:  npx dotenv -e .env.local -- npx tsx scripts/fix-rate-history-2026-07.ts
  * Anwenden:     ... scripts/fix-rate-history-2026-07.ts --apply
  */
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+// Der erweiterte Client aus lib/prisma.ts, nicht ein eigener: nur er wandelt die
+// Decimal-Geldfelder an der Grenze zurueck auf number (P2c).
+import { prisma } from "@/lib/prisma";
 
 const NAMES = ["Runqian", "Vincent"];
 const CORRECT_RATE = 1.3;
