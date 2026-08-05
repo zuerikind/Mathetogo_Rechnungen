@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { getEffectiveManualBaseline } from "@/lib/manual-revenue";
+import { getEffectiveManualBaseline, MANUAL_Q1_SELECT } from "@/lib/manual-revenue";
 import { prisma } from "@/lib/prisma";
 
 /** Manual Q1 totals (DB or file defaults), for display / debugging. */
@@ -15,15 +15,10 @@ export async function GET() {
     manualQ1M3Chf: number | null;
   } | null = null;
   try {
-    const rows = await prisma.$queryRaw<
-      {
-        manualQ1Year: number | null;
-        manualQ1M1Chf: number | null;
-        manualQ1M2Chf: number | null;
-        manualQ1M3Chf: number | null;
-      }[]
-    >`SELECT "manualQ1Year", "manualQ1M1Chf", "manualQ1M2Chf", "manualQ1M3Chf" FROM "TutorProfile" WHERE id = 'default' LIMIT 1`;
-    row = rows[0] ?? null;
+    row = await prisma.tutorProfile.findUnique({
+      where: { id: "default" },
+      select: MANUAL_Q1_SELECT,
+    });
   } catch {
     row = null;
   }

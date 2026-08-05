@@ -27,6 +27,25 @@ type DbManualFields = {
 } | null;
 
 /**
+ * Select fuer die vier manuellen Q1-Felder — gemeinsam, damit sie ueberall
+ * ueber prisma.tutorProfile.findUnique gelesen werden und nicht per $queryRaw.
+ *
+ * Die drei Chf-Felder sind seit P2c Decimal. Eine Rohabfrage umgeht den
+ * Decimal-Extender in lib/prisma.ts und liefert sie als Decimal, obwohl der
+ * Aufrufer sie als number tippt — genau so kamen sie als Zeichenkette in die
+ * Einkommensrechnung. Ueber den Client greift die Konvertierung.
+ *
+ * Bewusst nur das Select und kein Helfer mit Client-Parameter: die eine Stelle
+ * in settings liest innerhalb einer Transaktion und braucht deren tx.
+ */
+export const MANUAL_Q1_SELECT = {
+  manualQ1Year: true,
+  manualQ1M1Chf: true,
+  manualQ1M2Chf: true,
+  manualQ1M3Chf: true,
+};
+
+/**
  * Returns saved DB values if all three month amounts are set; otherwise file defaults.
  */
 export function getEffectiveManualBaseline(db: DbManualFields): ManualBaseline & { fromDatabase: boolean } {

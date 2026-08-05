@@ -6,7 +6,7 @@ import {
   type AdditionalEarningForIncome,
 } from "@/lib/additional-earnings";
 import { monthDanceEarningsTotal, ytdDanceEarningsTotal, type DanceEarningForIncome } from "@/lib/dance-earnings";
-import { getEffectiveManualBaseline } from "@/lib/manual-revenue";
+import { getEffectiveManualBaseline, MANUAL_Q1_SELECT } from "@/lib/manual-revenue";
 import { monthMiscEarningsTotal, ytdMiscEarningsTotal, type MiscEarningForIncome } from "@/lib/misc-earnings";
 import { prisma } from "@/lib/prisma";
 import { subscriptionProrationForMonth, type SubscriptionBillingInput } from "@/lib/subscription-billing";
@@ -60,15 +60,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [tutorRaw, subscriptionRows, miscRows, danceRows, additionalRows] = await Promise.all([
-      prisma.$queryRaw<
-        {
-          manualQ1Year: number | null;
-          manualQ1M1Chf: number | null;
-          manualQ1M2Chf: number | null;
-          manualQ1M3Chf: number | null;
-        }[]
-      >`SELECT "manualQ1Year", "manualQ1M1Chf", "manualQ1M2Chf", "manualQ1M3Chf" FROM "TutorProfile" WHERE id = 'default' LIMIT 1`,
+    const [tutorRow, subscriptionRows, miscRows, danceRows, additionalRows] = await Promise.all([
+      prisma.tutorProfile.findUnique({ where: { id: "default" }, select: MANUAL_Q1_SELECT }),
       prisma.platformSubscription.findMany({
         select: {
           id: true,
@@ -104,7 +97,7 @@ export async function GET(req: NextRequest) {
         }),
     ]);
 
-    const baseline = getEffectiveManualBaseline(tutorRaw[0] ?? null);
+    const baseline = getEffectiveManualBaseline(tutorRow);
     const baselineMonths =
       year === baseline.year ? new Set<number>(baseline.entries.map((e) => e.month)) : new Set<number>();
     const baselineMonthAmount = baseline.entries.find((e) => e.month === month)?.amountCHF ?? null;

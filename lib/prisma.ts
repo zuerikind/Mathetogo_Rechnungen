@@ -66,6 +66,37 @@ function decNullable<F extends string>(...felder: F[]) {
   >;
 }
 
+/**
+ * Rekursiv jedes Decimal in einer Antwort auf number ziehen.
+ *
+ * Nur fuer Aggregate gedacht, siehe AGGREGAT_OPS unten — fuer Datensatzfelder
+ * macht das der result-Extender, und der ist dort auch der bessere Weg, weil er
+ * in die generierten Typen einfliesst.
+ */
+function decimalsToNumbers<T>(value: T): T {
+  if (value === null || typeof value !== "object") return value;
+  if (value instanceof Date) return value;
+  if (typeof (value as { toNumber?: unknown }).toNumber === "function") {
+    return (value as unknown as DecimalLike).toNumber() as unknown as T;
+  }
+  if (Array.isArray(value)) return value.map((v) => decimalsToNumbers(v)) as unknown as T;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) out[k] = decimalsToNumbers(v);
+  return out as T;
+}
+
+/**
+ * Operationen, deren Ergebnis der result-Extender NICHT erreicht.
+ *
+ * Der result-Extender greift ausschliesslich auf Feldern eines Datensatzes.
+ * aggregate und groupBy liefern kein Datensatzobjekt, sondern _sum/_avg/_min/_max —
+ * dort kam das Decimal bisher roh durch und landete per JSON.stringify als
+ * ZEICHENKETTE im Client. Sichtbar wurde das als Summen-Kachel auf CHF 0.00
+ * (String, wo eine Zahl erwartet wird) und als Diagrammachse bis 60'000'000
+ * (String-Konkatenation statt Addition).
+ */
+const AGGREGAT_OPS = new Set(["aggregate", "groupBy"]);
+
 function makePrismaClient() {
   const resolvedDbUrl = databaseUrlWithPoolSettings(process.env.DATABASE_URL);
   const base = new PrismaClient({
@@ -107,20 +138,24 @@ function makePrismaClient() {
     },
     query: {
       $allModels: {
-        async $allOperations({ args, query }) {
-          try {
-            return await query(args);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            const isConnReset =
-              msg.includes("ConnectionReset") ||
-              msg.includes("10054") ||
-              msg.includes("ECONNRESET");
-            if (!isConnReset) throw err;
-            await base.$disconnect();
-            await new Promise((r) => setTimeout(r, 500));
-            return query(args);
-          }
+        async $allOperations({ args, query, operation }) {
+          const run = async () => {
+            try {
+              return await query(args);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              const isConnReset =
+                msg.includes("ConnectionReset") ||
+                msg.includes("10054") ||
+                msg.includes("ECONNRESET");
+              if (!isConnReset) throw err;
+              await base.$disconnect();
+              await new Promise((r) => setTimeout(r, 500));
+              return query(args);
+            }
+          };
+          const result = await run();
+          return AGGREGAT_OPS.has(operation) ? decimalsToNumbers(result) : result;
         },
       },
     },

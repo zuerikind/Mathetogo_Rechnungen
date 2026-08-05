@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { getEffectiveManualBaseline, mergeManualBaselineSessions } from "@/lib/manual-revenue";
+import {
+  getEffectiveManualBaseline,
+  MANUAL_Q1_SELECT,
+  mergeManualBaselineSessions,
+} from "@/lib/manual-revenue";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
@@ -37,15 +41,10 @@ export async function GET(req: NextRequest) {
     manualQ1M3Chf: number | null;
   } | null = null;
   try {
-    const rows = await prisma.$queryRaw<
-      {
-        manualQ1Year: number | null;
-        manualQ1M1Chf: number | null;
-        manualQ1M2Chf: number | null;
-        manualQ1M3Chf: number | null;
-      }[]
-    >`SELECT "manualQ1Year", "manualQ1M1Chf", "manualQ1M2Chf", "manualQ1M3Chf" FROM "TutorProfile" WHERE id = 'default' LIMIT 1`;
-    tutorRow = rows[0] ?? null;
+    tutorRow = await prisma.tutorProfile.findUnique({
+      where: { id: "default" },
+      select: MANUAL_Q1_SELECT,
+    });
   } catch {
     // DB not migrated yet (missing manual Q1 columns) — use file defaults in getEffectiveManualBaseline
     tutorRow = null;

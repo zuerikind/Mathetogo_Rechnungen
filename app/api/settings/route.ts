@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { getEffectiveManualBaseline } from "@/lib/manual-revenue";
+import { getEffectiveManualBaseline, MANUAL_Q1_SELECT } from "@/lib/manual-revenue";
 import { defaultQ1Year, normalizeQ1Targets, q1ReconciliationRows } from "@/lib/q1-reconciliation";
 import { prisma } from "@/lib/prisma";
 import { getTutorProfile } from "@/lib/tutor-profile";
@@ -28,15 +28,10 @@ export async function GET(req: NextRequest) {
     manualQ1M3Chf: number | null;
   } | null = null;
   try {
-    const rows = await prisma.$queryRaw<
-      {
-        manualQ1Year: number | null;
-        manualQ1M1Chf: number | null;
-        manualQ1M2Chf: number | null;
-        manualQ1M3Chf: number | null;
-      }[]
-    >`SELECT "manualQ1Year", "manualQ1M1Chf", "manualQ1M2Chf", "manualQ1M3Chf" FROM "TutorProfile" WHERE id = 'default' LIMIT 1`;
-    row = rows[0] ?? null;
+    row = await prisma.tutorProfile.findUnique({
+      where: { id: "default" },
+      select: MANUAL_Q1_SELECT,
+    });
   } catch {
     row = null;
   }
@@ -272,15 +267,10 @@ export async function PUT(req: NextRequest) {
       }
 
       const fallbackTargets = normalizeQ1Targets({ m1: null, m2: null, m3: null });
-      const currentManualRow = await tx.$queryRaw<
-        {
-          manualQ1Year: number | null;
-          manualQ1M1Chf: number | null;
-          manualQ1M2Chf: number | null;
-          manualQ1M3Chf: number | null;
-        }[]
-      >`SELECT "manualQ1Year", "manualQ1M1Chf", "manualQ1M2Chf", "manualQ1M3Chf" FROM "TutorProfile" WHERE id = 'default' LIMIT 1`;
-      const live = currentManualRow[0] ?? null;
+      const live = await tx.tutorProfile.findUnique({
+        where: { id: "default" },
+        select: MANUAL_Q1_SELECT,
+      });
       const resolvedManual = live
         ? {
             year: live.manualQ1Year ?? defaultQ1Year(),
