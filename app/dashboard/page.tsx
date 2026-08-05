@@ -5,6 +5,7 @@ import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { DashboardAnalytics } from "@/components/DashboardAnalytics";
 import { MonthlyChart } from "@/components/MonthlyChart";
+import { PendingDeletionBanner } from "@/components/PendingDeletionBanner";
 import { SavingsChart, type SavingsPoint } from "@/components/SavingsChart";
 import { SessionTable, type SubscriptionAnalysisTableRow } from "@/components/SessionTable";
 import { StatCard } from "@/components/StatCard";
@@ -108,6 +109,7 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [pendingRefresh, setPendingRefresh] = useState(0);
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
 
@@ -443,6 +445,9 @@ export default function DashboardPage() {
       );
     }
     setToast(parts.join(" · "));
+    // Das Band laedt mit: der Sync merkt die Loeschungen hier vor, also muss
+    // der Entscheid direkt auf dieser Seite moeglich sein.
+    setPendingRefresh((n) => n + 1);
     void loadSessions();
     setTimeout(() => setToast(""), 8000);
   };
@@ -457,6 +462,11 @@ export default function DashboardPage() {
       incomeLoading={globalIncomeLoading || loading || refreshing}
     >
       <div className="min-w-0 space-y-5">
+
+        <PendingDeletionBanner
+          refreshKey={pendingRefresh}
+          onResolved={() => void loadSessions()}
+        />
 
         {/* Page header */}
         <div className="flex min-w-0 items-center gap-2">
