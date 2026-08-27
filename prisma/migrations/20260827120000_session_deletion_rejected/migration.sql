@@ -1,0 +1,11 @@
+-- Ein abgelehnter Loeschvorschlag muss den naechsten Sync ueberleben.
+--
+-- Bisher setzte "Behalten" nur pendingDeletionAt zurueck auf NULL — und genau
+-- danach sucht der Sync seine Kandidaten. Der abgelehnte Fall wurde deshalb bei
+-- jedem Lauf erneut vorgemerkt; die Entscheidung des Nutzers hielt bis zum
+-- naechsten Sync. Die neue Spalte haelt sie fest. Der Upsert des Syncs setzt sie
+-- zurueck, sobald der Kalendereintrag wieder auftaucht: verschwindet er danach
+-- erneut, ist es ein neuer Vorgang und darf wieder gemeldet werden.
+--
+-- Nullable, kein Backfill: bestehende Zeilen sind "nie abgelehnt".
+ALTER TABLE "Session" ADD COLUMN "deletionRejectedAt" TIMESTAMP(3);

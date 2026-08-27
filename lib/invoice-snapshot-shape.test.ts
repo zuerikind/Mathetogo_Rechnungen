@@ -5,6 +5,8 @@ import {
   type ShapeInput,
   type ShapeMember,
   type ShapeSession,
+  shapeSnapshotFromGeneration,
+  pickStoredGenerationPayload,
 } from "./invoice-snapshot-shape";
 
 const FROZEN = new Date("2026-08-02T09:00:00Z");
@@ -130,5 +132,164 @@ describe("shapeInvoiceSnapshot", () => {
     expect(snap.subscriptionTotalCHF).toBe(262.5);
     expect(snap.sessionsSubtotalCHF).toBe(55);
     expect(snap.totalCHF).toBe(317.5);
+  });
+});
+
+/**
+ * Regression: der Snapshot beschrieb etwas anderes als das ausgelieferte PDF.
+ *
+ * Vorher entstand er erst beim Ausliefern und las die Lektionen dabei FRISCH aus
+ * der Datenbank, waehrend `totalCHF` aus der Rechnungszeile kam. Aenderte ein
+ * Kalender-Sync zwischen Erzeugen und Ausliefern einen Betrag, widersprach der
+ * "eingefrorene" Stand dem Dokument beim Kunden — und die Abweichungserkennung
+ * meldete nichts, weil sie den geaenderten Stand gegen sich selbst verglich.
+ */
+describe("shapeSnapshotFromGeneration", () => {
+  const d = (s: string) => new Date(`2026-08-${s}T09:00:00Z`);
+  const KIND_A = { id: "stud-a", name: "Anna", subject: "Mathe" };
+  const KIND_B = { id: "stud-b", name: "Ben", subject: "Physik" };
+
+  /** Der Payload, aus dem das PDF gerendert wurde: A, B, C zu je 60.00. */
+  const generationPayload = {
+    student: KIND_A,
+    sections: [
+      {
+        student: KIND_A,
+        sessions: [
+          { id: "A", date: d("03"), durationMin: 60, amountCHF: 60 },
+          { id: "B", date: d("10"), durationMin: 60, amountCHF: 60 },
+          { id: "C", date: d("17"), durationMin: 60, amountCHF: 60 },
+        ],
+        subtotalCHF: 180,
+      },
+    ],
+    subscriptionLines: [],
+    totalCHF: 180,
+    year: 2026,
+    month: 8,
+    invoiceNumber: "2026-0118",
+  };
+
+  const invoiceRow = {
+    id: "inv-1",
+    revision: 1,
+    pdfPath: "2026-08-stud-a.pdf",
+    createdAt: new Date("2026-08-31T10:00:00Z"),
+    sentAt: null,
+    paidAt: null,
+  };
+
+  const generated = shapeSnapshotFromGeneration({
+    payload: generationPayload,
+    invoice: invoiceRow,
+    generatedAt: new Date("2026-08-31T10:00:00Z"),
+  });
+
+  it("beschreibt genau die erzeugten Lektionen", () => {
+    expect(generated.sessionIds).toEqual(["A", "B", "C"]);
+    expect(generated.sections[0].sessions.map((s) => s.amountCHF)).toEqual([60, 60, 60]);
+    expect(generated.missingSessionIds).toEqual([]);
+  });
+
+  it("Kopfbetrag und Positionen stammen aus DEMSELBEN Payload", () => {
+    // Der Kern des Fehlers: vorher kam totalCHF aus der Zeile und die Positionen
+    // aus einer spaeteren Abfrage. Sie konnten sich widersprechen.
+    expect(generated.totalCHF).toBe(180);
+    expect(generated.sessionsSubtotalCHF).toBe(180);
+    expect(generated.sections[0].subtotalCHF).toBe(180);
+    expect(generated.totalCHF).toBe(generated.sessionsSubtotalCHF + generated.subscriptionTotalCHF);
+  });
+
+  it("DER Regressionsfall: spaetere Aenderungen an den Lektionen aendern ihn nicht", () => {
+    // 1.-2. erzeugt und PDF gebaut (oben).
+    // 3. Kalender-Sync aendert C von 60 auf 120 und loescht B.
+    const liveNachAenderung = [
+      { id: "A", amountCHF: 60 },
+      { id: "C", amountCHF: 120 },
+    ];
+    // 4.-5. Ausliefern friert den GESPEICHERTEN Stand ein, nicht den neuen.
+    const eingefroren = pickStoredGenerationPayload(JSON.parse(JSON.stringify(generated)));
+    expect(eingefroren).not.toBeNull();
+    expect(eingefroren!.sessionIds).toEqual(["A", "B", "C"]);
+    expect(eingefroren!.totalCHF).toBe(180);
+    // 6. Der eingefrorene Stand stimmt mit dem PDF ueberein, nicht mit den Live-Daten.
+    const liveSumme = liveNachAenderung.reduce((a, s) => a + s.amountCHF, 0);
+    expect(liveSumme).toBe(180); // gleiche Summe, ANDERE Positionen …
+    expect(eingefroren!.sessionIds).not.toEqual(liveNachAenderung.map((s) => s.id));
+    // … genau deshalb reicht ein Summenvergleich nicht.
+  });
+
+  it("ohne Aenderung ist der eingefrorene Stand identisch", () => {
+    const wieder = shapeSnapshotFromGeneration({
+      payload: generationPayload,
+      invoice: invoiceRow,
+      generatedAt: new Date("2026-08-31T10:00:00Z"),
+    });
+    expect(wieder).toEqual(generated);
+  });
+
+  it("Familienrechnung: jede Lektion genau einmal, Abschnitte pro Kind", () => {
+    const familie = shapeSnapshotFromGeneration({
+      payload: {
+        ...generationPayload,
+        sections: [
+          { student: KIND_A, sessions: [{ id: "A", date: d("03"), durationMin: 60, amountCHF: 60 }], subtotalCHF: 60 },
+          { student: KIND_B, sessions: [{ id: "B", date: d("04"), durationMin: 90, amountCHF: 90 }], subtotalCHF: 90 },
+        ],
+        subscriptionLines: [{ id: "sub-1", description: "Abo", amountCHF: 30 }],
+        totalCHF: 180,
+      },
+      invoice: invoiceRow,
+      generatedAt: new Date("2026-08-31T10:00:00Z"),
+    });
+    expect(familie.sections.map((s) => s.studentId)).toEqual(["stud-a", "stud-b"]);
+    expect(familie.sessionIds).toEqual(["A", "B"]);
+    expect(familie.sessionsSubtotalCHF).toBe(150);
+    expect(familie.subscriptionTotalCHF).toBe(30);
+    expect(familie.sessionsSubtotalCHF + familie.subscriptionTotalCHF).toBe(familie.totalCHF);
+  });
+
+  it("Betraege werden nicht neu gerundet, nur uebernommen", () => {
+    const krumm = shapeSnapshotFromGeneration({
+      payload: {
+        ...generationPayload,
+        sections: [{ student: KIND_A, sessions: [{ id: "A", date: d("03"), durationMin: 35, amountCHF: 57.75 }], subtotalCHF: 57.75 }],
+        totalCHF: 57.75,
+      },
+      invoice: invoiceRow,
+      generatedAt: new Date("2026-08-31T10:00:00Z"),
+    });
+    expect(krumm.totalCHF).toBe(57.75);
+    expect(krumm.sessionsSubtotalCHF).toBe(57.75);
+  });
+});
+
+describe("pickStoredGenerationPayload — Auswahl zwischen gespeichert und live", () => {
+  const gueltig = { sessionIds: ["A"], totalCHF: 60, sections: [] };
+
+  it("gespeicherter Stand gewinnt", () => {
+    expect(pickStoredGenerationPayload(gueltig)).toBe(gueltig);
+  });
+
+  it("Altbestand ohne gespeicherten Stand faellt auf die Live-Abfrage zurueck", () => {
+    // null = der Aufrufer nimmt buildInvoiceSnapshotPayload. Bestandsrechnungen
+    // verhalten sich damit exakt wie vorher; es wird nichts umgeschrieben.
+    expect(pickStoredGenerationPayload(null)).toBeNull();
+    expect(pickStoredGenerationPayload(undefined)).toBeNull();
+  });
+
+  it("unbrauchbare Staende werden verworfen statt blind uebernommen", () => {
+    expect(pickStoredGenerationPayload({})).toBeNull();
+    expect(pickStoredGenerationPayload([])).toBeNull();
+    expect(pickStoredGenerationPayload("kaputt")).toBeNull();
+    expect(pickStoredGenerationPayload({ sessionIds: ["A"] })).toBeNull();
+    expect(pickStoredGenerationPayload({ sessionIds: ["A"], totalCHF: NaN, sections: [] })).toBeNull();
+    expect(pickStoredGenerationPayload({ totalCHF: 60, sections: [] })).toBeNull();
+    expect(pickStoredGenerationPayload({ sessionIds: ["A"], totalCHF: 60 })).toBeNull();
+  });
+
+  it("ein leerer, aber gueltiger Stand ist brauchbar", () => {
+    const leer = { sessionIds: [], totalCHF: 0, sections: [] };
+    expect(pickStoredGenerationPayload(leer)).toBe(leer);
   });
 });

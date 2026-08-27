@@ -91,6 +91,102 @@ export type ShapeInput = {
   frozenAt: Date;
 };
 
+/**
+ * Der Rechnungsstand, wie er BEIM ERZEUGEN feststand — die Form, die auch das
+ * PDF gerendert hat.
+ *
+ * Bewusst nur die Felder, die getInvoicePayload ohnehin liefert; die Funktion
+ * kennt keine Datenbank. `sections` traegt bereits die Zuordnung Lektion →
+ * Schueler, deshalb muss hier nichts nachgeschlagen werden.
+ */
+export type GenerationPayloadLike = {
+  student: { id: string; name: string; subject: string };
+  sections: {
+    student: { id: string; name: string; subject: string };
+    sessions: { id: string; date: Date; durationMin: number; amountCHF: number }[];
+    subtotalCHF: number;
+  }[];
+  subscriptionLines: SnapshotSubscriptionLine[];
+  totalCHF: number;
+  year: number;
+  month: number;
+  invoiceNumber: string;
+};
+
+export type GenerationShapeInput = {
+  payload: GenerationPayloadLike;
+  invoice: {
+    id: string;
+    revision: number;
+    pdfPath: string | null;
+    createdAt: Date;
+    sentAt: Date | null;
+    paidAt: Date | null;
+  };
+  /** Zeitpunkt der Erzeugung — ab hier steht der Inhalt fest. */
+  generatedAt: Date;
+};
+
+/**
+ * Formt den eingefrorenen Stand aus dem ERZEUGUNGS-Payload statt aus einer
+ * neuen Abfrage.
+ *
+ * Vorher entstand der Snapshot erst bei der Auslieferung und las die Lektionen
+ * dabei frisch aus der Datenbank, waehrend `totalCHF` aus der Rechnungszeile
+ * kam. Zwischen Erzeugen und Ausliefern konnte ein Kalender-Sync die Betraege
+ * aendern — der "eingefrorene" Stand widersprach dann dem PDF, das der Kunde
+ * hat, und der Abweichungserkennung fiel nichts auf, weil sie den geaenderten
+ * Stand gegen sich selbst verglich.
+ *
+ * Jetzt gilt: was das PDF gerendert hat, wird eingefroren. Dieselbe
+ * Abschnittslogik wie beim nachtraeglichen Einfrieren — deshalb laeuft alles
+ * durch shapeInvoiceSnapshot und nicht durch eine zweite Implementierung.
+ */
+export function shapeSnapshotFromGeneration(input: GenerationShapeInput): InvoiceSnapshotPayload {
+  const { payload, invoice, generatedAt } = input;
+
+  const sessions: ShapeSession[] = payload.sections.flatMap((section) =>
+    section.sessions.map((s) => ({
+      id: s.id,
+      studentId: section.student.id,
+      date: s.date,
+      durationMin: s.durationMin,
+      amountCHF: s.amountCHF,
+      student: section.student,
+    }))
+  );
+
+  return shapeInvoiceSnapshot({
+    invoice: {
+      id: invoice.id,
+      studentId: payload.student.id,
+      year: payload.year,
+      month: payload.month,
+      // Der Betrag stammt aus demselben Payload wie die Positionen — Kopf und
+      // Zeilen koennen sich damit nicht mehr widersprechen.
+      totalCHF: payload.totalCHF,
+      invoiceNumber: payload.invoiceNumber,
+      revision: invoice.revision,
+      pdfPath: invoice.pdfPath,
+      sentAt: invoice.sentAt,
+      paidAt: invoice.paidAt,
+      createdAt: invoice.createdAt,
+    },
+    root: {
+      id: payload.student.id,
+      name: payload.student.name,
+      subject: payload.student.subject,
+    },
+    children: payload.sections
+      .filter((sec) => sec.student.id !== payload.student.id)
+      .map((sec) => sec.student),
+    sessions,
+    sessionIds: sessions.map((s) => s.id),
+    subscriptionLines: payload.subscriptionLines,
+    frozenAt: generatedAt,
+  });
+}
+
 export function parseSessionIds(raw: string): string[] {
   try {
     const parsed = JSON.parse(raw || "[]") as unknown;
@@ -160,4 +256,22 @@ export function shapeInvoiceSnapshot(input: ShapeInput): InvoiceSnapshotPayload 
     invoiceCreatedAt: invoice.createdAt.toISOString(),
     frozenAt: frozenAt.toISOString(),
   };
+}
+
+/**
+ * Nimmt den gespeicherten Erzeugungsstand — oder null, wenn keiner brauchbar ist.
+ *
+ * Rein, damit die Auswahlregel pruefbar ist: fuer neu erzeugte Rechnungen MUSS
+ * der gespeicherte Stand gewinnen, sonst waere die Live-Abfrage wieder im Spiel.
+ * Fuer Altbestand (null) faellt der Aufrufer bewusst auf die Live-Abfrage zurueck.
+ */
+export function pickStoredGenerationPayload(stored: unknown): InvoiceSnapshotPayload | null {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return null;
+  const c = stored as Partial<InvoiceSnapshotPayload>;
+  // Minimale Plausibilitaet: ohne Positionen oder Betrag waere der gespeicherte
+  // Stand schlechter als eine frische Abfrage.
+  if (!Array.isArray(c.sessionIds)) return null;
+  if (typeof c.totalCHF !== "number" || !Number.isFinite(c.totalCHF)) return null;
+  if (!Array.isArray(c.sections)) return null;
+  return stored as InvoiceSnapshotPayload;
 }

@@ -6,7 +6,6 @@ import {
   mergeManualBaselineSessions,
 } from "@/lib/manual-revenue";
 import { isDelivered } from "@/lib/invoice-delivery";
-import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
 import { prisma } from "@/lib/prisma";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import { MANUAL_BASELINE_STUDENT_ID } from "@/lib/ui-types";
@@ -67,13 +66,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(invoices);
   }
 
-  await pruneStaleInvoicesInScope({
-    year: year ? Number(year) : undefined,
-    month: month ? Number(month) : undefined,
-    studentIds: groupIds ?? undefined,
-  });
-
-  const invoicesAfterPrune = await prisma.invoice.findMany({
+  // Frueher lief hier pruneStaleInvoicesInScope: ein GET loeschte Rechnungszeilen
+  // und die zugehoerigen PDFs im Storage. Jeder Prefetch, jeder Retry, jedes
+  // doppelte Rendern war damit ein Loeschvorgang. Das Aufraeumen laeuft jetzt
+  // ausschliesslich ueber Mutationen — Sync, Rechnungserstellung und der
+  // ausdrueckliche POST /api/invoices/cleanup. Dieser Endpunkt ist rein lesend.
+  const invoicesUnfiltered = await prisma.invoice.findMany({
     where: {
       ...(year ? { year: Number(year) } : {}),
       ...(month ? { month: Number(month) } : {}),
@@ -140,11 +138,11 @@ export async function GET(req: NextRequest) {
     entries: baseline.entries,
   });
 
-  const existingKeys = new Set(invoicesAfterPrune.map((i) => `${i.studentId}-${i.year}-${i.month}`));
+  const existingKeys = new Set(invoicesUnfiltered.map((i) => `${i.studentId}-${i.year}-${i.month}`));
   // Monate, in denen ein Schüler bereits eine eigene AUSGELIEFERTE Rechnung hat
   // (z. B. vor der Familien-Verknüpfung): seine Beträge bleiben bei ihm statt beim Hauptschüler.
   const separatelyBilledKeys = new Set(
-    invoicesAfterPrune
+    invoicesUnfiltered
       .filter(isDelivered)
       .map((i) => `${i.studentId}-${i.year}-${i.month}`)
   );
@@ -265,7 +263,7 @@ export async function GET(req: NextRequest) {
   if (platformSubs.length > 0) {
     const keys = new Set<string>([
       ...Array.from(effectiveTotals.keys()),
-      ...invoicesAfterPrune.map((i) => `${i.studentId}-${i.year}-${i.month}`),
+      ...invoicesUnfiltered.map((i) => `${i.studentId}-${i.year}-${i.month}`),
     ]);
     for (const key of Array.from(keys)) {
       const [sid, yRaw, mRaw] = key.split("-");
@@ -287,13 +285,13 @@ export async function GET(req: NextRequest) {
     (
       await prisma.invoiceAuditLog.groupBy({
         by: ["invoiceId"],
-        where: { action: "reviewed", invoiceId: { in: invoicesAfterPrune.map((i) => i.id) } },
+        where: { action: "reviewed", invoiceId: { in: invoicesUnfiltered.map((i) => i.id) } },
         _count: { _all: true },
       })
     ).map((row) => [row.invoiceId, row._count._all])
   );
 
-  const realRows = invoicesAfterPrune
+  const realRows = invoicesUnfiltered
     .map((invoice) => {
       const key = `${invoice.studentId}-${invoice.year}-${invoice.month}`;
       const nextTotal = effectiveTotals.get(key);

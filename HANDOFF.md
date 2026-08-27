@@ -1,4 +1,4 @@
-# Übergabe — Stand 6. August 2026
+# Übergabe — Stand 28. August 2026
 
 Dieses Dokument beim Wiedereinstieg vollständig hereingeben.
 
@@ -12,126 +12,213 @@ Dieses Dokument beim Wiedereinstieg vollständig hereingeben.
 3. **GET-Routen mutieren nicht.** Browser laden Links spekulativ vor; jede
    Zustandsänderung braucht POST.
 4. **Ausgelieferte Rechnungen werden nie hart gelöscht.** „Ausgeliefert" =
-   `isDelivered()` = `sentAt || paidAt || firstDownloadedAt`. Korrektur läuft
-   über Neuausstellung (Revision) oder Storno, nie über Überschreiben.
+   `isDelivered()` = `sentAt || paidAt || firstDownloadedAt || voidedAt`.
+   Korrektur läuft über Neuausstellung (Revision) oder Storno, nie über Überschreiben.
 5. Vor jedem Schreibzugriff auf Produktionsdaten: lesend zeigen, was sich ändert.
 
 ---
 
-## Zustand beim Wiedereinstieg
+## Aktueller Stand — Rechnungs-Härtung (August 2026)
 
-**P2c ist live und verifiziert.** Production-Stand: **`1ccd89e`**. Die Geldfelder
-liegen als `numeric` in der Datenbank, das Dashboard zeigt geprüfte Zahlen.
+Ein vollständiger Rechnungs-Audit (6 parallele Agenten + Produktionsanalyse
+read-only) lief am 27./28.08. Ergebnis: der Geldpfad selbst war korrekt
+(Rundung cent-exakt, Decimal-Grenze sauber, 0 Sessions auf zwei Rechnungen),
+die **Schutzmechanismen darum herum** waren es nicht.
 
-**Pending-Deletion ist VOLLSTÄNDIG live** (`cc7c71c` vormerken + `9aab272`
-auflösen), inzwischen ergänzt um das Löschband auf dem Dashboard (`7bd6439`).
-Es hat in Produktion bereits gearbeitet: am 05.08. wurden drei Vormerkungen
-bestätigt (CHF 78 + 65 + 78 = **221.00**), Sessions 658 → **655**.
+### Behobene Fehler
 
-Es gibt keine offenen Sperren — Sync und Rechnungserstellung laufen normal.
+| # | Schwere | Fehler | Fix |
+|---|---|---|---|
+| 1 | CRITICAL | Beim Umhängen eines Kindes von Eltern A zu Eltern B wurden bereits auf A's ausgelieferter Rechnung fakturierte Lektionen ein zweites Mal berechnet | `getInvoicePayload` schliesst Sessions aus, die in `sessionIds` einer anderen ausgelieferten, nicht stornierten Rechnung stehen |
+| 2 | CRITICAL | E-Mail-Versand und „gesendet"/„bezahlt" froren **nichts** ein → Rechnung unveränderlich ohne Nachweis, was fakturiert wurde | `freezeInvoiceSnapshot()` aus allen Auslieferungspfaden |
+| 3 | CRITICAL | Storno setzte `paidAt` zurück; war die Rechnung nur darüber ausgeliefert, wurde sie wieder zum löschbaren Entwurf | `voidedAt` in `isDelivered` / `DELIVERED_INVOICE_WHERE` / `isPrunableDraft` |
+| 4 | HIGH | `reserveInvoiceRow` schrieb Betrag/Positionen **vor** dem PDF-Bau → Zeile sagte 480, `pdfPath` zeigte auf das alte 360-PDF | `commitInvoiceContent()` schreibt erst **nach** erfolgreichem Upload |
+| 5 | HIGH | Doppelklick verbrannte eine Nummer und konnte ein PDF mit einer Nummer ausliefern, die die DB nicht hat | `pg_advisory_xact_lock` auf (Schüler, Jahr, Monat) in `reserveInvoiceRow` |
+| 6 | CRITICAL | Snapshot las die Lektionen bei der **Auslieferung** neu, `totalCHF` kam aus der Zeile → Snapshot konnte dem ausgelieferten PDF widersprechen, Abweichungserkennung blind | `generatedPayloadJson` (siehe unten) |
+| 7 | MEDIUM | ZIP-Export fror Rechnungen fortlaufend ein → Abbruch bei Nr. 5 liess 1–4 unveränderlich ausgeliefert, ohne dass der Nutzer ein Archiv bekam | Drei-Phasen-Export (siehe unten) |
 
-**Der nächste Durchgang ist P2b** — von den offenen Migrationsschritten der
-einzige verbliebene. Der Plan steht, die Entscheidung des Nutzers liegt vor,
-gebaut ist nichts. (Daneben bleibt „Fund 3" offen: Analyse liegt vor, nichts
-gebaut, kein Migrationsschritt.)
+Ausserdem: stornierte Rechnungen können nicht mehr versendet oder im Status
+geändert werden; `send` und `status` haben jetzt eigene `auth()`-Prüfungen
+(vorher nur Middleware).
 
-> Eine frühere Fassung dieses Dokuments warnte, `9aab272` sei nicht deployt. Das
-> war schon beim Schreiben überholt: die Vercel-GitHub-Integration deployt bei
-> jedem Push auf `main` automatisch, `9aab272` ging als `khfd11410` um 07:58 live,
-> `05e4809` als `51wu8agyu` um 08:00. **Merke für künftige Übergaben:** Push auf
-> `main` = Production-Deploy. Den Live-Stand nie aus dem Gedächtnis notieren,
-> sondern gegen `vercel ls --prod` bzw. die Deployment-Metadaten prüfen.
+### Neue Architektur: `Invoice.generatedPayloadJson`
 
----
+Der Erzeugungsstand wird an der Rechnung festgehalten und bei der Auslieferung
+**unverändert** zum Snapshot. Es gibt für neu erzeugte Rechnungen keine zweite
+Lektionsabfrage mehr, die den bereits gedruckten Inhalt neu definieren könnte.
 
-## Live in Produktion
+```
+reserveInvoiceRow      → Advisory-Lock; nur Zeile + Nummer
+                         (bei BESTEHENDER Zeile Betrag/Positionen unangetastet)
+buildInvoicePdf(payload)
+upload PDF
+commitInvoiceContent   → totalCHF + sessionIds + pdfPath + generatedPayloadJson
+                         in EINEM update, aus DEMSELBEN payload
+──────── Inhalt steht fest ────────
+Auslieferung (Download │ E-Mail │ Status gesendet/bezahlt │ ZIP)
+  → resolveSnapshotPayload → gespeicherter Erzeugungsstand, wörtlich
+  → InvoiceSnapshot + Audit-Eintrag, idempotent je (invoiceId, revision)
+```
 
-| Commit | Inhalt | Deployment |
+- `shapeSnapshotFromGeneration()` (rein, `lib/invoice-snapshot-shape.ts`) formt den
+  Stand aus dem Payload; delegiert an `shapeInvoiceSnapshot`, also **eine**
+  Abschnittslogik, nicht zwei.
+- `pickStoredGenerationPayload()` (rein) entscheidet gespeichert vs. live.
+- **Altbestand ohne `generatedPayloadJson` nutzt weiter die Live-Abfrage.**
+  Bewusst kein Backfill, keine Änderung historischer Belege.
+- Genau drei Stellen legen einen Snapshot an: `invoice-download.ts` (2×, beide über
+  `resolveSnapshotPayload`) und `invoice-revision.ts` (über `shapeSnapshotFromGeneration`).
+  `buildInvoiceSnapshotPayload` wird nur noch aus `resolveSnapshotPayload` als
+  Rückfall aufgerufen.
+
+### ZIP-Export: drei Phasen
+
+1. **Vorbereiten** — je Schüler Nummer, PDF, Upload, `commitInvoiceContent`, ins
+   Archiv legen, ID auf `zuFrieren` merken. **Nichts wird eingefroren.**
+2. **Archiv bauen** — `zip.generateAsync()`.
+3. **Ausliefern** — erst jetzt `recordInvoiceDownload` für alle gemerkten IDs,
+   jede in try/catch (ein Fehler hier darf das fertige Archiv nicht zurückhalten).
+
+Ausfallverhalten (verifiziert):
+
+| Fehler bei | Archiv | ausgeliefert |
 |---|---|---|
-| `fa49722` | Tarif-Verlauf: Korrektur ersetzt spätere Einträge; Datenkorrektur CHF 181 | `9dk5igfcp` |
-| `259c3fb` | **Batch 1** — `isDelivered()` überall, Tarif-Warnung, Prune-Schutz, Tarif bei umgehängter Lektion | `ojulds6fw` |
-| `8310342` · `26245ce` · `1a74e28` | **P6.1–6.3** — versionierte PDF-Pfade, `reissue`/`accept`, Entscheid-UI, Middleware 401 statt Redirect | `8om0pa2wo` |
-| *(P6.4)* | 409-Guards in `generate`/ZIP-Export, `force` entfernt, `upsert` an `isDelivered()` gebunden | `pa1pyhyxv` |
-| *(childrenBilled)* | Familienrechnung: ausgeliefertes Kind wird nicht doppelt fakturiert | `e9s7boigr` |
-| `0d6cb9d` + `e8e9df1` | **Storno** (`voidedAt`) + Löschweg-Guard | `mnsl4axrr` |
-| `cc7c71c` | **Sync merkt vor statt zu löschen** (erste Hälfte) | `1h5we7nif` |
-| `9aab272` | **Vormerkungen auflösen** (zweite Hälfte) | `khfd11410` |
-| `05e4809` | HANDOFF.md (nur Doku) | `51wu8agyu` |
-| `c913779` | Backup sichert auch die Rechnungs-PDFs | — |
-| `a801ace` | **P2c** — 18 Geldfelder auf `numeric`, Decimal-Extender in `lib/prisma.ts` | — |
-| `7bd6439` | **Löschband auch auf dem Dashboard** (`PendingDeletionBanner`) | — |
-| `1ccd89e` | **P2c-Nachtrag** — `aggregate`/`groupBy` im `$allOperations`-Hook wandeln — **aktueller Production-Stand** | — |
+| erster / mittlerer / letzter Rechnung (Phase 1) | nein | **keine** — die vorherigen bleiben Entwürfe |
+| Archivbau (Phase 2) | nein | keine |
+| Phase 3 | ja | nur was tatsächlich im Archiv liegt |
+| Wiederholung | ja | alle |
 
-> Die Deployment-IDs der letzten fünf Commits sind hier **nicht** eingetragen:
-> in dieser Sitzung war keine Vercel CLI installiert, und geraten wird nichts.
-> Bei Bedarf mit `vercel ls --prod` nachtragen. Dass sie live sind, ist anders
-> belegt — Push auf `main` deployt automatisch, und der Nutzer hat Dashboard und
-> Rechnungsübersicht nach dem Deploy geprüft.
+Wiederholung ist idempotent: dieselbe Nummer (`reserveInvoiceRow`), keine zweite
+Zeile (`@@unique([studentId, month, year])`), PDF überschreibt denselben Pfad,
+`recordInvoiceDownload` steigt bei bereits eingefrorenen Rechnungen aus.
+
+### Testzahlen
+
+- **Voll: 278 / 278** (21 Dateien) — vorher 242
+- **Rechnungsspezifisch: 119 / 119** (9 Dateien)
+- `npx tsc --noEmit` sauber · `next lint` sauber · `next build` ✓ 38/38
 
 ---
 
 ## Datenbank
 
-**Migrationen auf der DB** (alle angewendet, die letzten beiden von heute):
+**Migrationen im Repo: 19.** Angewendet: 18. Ausstehend: **1**.
+
+| Migration | Status |
+|---|---|
+| … bis `20260804100000_p2c_money_decimal` | ✅ angewendet |
+| `20260827120000_session_deletion_rejected` | ✅ angewendet 27.08. |
+| `20260827120100_calendar_sync_issue` | ✅ angewendet 27.08. |
+| **`20260828090000_invoice_generated_payload`** | ❌ **NICHT angewendet** |
+
+Die offene Migration ist rein additiv:
+
+```sql
+ALTER TABLE "Invoice" ADD COLUMN "generatedPayloadJson" JSONB;
+```
+
+nullable, kein Backfill, kein DROP, kein ALTER COLUMN, keine Änderung an
+bestehenden Finanzwerten. `npx prisma validate` bestätigt das Schema.
+
+**Migration ausführen** (`DIRECT_URL` zeigt auf den IPv6-Host und läuft in einen
+Timeout — auf den IPv4-Session-Pooler umbiegen: gleicher Host wie `DATABASE_URL`,
+**Port 5432 statt 6543**, ohne `pgbouncer`):
 
 ```
-20260727000000_p2a_invoice_lifecycle_fields
-20260729000000_p3_invoice_number_sequence
-20260803140000_add_invoice_voided_at          ← Storno
-20260803230000_add_session_pending_deletion   ← Vormerkung
-20260804100000_p2c_money_decimal              ← P2c, angewendet 05.08. 09:42 UTC
+DIRECT_URL="postgresql://<user>:<pass>@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require" \
+  npx dotenv -e .env.local -- npx prisma migrate deploy
 ```
 
-Die Spalten aus Storno und Vormerkung sind **additiv und nullable**, kein Backfill.
+Ziel bestätigt: `aws-1-us-west-2.pooler.supabase.com:5432/postgres`, Schema `public`.
+Vorher frisches Backup: `powershell -File backup-db.ps1`.
 
-**Geldspalten seit P2c:** **18 von 18 auf `numeric`**, keine mehr `double
-precision`. Beträge `numeric(10,2)` · **Raten `numeric(6,4)`** · FX `numeric(12,6)`.
+---
 
-> **Raten bewusst (6,4), nicht (6,2).** `ratePerMin` ist ein Preis pro Minute; auf
-> zwei Stellen gerundet wäre der kleinste Schritt 0.01/Min = **0.60/Stunde**, und
-> ein Stundensatz, der nicht auf 0.60 aufgeht, liesse sich nicht eintragen.
-> Obergrenze ist damit 99.9999 — aktuell liegen alle Raten zwischen 1.0 und 1.8.
+## Deployment-Status
 
-**Stand:** Nummernzähler `2026 = 117` · 117 Rechnungen · **655 Sessions** · **0 offene Vormerkungen**
+**Der Code ist NICHT deploybar, solange die Migration nicht läuft.**
+`generatedPayloadJson` wird in `commitInvoiceContent` geschrieben und in beiden
+Freeze-Pfaden selektiert — ohne die Spalte scheitert jeder Rechnungszugriff.
 
-### Falle: `extra_float_digits = 0`
+Reihenfolge: **Backup → Migration → Deploy (Push auf `main`)**. Die Migration ist
+additiv, der aktuell live laufende Code kennt die Spalte nicht und stört sich
+nicht daran; es gibt also kein Fenster, in dem etwas bricht.
 
-Die Produktions-DB steht auf `extra_float_digits = 0`. Damit druckt
-`"totalCHF"::text` auf einer Float-Spalte den Wert `495.0000000000001` als
-schlichtes **`495`** — und `::numeric` kollabiert ihn genauso.
+Nichts davon ist committet — der gesamte Stand liegt als Working-Tree-Änderung vor.
 
-Bei P2c hat das die erste Vorher-Aufnahme fast wertlos gemacht: sie meldete **0
-Rauschwerte**, obwohl 31 existierten. **Vor jeder Geld- oder Float-Prüfung gegen
-diese DB `SET extra_float_digits = 3;` setzen.** Als Vergleichsschlüssel zwischen
-zwei Typzuständen taugt nur `round(x::numeric, n)` — das ist vor und nach einer
-Migration identisch darstellbar.
+---
 
-### Decimal an der Grenze — zwei Wege, beide nötig
+## Verbleibende Rechnungs-Themen
 
-`lib/prisma.ts` wandelt Decimal zurück auf `number`, sonst macht `JSON.stringify`
-daraus eine **Zeichenkette** und aus `a + b` eine Konkatenation.
+### A) Altlasten in den Produktionsdaten — NICHT anfassen, eigener Durchgang
 
-1. **`result`-Extender** für die 18 Felder — greift auf Feldern eines Datensatzes
-   (`findMany`, `findUnique`) und fliesst in die generierten Typen ein.
-2. **`$allOperations`-Hook** für `aggregate` und `groupBy` — die liefern kein
-   Datensatzobjekt, sondern `_sum`/`_avg`, und **der `result`-Extender erreicht
-   sie grundsätzlich nicht**. Genau das war der Fehler nach dem ersten P2c-Push:
-   Einzelbeträge stimmten, aber Summen-Kacheln standen auf CHF 0.00 und
-   Diagrammachsen gingen bis 60'000'000.
+Read-only festgestellt, bewusst unverändert gelassen:
 
-**`$queryRaw` umgeht beide Wege.** Deshalb lesen die manuellen Q1-Felder jetzt
-über `prisma.tutorProfile.findUnique` mit `MANUAL_Q1_SELECT` aus
-`lib/manual-revenue.ts` — dasselbe SQL stand vorher sechsmal da, und derselbe
-Fehler entstand sechsmal.
+1. **11 Gruppen doppelter Rechnungsnummern** (34 Zeilen), alle ≤ `2026-0069`,
+   z. B. `2026-0049` auf 9 Rechnungen. Artefakte des alten `max(invoiceNumber)+1`
+   vor P3 (per `git show 12fb992` bestätigt). Der **aktuelle Code kann das nicht
+   mehr erzeugen**; `2026-0070…0117` sind sauber. Die geplante Umnummerierung
+   („P2b") steht noch aus — erst danach ist ein UNIQUE-Index auf `invoiceNumber`
+   möglich.
+2. **~100 ausgelieferte Rechnungen ohne Snapshot** (alle `sent + paid`, nie
+   heruntergeladen). Ursache war Fehler 2, ab jetzt behoben. **Kein Backfill.**
+3. **5 von 117 Rechnungen mit Abweichung Betrag ↔ Sessions:** `2026-0007` (+65,
+   1 Session nicht mehr in der DB), `2026-0084` (+84, 1 Session fehlt),
+   `2026-0094` (+24), `2026-0098` (+48), `2026-0015` (−5).
+4. Unfakturierte Sessions aus `2025-04` (36 Lektionen, CHF 2'795.50) und
+   `2025-12` (75, CHF 5'750.00) — vor dem heutigen Rechnungsfluss entstanden.
 
-**Prüfwerkzeug:** `npx dotenv -e .env.local -- npx tsx scripts/verify-money-types.ts`
-vergleicht den Typ **nach JSON-Rundlauf** gegen die SQL-Summe der Datenbank. Die
-Sollwerte kommen aus der DB selbst, nicht aus festen Zahlen — feste Beträge
-veralten bei jedem Sync und melden dann einen Fehler, wo keiner ist.
+### B) Offene Punkte im Code — bekannt, nicht blockierend
 
-**Migrationen ausführen:** `DIRECT_URL` zeigt auf den IPv6-Host und läuft in
-einen Timeout. Vorher auf den IPv4-Session-Pooler umbiegen — derselbe Host wie
-`DATABASE_URL`, aber **Port 5432 statt 6543**, ohne `pgbouncer`-Parameter.
+Aus dem Audit, bewusst nicht behoben:
+
+1. **Session-Monatswechsel über eine ausgelieferte Rechnung hinweg** — verschiebt
+   der Kalender eine Lektion vom 30.06. auf den 02.07., schreibt der Sync-Upsert
+   `month/year` neu, auch wenn Juni bereits ausgeliefert ist. Die Lektion wandert
+   auf die Juli-Rechnung, während sie im Juni-PDF steht. *(HIGH; betrifft erst
+   Monate nach dem ersten Versand.)*
+2. **Verknüpfen eines Kindes räumt dessen eigenen Entwurf nicht weg** — bis zum
+   nächsten Sync/Cleanup steht der Betrag doppelt in der Rechnungsliste. *(MEDIUM)*
+3. **`billedToId`-Ketten/Zyklen** nur durch Route-Validierung ohne Sperre
+   verhindert, kein DB-Constraint. Eine Kette liesse Lektionen aus der Abrechnung
+   fallen. *(MEDIUM)*
+4. **Kein UNIQUE-Index auf `Invoice.invoiceNumber`** — hängt an (A1).
+5. **Importierte Q1-Lektionen** (`calEventId` beginnt mit `manual-`) werden vom
+   Sync als Löschkandidaten geführt. *(MEDIUM, betrifft nur Q1-Monate.)*
+6. **PDF-Vorlage**: keine Postadresse, Familienrechnung nennt die Kinder statt des
+   Zahlers, Zahlteil ist ein statisches Bild ohne Betrag/Referenz (und **verdeckt
+   IBAN/Bank, wenn vorhanden**), Kurzrechnung wird 2-seitig, Tabellenkopf
+   wiederholt sich nicht. Bestandsverhalten über 117 versandte Rechnungen —
+   bewusst nicht geändert.
+7. **`commitInvoiceContent` scheitert nach erfolgreichem Upload**: das neue PDF
+   liegt bereits am (deterministischen) Pfad, die Zeile trägt noch den alten
+   Stand. Nur bei **Entwürfen** möglich (ausgelieferte sind durch 409 +
+   `upsert:false` geschützt) und durch erneutes Generieren behoben. Dokumentiert,
+   nicht behoben.
+8. **ZIP-Phase 3 ist kein einzelner Commit** — ein Verbindungsabbruch mitten in
+   der Markierungsschleife friert einen Teil ein. Nur Rechnungen, die wirklich im
+   ausgelieferten Archiv liegen; ein erneuter Export holt den Rest idempotent nach.
+
+---
+
+## Invarianten (Stand jetzt)
+
+| Invariante | Durchgesetzt durch |
+|---|---|
+| Eine Lektion kann nicht zweimal fakturiert werden | `excludeAlreadyBilledSessions` gegen `sessionIds` ausgelieferter Belege — leitet „schon abgerechnet" aus dem **Beleg** ab, nicht aus der aktuellen Gruppenzugehörigkeit |
+| Familienlektionen landen beim richtigen Zahler | `getInvoicePayload` partitioniert nach `studentId`; `BILLED_ELSEWHERE_WHERE` für Ausschlüsse |
+| Ausgelieferte Rechnungen ändern sich nicht | Download liefert **gespeicherte PDF-Bytes**, nie ein Re-Render; `isDelivered` inkl. `voidedAt`; Generieren 409 |
+| Rechnungsnummern kollidieren nicht | Zählerzeile bis COMMIT gesperrt + `pg_advisory_xact_lock` je Abrechnungsumfang |
+| Erzeugungsstand wird persistiert | `generatedPayloadJson`, geschrieben mit Betrag/Positionen/Pfad in einem `update` |
+| Snapshot-Quelle | ausschliesslich der gespeicherte Erzeugungsstand (Altbestand: Live-Rückfall) |
+| PDF = Zeile = Snapshot | ein Payload, ein Schreibvorgang; für 3 Szenarien inkl. nachträglicher Session-Änderung abgeglichen |
+| Geschützte Rechnungen werden nie geprunt | `isPrunableDraft` vor jedem `delete`; storniert/bezahlt/heruntergeladen ausgenommen |
+| Rechnungs-GETs sind schreibfrei | Download ist **POST**; `lib/invoice-read-only.test.ts` pinnt das |
+| ZIP-Ausfall friert nichts irreführend ein | Drei-Phasen-Export; Freeze erst nach `generateAsync` |
+
+Zwei getrennte Prädikate, nicht vermischen:
+- `isDelivered` / `DELIVERED_INVOICE_WHERE` — „darf ich das anfassen?" **Storniert: ja, geschützt.**
+- `isBilledElsewhere` / `BILLED_ELSEWHERE_WHERE` — „ist das schon abgerechnet?" **Storniert: nein.**
 
 ---
 
@@ -139,180 +226,21 @@ einen Timeout. Vorher auf den IPv4-Session-Pooler umbiegen — derselbe Host wie
 
 | | |
 |---|---|
-| `pg_dump` | vorhanden unter `C:\Program Files\PostgreSQL\17\bin` (**nicht im PATH**) |
-| Dump | `H:\Meine Ablage\Daten von tracker\mathetogo-2026-08-05-vor-p2c.dump`, 346 KB, **54 Tabellen mit Daten** (`pg_restore --list` gelesen) — vor P2c gezogen |
-| Älteres Dump | `mathetogo-2026-08-03.dump`, 344 KB (Basis der Ladeprobe unten) |
-| Archiv lesbar | ✅ `pg_restore --list` exit 0, 465 TOC-Einträge |
-| Inhalt geprüft | ✅ 1689 Zeilen, zeilengenau gegen Produktion |
-| **Ladeprobe** | ✅ **BESTANDEN am 04.08.2026** (siehe unten) |
-| **PDF-Bytes** | ✅ **gesichert seit 04.08.2026** — `mathetogo-pdfs\`, 120 Dateien, 22,2 MB |
-| Notfallexport | `mathetogo-notfallexport-2026-08-03.json`, 621 KB, verifiziert — Brücke |
-
-`backup-db.ps1` ist auf `pg_dump` umgestellt (vorher sicherte es die tote
-`prisma/dev.db`; letzte Sicherung dort war vom 20.04.). Es findet die Binaries
-auch ohne PATH und verwirft ein Dump, das die Grössen- oder
-`pg_restore --list`-Prüfung nicht besteht.
-
-### PDF-Sicherung — aktiv seit 04.08.2026
-
-`backup-db.ps1` hat einen zweiten Teil, der die Belege aus dem Storage-Bucket
-`invoices` nach `H:\Meine Ablage\Daten von tracker\mathetogo-pdfs\` zieht.
-
-- **Ein mitwachsender Ordner**, kein Ordner pro Tag: die Objekte sind
-  unveränderlich (P6.1-Pfade, r1 bleibt bytegleich), tägliche Kopien wären
-  vierzehnmal dasselbe. Der Name endet nicht auf `.dump` und fällt damit nicht
-  unter die 14-Tage-Rotation.
-- **Inkrementell** — geladen wird nur, was lokal fehlt. Kein Hash-Vergleich, weil
-  bestehende Objekte sich nie ändern.
-- Auflistung über die **Storage-REST-API**, nicht per SQL: sonst hinge der
-  PDF-Teil an derselben Verbindung wie das Dump und fiele mit ihr aus. Nutzt
-  `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` aus `.env.local` — keine neue
-  Abhängigkeit, kein neuer Token.
-- Download erst nach `.part`, dann umbenennen: ein Abbruch darf beim nächsten
-  Lauf nicht als fertige Datei durchgehen.
-
-**Die beiden Teile sind unabhängig** und beide Richtungen sind geprüft: bei
-kaputtem Bucket lief das Dump vollständig durch, bei nicht erreichbarer Datenbank
-lief der PDF-Teil vollständig durch. Jeder Teil meldet sich einzeln, der
-Exit-Code kommt erst nach beiden.
-
-**Verifiziert am 04.08.2026:** erster Lauf 120 neu geladen, lokal
-**23'263'538 Bytes — exakt die Bucket-Grösse**, keine `.part`-Reste. Zweiter Lauf
-**0 neu geladen** (idempotent).
-
-### Ladeprobe — bestanden am 04.08.2026
-
-Das Dump wurde auf einer **unabhängigen PostgreSQL-Instanz** wiederhergestellt,
-nicht gegen den Produktionsserver.
-
-**Methode.** Die lokale Installation unter `C:\Program Files\PostgreSQL\17`
-enthält nur `bin\` — `share\` fehlt, deshalb scheiterte `initdb` bisher an
-`postgres.bki does not exist`. Lösung ohne Systemeingriff: das
-**Binaries-only-ZIP** von EnterpriseDB
-(`postgresql-17.10-1-windows-x64-binaries.zip`, 318 MB, SHA256 `F9AAFCA5…4F5A821`)
-in einen Wegwerf-Ordner entpacken — nur `bin`, `lib`, `share`, denn die tiefen
-`pgAdmin 4`-Pfade reissen sonst das 260-Zeichen-Limit. Daraus `initdb`, Cluster
-auf Port 55432 an `127.0.0.1`, `pg_restore --no-owner --no-privileges`, prüfen,
-`pg_ctl stop`, Ordner löschen. **Kein Administrator, kein Dienst, keine
-Installation** — die Maschine bleibt unverändert.
-
-**Ergebnis.** 43 Indizes, 26 Constraints, 20 Tabellen — identisch zu Produktion.
-Der Zeilenabgleich erfolgte gegen den **Produktionsstand zum Dump-Zeitpunkt**
-(03.08. 13:08:32), nicht gegen den heutigen: jede Tabelle trifft exakt, die
-`public`-Summe ohne `_prisma_migrations` ergibt wieder **1689**. Keine einzige
-Tabelle hat weniger Zeilen als das Dump enthielt.
-
-> **Der Exit-Code 1 ist erwartet — kein Fehlschlag.** `pg_restore` meldet
-> `errors ignored on restore: 3`, alle drei aus derselben Ursache: die Extension
-> `supabase_vault` existiert auf normalem PostgreSQL nicht, dadurch entsteht
-> `vault.secrets` nicht und das zugehörige `COPY` scheitert. **In Produktion hat
-> `vault.secrets` 0 Zeilen — es geht nichts verloren.** Bei einem echten Restore
-> also entweder `--no-comments` setzen oder diese drei Fehler bewusst ignorieren,
-> sonst sieht ein geglückter Restore wie ein gescheiterter aus. Die zusätzliche
-> Warnung zu `wal_level` betrifft logische Replikation und ist folgenlos.
-
-**Für P2b ist das DB-Backup ausreichend** — P2b fasst die Datenbank an, nicht den
-Storage. **Trotzdem gilt: erster Schritt der nächsten Sitzung ist ein frisches
-`pg_dump`**, siehe unten. Das vorhandene Dump ist vom 05.08. und altert.
-
-**Aufräumen bei Gelegenheit:** `rollback-p2c.sql` liegt noch im Scratchpad-Ordner
-der P2c-Sitzung. P2c ist verifiziert live, der Rückrollweg wird nicht mehr
-gebraucht und kann weg.
+| Letztes Dump | `H:\Meine Ablage\Daten von tracker\mathetogo-2026-08-27.dump`, 370.3 KB, 54 Tabellen, `pg_restore --list` exit 0 (465 TOC-Einträge) |
+| PDFs | `mathetogo-pdfs\`, 120 Objekte, vollständig |
+| Werkzeug | `powershell -File backup-db.ps1` (pg_dump über den IPv4-Pooler + Storage-Sicherung) |
 
 ---
 
-## Offen — grosse Punkte
+## Vor dem echten Rechnungsversand — Kurzcheckliste
 
-### Fund 3 — gesendet, aber nie heruntergeladen
-Die Abweichungserkennung (P5) läuft nur für Rechnungen mit Snapshot, und
-Snapshots entstehen erst beim Download. Rechnungen, die **gesendet, aber nie
-heruntergeladen** wurden, sind damit unbewacht — Abweichungen fallen nie auf.
-Betroffen sind vier der fünf bekannten Divergenzen (Leo 04, Una 04, Joseph 06,
-Liam 06; Raffael 05 ist inzwischen storniert). **Analyse liegt vor, nichts
-gebaut.**
-
-### P2b — Umnummerierung + Unique-Constraint  ← **nächster Durchgang**
-**11 Nummern mehrfach vergeben über 45 Zeilen, davon 34 umzunummerieren.** Alle
-betroffenen Rechnungen sind gesendet *und* bezahlt, alle `revision = 1`.
-`legacyInvoiceNumber` ist bei 0 Zeilen gesetzt — P2b ist nie gelaufen.
-
-**Entscheidung des Nutzers liegt vor:** umnummerieren ist okay,
-`legacyInvoiceNumber` setzen, **alte PDFs unangetastet**.
-
-Plan: pro Duplikatgruppe behält die Zeile mit dem frühesten `createdAt` ihre
-Nummer, die übrigen 34 bekommen neue aus dem laufenden Zähler
-(**2026-0118 … 2026-0151**), je Zeile ein Audit-Eintrag `renumbered` mit alt→neu.
-Erst danach `@unique` auf `invoiceNumber` — als **Teil-Index**
-(`WHERE "invoiceNumber" <> ''`), weil das Feld den Default `""` hat.
-
-**Eigener Durchgang, nur nach ausdrücklichem „ja", nur nach Backup.**
-
-**Ablauf für die nächste Sitzung — vom Nutzer so festgelegt:**
-
-1. **Erster Schritt: frisches `pg_dump`**, lesbar bestätigt (`pg_restore --list`).
-2. Dann P2b als **eigener kontrollierter Durchgang**, Schritt für Schritt gezeigt.
-3. **Kein Schreibzugriff ohne ausdrückliches „ja" des Nutzers.**
-
-Das Vorgehen aus P2c hat sich bewährt und ist die Vorlage: Vorher-Aufnahme
-ziehen → Migration zeigen, nicht fahren → Freigabe abwarten → migrieren →
-sofort Nachher-Aufnahme und Abgleich → erst bei grünem Abgleich pushen. Und
-**vor jeder Prüfabfrage `SET extra_float_digits = 3;`**, siehe die Falle oben.
-
-### P2c — Float → Decimal  ✅ **ERLEDIGT, live seit 05.08.2026**
-Migration `20260804100000_p2c_money_decimal` angewendet, Code live als `a801ace`
-+ `1ccd89e`. 18/18 Geldspalten `numeric`, Raten `(6,4)`.
-
-Abgleich über alle **902 Einzelwerte**: gerundete Differenz **exakt 0**, verändert
-haben sich **nur die 31 bekannten Rauschwerte** (Ruby 2026-02
-`495.0000000000001` → `495`, dazu 30 Session-Beträge um 1e-14). Aggregate
-unverändert: Invoice **41923.50**, Snapshots **9755.00**, MonthlyExpense
-**25390.44**. Session lag bei 55267.40 und steht seit den drei bestätigten
-Löschvormerkungen bei **55046.40** — die Differenz von 221.00 ist Absicht und im
-Audit-Log belegt.
-
-Nachgereicht in `1ccd89e`: `aggregate`/`groupBy` liefen am `result`-Extender
-vorbei, siehe „Decimal an der Grenze" oben. Details dort, nicht hier.
-
----
-
-## Offen — kleinere Punkte
-
-- **UI-Knopf für den Storno fehlt.** `POST /api/invoices/[id]/void` existiert und
-  ist verifiziert, aber nur per API erreichbar. Es braucht einen Knopf mit
-  Begründungsdialog, analog zu „Neu ausstellen".
-- **Vincent/Aurel — eingefroren.** Zwei Juli-Lektionen (13.07., 17.07., je CHF 78)
-  laufen über Kalendertitel `Vincent/Aurel` auf Vincents Rechnung. Der Satz
-  `Vincent/Aurel` existiert, ist **inaktiv** und hat nie eigene Lektionen gehabt.
-  Vincents Juli-Betrag von 474.50 gilt so. **Plan für Aurels Rückkehr:**
-  reaktivieren, `billedToId` → Vincent, danach im Kalender getrennte Titel
-  „Vincent" und „Aurel".
-- **`Student.currency` ist ein totes Feld.** Wird in den Rechnungs-Payload geladen
-  (`lib/invoice.ts:67`), aber nirgends verwendet. Ein Schüler in EUR bekäme
-  stillschweigend eine CHF-Rechnung.
-- **Optionale `SessionAuditLog`-Tabelle.** Audit-Einträge zu gelöschten Lektionen
-  hängen derzeit an der Rechnung des Monats, oder — wenn keine existiert — an
-  einem Ersatzschlüssel `month:<studentId>:<jahr>-<monat>` im `InvoiceAuditLog`.
-  Funktioniert, wäre mit eigener Tabelle aber sauberer.
-- **YTD enthält den ganzen laufenden Monat.** Am 3.8. steckten CHF 4'462 noch
-  nicht gehaltener August-Lektionen im Gesamtverdienst (~9 %). Der Gesamtverdienst
-  rechnet aus **Sessions**, das Dashboard aus **Rechnungen mit `sentAt`/`paidAt`` —
-  zwei Zahlen, zwei Bedeutungen.
-
----
-
-## Referenz: die heute aufgelösten Fälle
-
-| Rechnung | Schüler | Ergebnis |
-|---|---|---|
-| 2026-0115 | Runqian | **r2**, CHF 1430.00 (Neuausstellung, +30) |
-| 2026-0117 | Vincent | **r2**, CHF 474.50 (Neuausstellung, +30) |
-| 2026-0108 | Alexandra | **accept**, CHF 792.00 unverändert — nur Datum verschoben, bereits gesendet |
-| 2026-0112 | Leo | **r2**, CHF 585.00 (Juli-Tarif auf 1.30 gesenkt) |
-| 2026-0084 | Raffael | **storniert** — Lektion fand nie statt, `paidAt` war eine manuelle Markierung |
-
-Bei allen Neuausstellungen: Nummer unverändert, r1-PDF **bytegleich** erhalten,
-r2 unter eigenem Pfad, beide Snapshots, Audit-Kette lückenlos.
-
-**Leos Tarif-Historie:** 1.40 ab Epoche · **1.30 ab 01.07.2026** · **1.50 ab
-01.08.2026**. August-Rechnung existiert noch nicht; beim Erstellen greifen
-CHF 675.00.
+1. Eine Rechnung erzeugen, herunterladen, PDF öffnen: Empfänger, Periode,
+   Lektionszahl, Beträge, Total, Nummer gegen die Liste prüfen.
+2. **Zahlteil-Bild prüfen** — bei vorhandenem Slip druckt das PDF IBAN und Bank
+   *nicht*. Konto auf dem Bild muss stimmen.
+3. Eine Familienrechnung stichprobenartig prüfen (5 verknüpfte Schüler, z. B.
+   Nikola/William): beide Kinder genau einmal, Summe stimmt.
+4. „Generieren" einmal klicken (Doppelklick ist jetzt abgesichert, hält aber die
+   Nummernfolge lückenlos).
+5. Bricht der Monatsexport ab: **nichts ist ausgeliefert** — Export einfach
+   wiederholen.

@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
+import { DELIVERED_INVOICE_WHERE, isPrunableDraft } from "@/lib/invoice-delivery";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import { INVOICE_BUCKET, invoiceStoragePath, supabase } from "@/lib/supabase";
 
@@ -95,11 +95,9 @@ export async function removeInvoiceWhenUnbillable(
     select: { id: true, sentAt: true, paidAt: true, firstDownloadedAt: true },
   });
   if (!invoice) return false;
-  if (invoice.paidAt) return false;
-  // Heruntergeladene Rechnungen sind ausgeliefert und damit unveränderlich —
-  // sie werden nie automatisch entfernt. Korrektur läuft über eine Revision/Storno.
-  if (invoice.firstDownloadedAt) return false;
-  if (invoice.sentAt && !opts?.includeSent) return false;
+  // Bezahlt und heruntergeladen sind unantastbar; gesendet nur mit ausdruecklichem
+  // includeSent. Die Bedingungen liegen unveraendert in lib/invoice-delivery.
+  if (!isPrunableDraft(invoice, opts)) return false;
 
   await prisma.invoice.delete({ where: { id: invoice.id } });
 

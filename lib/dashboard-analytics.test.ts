@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assessYoyAvailability,
+  averageMonthlyIncome,
   buildYoyMonthlySeries,
   computeEffectiveRates,
   computeInvoiceAging,
@@ -356,5 +357,161 @@ describe("assessYoyAvailability / buildYoyMonthlySeries", () => {
     expect(series).toHaveLength(12);
     expect(series[2]).toMatchObject({ month: 3, currentCHF: 500, previousCHF: 400 });
     expect(series[0]).toMatchObject({ month: 1, currentCHF: 0, previousCHF: 0 });
+  });
+});
+
+/**
+ * Regression: der Monatsdurchschnitt der Jahresuebersicht war zu hoch.
+ *
+ * Der Zaehler summierte alle zwoelf Monatspunkte, der Nenner zaehlte nur die
+ * bereits vergangenen Monate. Der Kalender-Sync legt Lektionen im Voraus an und
+ * ein 6-Monats-Abo verteilt sich ebenfalls in die Zukunft — beides floss in den
+ * Zaehler, ohne je im Nenner aufzutauchen.
+ */
+describe("averageMonthlyIncome", () => {
+  const punkte = (werte: number[]) =>
+    werte.map((income, i) => ({ month: i + 1, income }));
+
+  it("laufendes Jahr: Einkommen kuenftiger Monate zaehlt nicht mit", () => {
+    // August (monthCount 8): Jan–Aug je 1000, Sep–Dez je 5000 geplant.
+    const data = punkte([1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 5000, 5000, 5000, 5000]);
+    expect(averageMonthlyIncome(data, 8)).toBe(1000);
+    // Die alte Rechnung: (8*1000 + 4*5000) / 8 = 3500 — dreieinhalbmal zu hoch.
+    expect(data.reduce((s, d) => s + d.income, 0) / 8).toBe(3500);
+  });
+
+  it("laufendes Jahr ohne Zukunftseinkommen: unveraendertes Ergebnis", () => {
+    const data = punkte([1200, 800, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(averageMonthlyIncome(data, 3)).toBe(1000);
+  });
+
+  it("ein einzelnes kuenftiges Abo hebt den Durchschnitt nicht mehr an", () => {
+    const ohneAbo = punkte([900, 900, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    const mitKuenftigemAbo = punkte([900, 900, 0, 0, 60, 60, 60, 60, 60, 60, 0, 0]);
+    expect(averageMonthlyIncome(mitKuenftigemAbo, 2)).toBe(averageMonthlyIncome(ohneAbo, 2));
+    expect(averageMonthlyIncome(mitKuenftigemAbo, 2)).toBe(900);
+  });
+
+  it("abgeschlossenes Jahr: alle zwoelf Monate", () => {
+    const data = punkte(Array.from({ length: 12 }, () => 600));
+    expect(averageMonthlyIncome(data, 12)).toBe(600);
+  });
+
+  it("abgeschlossenes Jahr mit Luecken rechnet die Nullmonate mit", () => {
+    const data = punkte([1200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(averageMonthlyIncome(data, 12)).toBe(100);
+  });
+
+  it("Januar des laufenden Jahres: nur der Januar", () => {
+    const data = punkte([500, 4000, 4000, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(averageMonthlyIncome(data, 1)).toBe(500);
+  });
+
+  it("Zukunftsjahr (monthCount 0): kein Durchschnitt, keine Division durch 0", () => {
+    const data = punkte([3000, 3000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(averageMonthlyIncome(data, 0)).toBe(0);
+    expect(averageMonthlyIncome(data, -3)).toBe(0);
+    expect(averageMonthlyIncome(data, NaN)).toBe(0);
+  });
+
+  it("leere Datenreihe ergibt 0", () => {
+    expect(averageMonthlyIncome([], 8)).toBe(0);
+  });
+});
+
+/**
+ * Konsistenzfix: die beiden 4-Wochen-Fenster waren unterschiedlich lang.
+ *
+ * "Letzte 4 Wochen" lief ueber [nowDay-28, nowDay] und damit ueber 29 Tage,
+ * das Vergleichsfenster ueber 28. Der Vergleich hinkte um einen Tag — eine
+ * Lektion genau am Rand landete im juengeren Fenster und liess "rückläufig"
+ * seltener anschlagen, als der Vergleich es hergab. Beide Fenster sind jetzt 28 Tage.
+ */
+describe("computeStudentLifecycle — 4-Wochen-Fenster", () => {
+  const NOW_DAY = zurichDayNumber(NOW);
+  const dayIso = (offset: number) => new Date((NOW_DAY + offset) * 86_400_000 + 10 * 3_600_000).toISOString();
+
+  /** Lektion an einem Tag relativ zu heute, vormittags (Zuercher Kalendertag stabil). */
+  const atOffset = (id: string, offsetDays: number, durationMin: number): AnalyticsSession => ({
+    id,
+    studentId: "s1",
+    date: dayIso(offsetDays),
+    durationMin,
+    amountCHF: 0,
+  });
+
+  /**
+   * Letzte Lektion vor 25 Tagen: der Schueler steht damit sicher als "risiko" in
+   * der Liste, egal was in den beiden Fenstern liegt. Nur so lassen sich die
+   * gemeldeten Stundenwerte ueberhaupt ablesen — atRisk enthaelt sonst nur
+   * auffaellige Schueler, und die Fenstergrenzen blieben unpruefbar.
+   */
+  const hoursFor = (sessions: AnalyticsSession[]) => {
+    const row = computeStudentLifecycle({
+      students: [student({ id: "s1", name: "Grenzfall" })],
+      extents: [
+        { studentId: "s1", firstSession: dayIso(-200), lastSession: dayIso(-25), sessionCount: 10 },
+      ],
+      recentSessions: sessions,
+      now: NOW,
+    }).atRisk.find((r) => r.studentId === "s1");
+    expect(row?.status).toBe("risiko");
+    return { last4: row?.hoursLast4Weeks, prev4: row?.hoursPrev4Weeks };
+  };
+
+  it("beide Fenster umfassen genau 28 Tage", () => {
+    // Randtage: -27 ist der aelteste Tag des juengsten Fensters, -55 der aelteste
+    // des Vorfensters. Je 4h ergibt in beiden Fenstern denselben Wert.
+    expect(hoursFor([atOffset("a", -27, 240), atOffset("b", -55, 240)])).toEqual({
+      last4: 4,
+      prev4: 4,
+    });
+  });
+
+  it("heute zaehlt zum juengsten Fenster", () => {
+    expect(hoursFor([atOffset("a", 0, 120)])).toEqual({ last4: 2, prev4: 0 });
+  });
+
+  it("Tag -28 gehoert zum Vorfenster, nicht mehr zum juengsten", () => {
+    // Vorher lief last4 bis -28 einschliesslich und war damit 29 Tage lang;
+    // dieser Tag fiel in beide Fenster-Definitionen zugleich.
+    expect(hoursFor([atOffset("a", -28, 120)])).toEqual({ last4: 0, prev4: 2 });
+  });
+
+  it("Tag -56 liegt ausserhalb beider Fenster", () => {
+    expect(hoursFor([atOffset("a", -56, 120)])).toEqual({ last4: 0, prev4: 0 });
+  });
+
+  it("die Fenster stossen lueckenlos aneinander", () => {
+    // 28 Tage juengstes Fenster (-27..0) + 28 Tage Vorfenster (-55..-28): jede
+    // Lektion in diesen 56 Tagen landet in genau einem der beiden.
+    const jederTag = Array.from({ length: 56 }, (_, i) => atOffset(`t${i}`, -i, 60));
+    const { last4, prev4 } = hoursFor(jederTag);
+    expect(last4).toBe(28);
+    expect(prev4).toBe(28);
+  });
+
+  it("halbierte Aktivitaet wird als rückläufig erkannt", () => {
+    const row = computeStudentLifecycle({
+      students: [student({ id: "s1", name: "Rückläufig" })],
+      extents: [
+        { studentId: "s1", firstSession: dayIso(-200), lastSession: dayIso(-3), sessionCount: 10 },
+      ],
+      recentSessions: [atOffset("a", -3, 60), atOffset("b", -40, 240)],
+      now: NOW,
+    }).atRisk.find((r) => r.studentId === "s1");
+    expect(row).toMatchObject({ status: "ruecklaeufig", hoursLast4Weeks: 1, hoursPrev4Weeks: 4 });
+  });
+
+  it("gleichbleibende Aktivitaet ist kein Befund", () => {
+    const lc = computeStudentLifecycle({
+      students: [student({ id: "s1", name: "Stabil" })],
+      extents: [
+        { studentId: "s1", firstSession: dayIso(-200), lastSession: dayIso(-3), sessionCount: 10 },
+      ],
+      recentSessions: [atOffset("a", -3, 240), atOffset("b", -40, 240)],
+      now: NOW,
+    });
+    expect(lc.atRisk.find((r) => r.studentId === "s1")).toBeUndefined();
   });
 });

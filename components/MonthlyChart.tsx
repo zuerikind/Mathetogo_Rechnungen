@@ -12,6 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { averageMonthlyIncome } from "@/lib/dashboard-analytics";
 import {
   CHART_ADDITIONAL,
   CHART_ADDITIONAL_DIM,
@@ -101,9 +102,9 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payl
 
 export function MonthlyChart({ data, avgMonths, selectedMonth, onMonthSelect, goalCHF }: Props) {
   const compact = useMediaQuery("(max-width: 639px)");
-  const avg = avgMonths > 0
-    ? data.reduce((s, d) => s + d.income, 0) / avgMonths
-    : 0;
+  // Nur Januar bis `avgMonths` — geplante Lektionen und in die Zukunft verteilte
+  // Abo-Monate duerfen den Durchschnitt nicht anheben (siehe averageMonthlyIncome).
+  const avg = averageMonthlyIncome(data, avgMonths);
 
   const handleClick = (item: { payload?: ChartPoint }) => {
     const point = item.payload;

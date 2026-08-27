@@ -1,5 +1,5 @@
 import "server-only";
-import { Session, Student } from "@prisma/client";
+import { Prisma, Session, Student } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   formatAmount,
@@ -9,7 +9,12 @@ import {
   getPeriodLabel,
   getStudentInitials,
 } from "@/lib/invoice-format";
-import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
+import {
+  collectBilledSessionIds,
+  excludeAlreadyBilledSessions,
+} from "@/lib/billing-scope";
+import { BILLED_ELSEWHERE_WHERE } from "@/lib/invoice-delivery";
+import { shapeSnapshotFromGeneration } from "@/lib/invoice-snapshot-shape";
 import { getTutorProfile, TutorProfileData } from "@/lib/tutor-profile";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 
@@ -109,7 +114,10 @@ export async function getInvoicePayload(
             studentId: { in: children.map((c) => c.id) },
             year,
             month,
-            ...DELIVERED_INVOICE_WHERE,
+            // BILLED_ELSEWHERE, nicht DELIVERED: eine STORNIERTE Einzelrechnung
+            // rechnet nichts ab, ihre Lektionen gehoeren zurueck in die Gruppe.
+            // Vorher fielen sie zwischen beide Rechnungen und wurden nie fakturiert.
+            ...BILLED_ELSEWHERE_WHERE,
           },
           select: { studentId: true },
         })
@@ -122,7 +130,7 @@ export async function getInvoicePayload(
   ];
   const memberIds = members.map((m) => m.id);
 
-  const [groupSessions, subscriptions] = await Promise.all([
+  const [allGroupSessions, subscriptions] = await Promise.all([
     prisma.session.findMany({
       where: { studentId: { in: memberIds }, year, month },
       orderBy: { date: "asc" },
@@ -149,6 +157,35 @@ export async function getInvoicePayload(
       },
     }),
   ]);
+
+  // Struktureller Schutz gegen Doppelfakturierung.
+  //
+  // Bis hierher entscheidet nur die Gruppenzugehoerigkeit, welche Lektionen auf
+  // die Rechnung kommen — und die ist beweglich: `billedToId` ist eine normale
+  // Spalte ohne Historie. Wird ein Kind von Eltern A zu Eltern B umgehaengt,
+  // gehoeren seine Lektionen ploetzlich zu B, auch die Monate, die auf A's
+  // bereits ausgelieferter Rechnung stehen. Sie wuerden ein zweites Mal
+  // fakturiert, unter einer zweiten Nummer, an einen zweiten Zahler.
+  //
+  // Invoice.sessionIds haelt fest, welche Lektionen eine Rechnung tatsaechlich
+  // abgerechnet hat. Steht eine Lektion dort auf einem ausgelieferten, nicht
+  // stornierten Beleg, ist sie fakturiert — unabhaengig davon, zu welcher
+  // Gruppe der Schueler heute gehoert. Das ist die einzige Stelle im System,
+  // die "schon abgerechnet" aus dem Beleg selbst ableitet statt aus der
+  // aktuellen Zuordnung.
+  const otherBilledInvoices = await prisma.invoice.findMany({
+    where: {
+      year,
+      month,
+      studentId: { not: studentId },
+      ...BILLED_ELSEWHERE_WHERE,
+    },
+    select: { sessionIds: true },
+  });
+  const groupSessions = excludeAlreadyBilledSessions(
+    allGroupSessions,
+    collectBilledSessionIds(otherBilledInvoices)
+  );
 
   const roundCents = (n: number) => Math.round(n * 100) / 100;
   const sections: InvoiceSection[] = members
@@ -259,6 +296,15 @@ export async function reserveInvoiceRow(params: {
 }): Promise<{ invoiceId: string; invoiceNumber: string }> {
   const { studentId, year, month, totalCHF, sessionIds } = params;
   return prisma.$transaction(async (tx) => {
+    // Ein Doppelklick auf "Generieren" schickt zwei Requests. Beide lesen "keine
+    // Nummer", beide vergeben eine: die erste committet, die zweite ueberschreibt
+    // die Zeile mit ihrer eigenen Nummer — die erste ist verbrannt, und das PDF im
+    // Storage kann die Nummer tragen, die in der Datenbank nicht mehr steht. Der
+    // Zaehler serialisiert nur die Vergabe, nicht das Lesen davor. Diese Sperre
+    // macht Lesen und Schreiben pro (Schueler, Monat) atomar; sie faellt mit der
+    // Transaktion automatisch weg.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice:${studentId}:${year}:${month}`}))`;
+
     const existing = await tx.invoice.findUnique({
       where: { studentId_month_year: { studentId, month, year } },
       select: { invoiceNumber: true },
@@ -268,9 +314,14 @@ export async function reserveInvoiceRow(params: {
       ? existingNumber
       : await allocateInvoiceNumber(tx, year);
 
+    // Beim Anlegen stehen Betrag und Positionen mit drin — es gibt noch kein PDF,
+    // das ihnen widersprechen koennte. Bei einer BESTEHENDEN Zeile bleiben sie
+    // unangetastet: solange das neue PDF nicht liegt, zeigt pdfPath noch auf das
+    // alte, und Betrag/Positionen muessen zu genau diesem Dokument passen.
+    // Geschrieben werden sie erst nach dem Upload, zusammen mit pdfPath.
     const row = await tx.invoice.upsert({
       where: { studentId_month_year: { studentId, month, year } },
-      update: { totalCHF, sessionIds: JSON.stringify(sessionIds), invoiceNumber },
+      update: { invoiceNumber },
       create: {
         studentId,
         month,
@@ -282,6 +333,59 @@ export async function reserveInvoiceRow(params: {
       select: { id: true },
     });
     return { invoiceId: row.id, invoiceNumber };
+  });
+}
+
+/**
+ * Betrag, Positionen und PDF-Pfad in einem Zug — erst wenn das PDF wirklich liegt.
+ *
+ * Vorher committete reserveInvoiceRow den neuen Betrag und scheiterte danach am
+ * PDF-Bau oder Upload. Die Zeile sagte dann 480.00, waehrend pdfPath noch auf das
+ * alte 360.00-PDF zeigte; der Kunde bekam beim Download das alte Dokument,
+ * Buchhaltung und Snapshot behaupteten den neuen Betrag. Diese Reihenfolge macht
+ * das unmoeglich: was in der Zeile steht, ist immer das, was im Storage liegt.
+ */
+export async function commitInvoiceContent(params: {
+  invoiceId: string;
+  /** Der Payload, aus dem das soeben hochgeladene PDF gerendert wurde. */
+  payload: InvoicePayload;
+  pdfPath: string;
+  now?: Date;
+}): Promise<void> {
+  const { invoiceId, payload, pdfPath } = params;
+  const now = params.now ?? new Date();
+
+  const row = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { id: true, revision: true, createdAt: true, sentAt: true, paidAt: true },
+  });
+  if (!row) throw new Error("Rechnungszeile nicht gefunden.");
+
+  // Der Erzeugungsstand wird zusammen mit Betrag, Positionen und Pfad
+  // festgeschrieben: ein Datensatz, eine Wahrheit. Beim Ausliefern wird genau
+  // dieser Stand eingefroren — es gibt dort keine zweite Lektionsabfrage mehr,
+  // die den bereits gedruckten Inhalt neu definieren koennte.
+  const generated = shapeSnapshotFromGeneration({
+    payload,
+    invoice: {
+      id: row.id,
+      revision: row.revision,
+      pdfPath,
+      createdAt: row.createdAt,
+      sentAt: row.sentAt,
+      paidAt: row.paidAt,
+    },
+    generatedAt: now,
+  });
+
+  await prisma.invoice.update({
+    where: { id: invoiceId },
+    data: {
+      totalCHF: payload.totalCHF,
+      sessionIds: JSON.stringify(payload.sessions.map((s) => s.id)),
+      pdfPath,
+      generatedPayloadJson: generated as unknown as Prisma.InputJsonValue,
+    },
   });
 }
 

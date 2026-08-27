@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
-import { getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
+import { commitInvoiceContent, getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
 import { isDelivered } from "@/lib/invoice-delivery";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { supabase, INVOICE_BUCKET, invoiceStoragePath, invoicePublicUrl } from "@/lib/supabase";
@@ -83,8 +83,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Erst jetzt Betrag, Positionen und Pfad festschreiben — das PDF liegt.
     const pdfUrl = invoicePublicUrl(year, month, studentId);
-    await prisma.invoice.update({ where: { id: invoiceId }, data: { pdfPath: pdfUrl } });
+    await commitInvoiceContent({ invoiceId, payload: { ...payload, invoiceNumber }, pdfPath: pdfUrl });
 
     return NextResponse.json({ invoiceId, pdfUrl, invoiceNumber });
   } catch (error) {

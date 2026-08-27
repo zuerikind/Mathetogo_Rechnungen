@@ -1,4 +1,5 @@
 import "server-only";
+import { pickStoredGenerationPayload } from "@/lib/invoice-snapshot-shape";
 import { prisma } from "@/lib/prisma";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import {
@@ -28,6 +29,24 @@ export type SnapshotInvoiceInput = {
  * Lädt alles, was zum Einfrieren nötig ist, und übergibt es an die reine
  * Formungsfunktion (lib/invoice-snapshot-shape.ts).
  */
+/**
+ * Der einzufrierende Stand einer Rechnung.
+ *
+ * Bevorzugt den beim Erzeugen festgeschriebenen Payload (`generatedPayloadJson`):
+ * das ist exakt der Inhalt, aus dem das ausgelieferte PDF entstanden ist. Nur
+ * wenn er fehlt — Rechnungen von vor dieser Aenderung — wird wie bisher live
+ * nachgeschlagen. Damit gibt es fuer neu erzeugte Rechnungen keine zweite
+ * Lektionsabfrage mehr, die den gedruckten Inhalt neu definieren koennte.
+ */
+export async function resolveSnapshotPayload(
+  invoice: SnapshotInvoiceInput & { generatedPayloadJson?: unknown },
+  frozenAt: Date
+): Promise<{ payload: InvoiceSnapshotPayload; source: "generation" | "live" }> {
+  const stored = pickStoredGenerationPayload(invoice.generatedPayloadJson);
+  if (stored) return { payload: stored, source: "generation" };
+  return { payload: await buildInvoiceSnapshotPayload(invoice, frozenAt), source: "live" };
+}
+
 export async function buildInvoiceSnapshotPayload(
   invoice: SnapshotInvoiceInput,
   frozenAt: Date

@@ -1,9 +1,10 @@
 import "server-only";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
 import { getInvoicePayload } from "@/lib/invoice";
 import { isDelivered } from "@/lib/invoice-delivery";
-import { buildInvoiceSnapshotPayload } from "@/lib/invoice-snapshot";
+import { shapeSnapshotFromGeneration } from "@/lib/invoice-snapshot-shape";
 import { INVOICE_BUCKET, invoiceStoragePath, invoicePublicUrl } from "@/lib/invoice-storage-path";
 import { supabase } from "@/lib/supabase";
 
@@ -90,16 +91,20 @@ export async function reissueInvoice(invoiceId: string, actor: string): Promise<
   const now = new Date();
   const pdfUrl = invoicePublicUrl(invoice.year, invoice.month, invoice.studentId, nextRevision);
   const sessionIds = payload.sessions.map((s) => s.id);
-  const snapshot = await buildInvoiceSnapshotPayload(
-    {
-      ...invoice,
-      totalCHF: payload.totalCHF,
-      sessionIds: JSON.stringify(sessionIds),
+  // Aus dem Payload geformt, aus dem soeben das PDF entstand — keine zweite
+  // Lektionsabfrage, die den gedruckten Inhalt neu definieren koennte.
+  const snapshot = shapeSnapshotFromGeneration({
+    payload: { ...payload, invoiceNumber: invoice.invoiceNumber },
+    invoice: {
+      id: invoice.id,
       revision: nextRevision,
       pdfPath: pdfUrl,
+      createdAt: invoice.createdAt,
+      sentAt: invoice.sentAt,
+      paidAt: invoice.paidAt,
     },
-    now
-  );
+    generatedAt: now,
+  });
 
   await prisma.$transaction(async (tx) => {
     await tx.invoice.update({
@@ -109,6 +114,7 @@ export async function reissueInvoice(invoiceId: string, actor: string): Promise<
         totalCHF: payload.totalCHF,
         sessionIds: JSON.stringify(sessionIds),
         pdfPath: pdfUrl,
+        generatedPayloadJson: snapshot as unknown as Prisma.InputJsonValue,
         // Der Befund ist mit der Neuausstellung erledigt.
         needsReview: false,
         reviewedAt: now,

@@ -72,6 +72,48 @@ export function getEffectiveManualBaseline(db: DbManualFields): ManualBaseline &
   };
 }
 
+/**
+ * Monate, fuer die im gewaehlten Jahr die manuelle Summe gilt.
+ *
+ * Ausserhalb des Baseline-Jahres ist die Menge leer — dort zaehlen wieder die
+ * echten Lektionen.
+ */
+export function manualBaselineMonths(baseline: ManualBaseline, year: number): Set<number> {
+  if (year !== baseline.year) return new Set<number>();
+  return new Set(baseline.entries.map((e) => e.month));
+}
+
+/**
+ * Der manuelle Monatsbetrag — oder null, wenn fuer diesen Monat keiner gilt.
+ *
+ * Die Jahresprüfung gehoert zwingend hierher: baseline.entries enthaelt IMMER die
+ * Monate 1–3, ein reines `find(e => e.month === month)` liefert deshalb auch fuer
+ * 2025 oder 2027 den 2026er-Betrag. Genau so kam die manuelle Q1-Summe in die
+ * Monatskachel eines fremden Jahres, waehrend die Jahressumme daneben korrekt
+ * blieb. Spiegelt die Regel aus lib/income-summary, die ueber die synthetischen
+ * Sessions ohnehin nur im Baseline-Jahr greift.
+ */
+export function manualBaselineAmountFor(
+  baseline: ManualBaseline,
+  year: number,
+  month: number
+): number | null {
+  if (year !== baseline.year) return null;
+  return baseline.entries.find((e) => e.month === month)?.amountCHF ?? null;
+}
+
+/** Manuelle Summe von Januar bis einschliesslich `throughMonth`; 0 ausserhalb des Baseline-Jahres. */
+export function manualBaselineTotalThrough(
+  baseline: ManualBaseline,
+  year: number,
+  throughMonth: number
+): number {
+  if (year !== baseline.year) return 0;
+  return baseline.entries
+    .filter((e) => e.month <= throughMonth)
+    .reduce((sum, e) => sum + e.amountCHF, 0);
+}
+
 type SessionLike = {
   id: string;
   studentId: string;

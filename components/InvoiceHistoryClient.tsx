@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
-import { PendingDeletionBanner } from "@/components/PendingDeletionBanner";
+import { CalendarReviewPanel } from "@/components/CalendarReviewPanel";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { useMounted } from "@/hooks/use-mounted";
 import { downloadInvoicePdf, saveBlob } from "@/lib/download-invoice-pdf";
@@ -502,7 +502,7 @@ export function InvoiceHistoryClient() {
     <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       <div className="min-w-0 space-y-5">
 
-        <PendingDeletionBanner onResolved={() => void loadInvoices()} />
+        <CalendarReviewPanel onResolved={() => void loadInvoices()} />
 
         {/* Page header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">

@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { fetchLatestFxRates, toChfRate, type SupportedCurrency } from "@/lib/fx-rates";
+import {
+  applyChfRate,
+  FX_DEFAULTS,
+  isSupportedCurrency,
+  rateForEdit,
+  type FxRates,
+  type SupportedCurrency,
+} from "@/lib/fx-rates";
 import { prisma } from "@/lib/prisma";
 
 function parseDate(value: unknown): Date | null {
@@ -10,18 +17,16 @@ function parseDate(value: unknown): Date | null {
   return d;
 }
 
-async function getRates() {
+/** Manuell gepflegte Kurse; ohne gespeicherte Zeile gelten die Startwerte (lib/fx-rates). */
+async function getRates(): Promise<FxRates> {
   const stored = await prisma.fxRateSnapshot.findUnique({ where: { id: "default" } });
-  if (stored) {
-    return {
-      chfPerEur: stored.chfPerEur,
-      chfPerMxn: stored.chfPerMxn,
-      source: stored.source ?? "database",
-      fetchedAt: stored.fetchedAt,
-    };
-  }
-  const latest = await fetchLatestFxRates();
-  return latest;
+  if (!stored) return FX_DEFAULTS;
+  return {
+    chfPerEur: stored.chfPerEur,
+    chfPerMxn: stored.chfPerMxn,
+    source: stored.source ?? "manual",
+    fetchedAt: stored.fetchedAt,
+  };
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -43,13 +48,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const payerName = body.payerName !== undefined ? body.payerName.trim() : existing.payerName;
   const amountOriginal = body.amount !== undefined ? Number(body.amount) : existing.amountOriginal;
   const currency = (body.currency ?? existing.currency) as SupportedCurrency;
-  const supported: SupportedCurrency[] = ["CHF", "EUR", "MXN"];
-  if (!supported.includes(currency) || !payerName || !Number.isFinite(amountOriginal) || amountOriginal < 0) {
+  if (!isSupportedCurrency(currency) || !payerName || !Number.isFinite(amountOriginal) || amountOriginal < 0) {
     return NextResponse.json({ error: "Ungueltige Eingabedaten." }, { status: 400 });
   }
+  // Der historische Kurs bleibt stehen: ein manuell geaenderter Kurs wirkt ab
+  // jetzt, nie rueckwirkend. Nur ein Waehrungswechsel holt den heutigen Kurs,
+  // weil es fuer die neue Waehrung keinen historischen gibt (siehe rateForEdit).
   const rates = await getRates();
-  const chfRate = toChfRate(currency, rates);
-  const amountCHF = Math.round(amountOriginal * chfRate * 100) / 100;
+  const { chfRate } = rateForEdit(
+    { currency: existing.currency as SupportedCurrency, chfRate: existing.chfRate },
+    currency,
+    rates
+  );
+  const amountCHF = applyChfRate(amountOriginal, chfRate);
   const updated = await prisma.danceEarning.update({
     where: { id },
     data: {

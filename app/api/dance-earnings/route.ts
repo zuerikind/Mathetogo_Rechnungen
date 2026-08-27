@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { fetchLatestFxRates, FX_DEFAULTS, toChfRate, type SupportedCurrency } from "@/lib/fx-rates";
+import {
+  convertToChf,
+  FX_DEFAULTS,
+  isSupportedCurrency,
+  type FxRates,
+  type SupportedCurrency,
+} from "@/lib/fx-rates";
 import { prisma } from "@/lib/prisma";
 
 function isMissingTableError(error: unknown): boolean {
@@ -12,7 +18,8 @@ function isMissingTableError(error: unknown): boolean {
   );
 }
 
-async function getRates() {
+/** Manuell gepflegte Kurse; ohne gespeicherte Zeile gelten die Startwerte (lib/fx-rates). */
+async function getRates(): Promise<FxRates & { configured: boolean }> {
   const stored = await prisma.fxRateSnapshot
     .findUnique({ where: { id: "default" } })
     .catch((err) => {
@@ -23,11 +30,12 @@ async function getRates() {
     return {
       chfPerEur: stored.chfPerEur,
       chfPerMxn: stored.chfPerMxn,
-      source: stored.source ?? "database",
+      source: stored.source ?? "manual",
       fetchedAt: stored.fetchedAt,
+      configured: true,
     };
   }
-  return FX_DEFAULTS;
+  return { ...FX_DEFAULTS, configured: false };
 }
 
 function parseDate(value: unknown): Date | null {
@@ -85,40 +93,15 @@ export async function POST(req: NextRequest) {
   if (!date || !payerName || !Number.isFinite(amountOriginal) || amountOriginal < 0 || !currency) {
     return NextResponse.json({ error: "Ungueltige Eingabedaten." }, { status: 400 });
   }
-  const supported: SupportedCurrency[] = ["CHF", "EUR", "MXN"];
-  if (!supported.includes(currency)) {
+  if (!isSupportedCurrency(currency)) {
     return NextResponse.json({ error: "Ungueltige Waehrung." }, { status: 400 });
   }
 
-  let rates = await getRates();
-  const stale = Date.now() - new Date(rates.fetchedAt).getTime() > 1000 * 60 * 60 * 24 * 2;
-  if (stale) {
-    try {
-      const latest = await fetchLatestFxRates();
-      await prisma.fxRateSnapshot.upsert({
-        where: { id: "default" },
-        update: {
-          chfPerEur: latest.chfPerEur,
-          chfPerMxn: latest.chfPerMxn,
-          source: latest.source,
-          fetchedAt: latest.fetchedAt,
-        },
-        create: {
-          id: "default",
-          chfPerEur: latest.chfPerEur,
-          chfPerMxn: latest.chfPerMxn,
-          source: latest.source,
-          fetchedAt: latest.fetchedAt,
-        },
-      });
-      rates = latest;
-    } catch {
-      // keep stored/default rates
-    }
-  }
-
-  const chfRate = toChfRate(currency, rates);
-  const amountCHF = Math.round(amountOriginal * chfRate * 100) / 100;
+  // Kein Netzaufruf mehr: der gespeicherte, von Hand gepflegte Kurs ist die
+  // einzige Quelle. `chfRate` und `amountCHF` werden wie bisher eingefroren, ein
+  // spaeter geaenderter Kurs beruehrt bestehende Eintraege also nicht.
+  const rates = await getRates();
+  const { chfRate, amountCHF } = convertToChf(amountOriginal, currency, rates);
   try {
     const row = await prisma.danceEarning.create({
       data: {

@@ -426,8 +426,11 @@ export function computeStudentLifecycle(args: {
     const daysSince = nowDay - zurichDayNumber(new Date(extent.lastSession));
     // Zukünftige/heutige Lektion gebucht (Kalender-Sync legt Sessions im Voraus an) → kein Risiko.
     if (daysSince <= 0) continue;
-    const last4 = Math.round(hoursIn(s.id, nowDay - 28, nowDay + 1) * 10) / 10;
-    const prev4 = Math.round(hoursIn(s.id, nowDay - 56, nowDay - 28) * 10) / 10;
+    // Beide Fenster exakt 28 Tage: [nowDay-27, nowDay] und [nowDay-55, nowDay-28].
+    // Vorher war das erste 29 Tage lang und liess "rückläufig" seltener anschlagen,
+    // als der Vergleich es hergab.
+    const last4 = Math.round(hoursIn(s.id, nowDay - 27, nowDay + 1) * 10) / 10;
+    const prev4 = Math.round(hoursIn(s.id, nowDay - 55, nowDay - 27) * 10) / 10;
     if (daysSince >= riskAfterDays) {
       atRisk.push({
         studentId: s.id,
@@ -581,6 +584,31 @@ export function computeMonthStatus(args: {
     diffVsAvgCHF: avg !== null ? Math.round((args.mtdIncomeCHF - avg) * 100) / 100 : null,
     goalPct: goal && goal > 0 ? Math.round((args.mtdIncomeCHF / goal) * 100) : null,
   };
+}
+
+// ── 5b) Monatsdurchschnitt der Jahresübersicht ─────────────────────────────
+
+/**
+ * Ø Monatseinkommen über die ersten `monthCount` Monate.
+ *
+ * Zähler und Nenner müssen denselben Zeitraum abdecken. Vorher summierte die
+ * Kachel alle zwölf Monatspunkte und teilte durch die bereits vergangenen Monate:
+ * der Kalender-Sync legt Lektionen im Voraus an und ein 6-Monats-Abo verteilt sich
+ * ebenfalls in die Zukunft — beides hob den angezeigten Durchschnitt an, ohne dass
+ * je so viel verdient worden wäre.
+ *
+ * `monthCount` = 12 für abgeschlossene Jahre, = laufender Monat für das aktuelle
+ * Jahr, = 0 für reine Zukunftsjahre (dann gibt es keinen sinnvollen Ø).
+ */
+export function averageMonthlyIncome(
+  points: { month: number; income: number }[],
+  monthCount: number
+): number {
+  if (!Number.isFinite(monthCount) || monthCount <= 0) return 0;
+  const sum = points
+    .filter((p) => p.month <= monthCount)
+    .reduce((acc, p) => acc + p.income, 0);
+  return sum / monthCount;
 }
 
 // ── 6) Vorjahresvergleich: Datenlage & Serie ───────────────────────────────

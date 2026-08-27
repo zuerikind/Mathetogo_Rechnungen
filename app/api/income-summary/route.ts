@@ -6,25 +6,22 @@ import {
   type AdditionalEarningForIncome,
 } from "@/lib/additional-earnings";
 import { monthDanceEarningsTotal, ytdDanceEarningsTotal, type DanceEarningForIncome } from "@/lib/dance-earnings";
-import { getEffectiveManualBaseline, MANUAL_Q1_SELECT } from "@/lib/manual-revenue";
+import {
+  getEffectiveManualBaseline,
+  manualBaselineAmountFor,
+  manualBaselineMonths,
+  manualBaselineTotalThrough,
+  MANUAL_Q1_SELECT,
+} from "@/lib/manual-revenue";
 import { monthMiscEarningsTotal, ytdMiscEarningsTotal, type MiscEarningForIncome } from "@/lib/misc-earnings";
+import {
+  getFreshIncomeSummary,
+  getStaleIncomeSummary,
+  setIncomeSummary,
+  type IncomeSummaryPayload,
+} from "@/lib/income-summary-cache";
 import { prisma } from "@/lib/prisma";
 import { subscriptionProrationForMonth, type SubscriptionBillingInput } from "@/lib/subscription-billing";
-
-type IncomeSummaryPayload = {
-  year: number;
-  month: number;
-  monthIncome: number;
-  ytdIncome: number;
-  fromCache?: boolean;
-};
-
-const CACHE_TTL_MS = 20_000;
-const summaryCache = new Map<string, { at: number; value: IncomeSummaryPayload }>();
-
-function cacheKey(year: number, month: number) {
-  return `${year}-${month}`;
-}
 
 function isMissingTableError(error: unknown): boolean {
   return (
@@ -53,10 +50,9 @@ export async function GET(req: NextRequest) {
       ? Math.floor(monthParsed)
       : now.getMonth() + 1;
 
-  const key = cacheKey(year, month);
-  const cached = summaryCache.get(key);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-    return NextResponse.json({ ...cached.value, fromCache: true });
+  const cached = getFreshIncomeSummary(year, month);
+  if (cached) {
+    return NextResponse.json({ ...cached, fromCache: true });
   }
 
   try {
@@ -98,14 +94,12 @@ export async function GET(req: NextRequest) {
     ]);
 
     const baseline = getEffectiveManualBaseline(tutorRow);
-    const baselineMonths =
-      year === baseline.year ? new Set<number>(baseline.entries.map((e) => e.month)) : new Set<number>();
-    const baselineMonthAmount = baseline.entries.find((e) => e.month === month)?.amountCHF ?? null;
+    // Alle drei Groessen teilen dieselbe Jahresprüfung (lib/manual-revenue) — genau
+    // die fehlte beim Monatsbetrag und liess die 2026er-Q1-Summe in andere Jahre laufen.
+    const baselineMonths = manualBaselineMonths(baseline, year);
+    const baselineMonthAmount = manualBaselineAmountFor(baseline, year, month);
     // YTD = only through the selected month; planned future lessons don't count.
-    const baselineYearTotal =
-      year === baseline.year
-        ? baseline.entries.filter((e) => e.month <= month).reduce((s, e) => s + e.amountCHF, 0)
-        : 0;
+    const baselineYearTotal = manualBaselineTotalThrough(baseline, year, month);
 
     const [monthAgg, nonBaselineYearAgg] = await Promise.all([
       baselineMonths.has(month)
@@ -183,12 +177,13 @@ export async function GET(req: NextRequest) {
         sessionMonthIncome + monthSubscription + monthMisc + monthDance + monthAdditional,
       ytdIncome: sessionYtdIncome + ytdSubscription + ytdMisc + ytdDance + ytdAdditional,
     };
-    summaryCache.set(key, { at: Date.now(), value });
+    setIncomeSummary(year, month, value);
     return NextResponse.json(value);
   } catch {
     // If DB is temporarily unstable, serve stale cache instead of 500.
-    if (cached) {
-      return NextResponse.json({ ...cached.value, fromCache: true });
+    const stale = getStaleIncomeSummary(year, month);
+    if (stale) {
+      return NextResponse.json({ ...stale, fromCache: true });
     }
     return NextResponse.json(
       { year, month, monthIncome: 0, ytdIncome: 0, error: "Database temporarily unavailable" },

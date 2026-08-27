@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
+import { freezeInvoiceSnapshot } from "@/lib/invoice-download";
 import { prisma } from "@/lib/prisma";
 import { parseReminderStage } from "@/lib/reminder-tokens";
 
@@ -8,7 +10,9 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  try {
+    const session = await auth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+try {
     const invoiceId = params.id;
     const body = await req.json();
     const status = body?.status as InvoiceStatusUpdate | undefined;
@@ -23,11 +27,21 @@ export async function PATCH(
 
     const invoice = await prisma.invoice.findUnique({
       where: { id: invoiceId },
-      select: { id: true, pdfPath: true, sentAt: true, paidAt: true },
+      select: { id: true, pdfPath: true, sentAt: true, paidAt: true, voidedAt: true, invoiceNumber: true },
     });
 
     if (!invoice) {
       return NextResponse.json({ error: "Rechnung nicht gefunden." }, { status: 404 });
+    }
+
+    // Storniert: der Zustand ist entschieden. Ohne diese Pruefung liess sich eine
+    // stornierte Rechnung wieder auf "bezahlt" setzen — und genau das `paidAt`
+    // zurueckschreiben, das der Storno bewusst geloescht hat.
+    if (invoice.voidedAt) {
+      return NextResponse.json(
+        { error: `Rechnung ${invoice.invoiceNumber} ist storniert — der Status kann nicht mehr geändert werden.` },
+        { status: 409 }
+      );
     }
 
     if (status === "sent" && !invoice.pdfPath) {
@@ -64,6 +78,16 @@ export async function PATCH(
       });
       return NextResponse.json({ success: true, invoice: updated });
     }
+
+    // "gesendet"/"bezahlt" von Hand ist ebenfalls eine Auslieferung: der Stand wird
+    // eingefroren, bevor die Rechnung unveraenderlich wird. Idempotent, also
+    // unschaedlich, wenn schon ein Snapshot existiert.
+    await freezeInvoiceSnapshot(
+      invoiceId,
+      session.user?.email ?? "system",
+      status === "sent" ? "Status: gesendet" : "Status: bezahlt",
+      now
+    );
 
     const updated = await prisma.invoice.update({
       where: { id: invoiceId },

@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
+import { auth } from "@/auth";
+import { freezeInvoiceSnapshot } from "@/lib/invoice-download";
 import { prisma } from "@/lib/prisma";
 import { formatAmount, getPeriodLabel } from "@/lib/invoice";
 import { supabase, INVOICE_BUCKET, invoiceStoragePath } from "@/lib/supabase";
 import { getTutorProfile } from "@/lib/tutor-profile";
 
 export async function POST(req: NextRequest) {
+  const session = await auth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
@@ -28,6 +32,18 @@ export async function POST(req: NextRequest) {
 
     if (!invoice) {
       return NextResponse.json({ error: "Rechnung nicht gefunden." }, { status: 404 });
+    }
+
+    // Eine stornierte Rechnung ist gegenstandslos — sie darf nicht rausgehen.
+    // Bisher gab es hier gar keine Pruefung: mit forceResend ging jedes Dokument.
+    if (invoice.voidedAt) {
+      return NextResponse.json(
+        {
+          error:
+            `Rechnung ${invoice.invoiceNumber} ist storniert und darf nicht versendet werden.`,
+        },
+        { status: 409 }
+      );
     }
 
     if (invoice.sentAt && !forceResend) {
@@ -95,6 +111,13 @@ export async function POST(req: NextRequest) {
       html,
       attachments: [{ filename: fileName, content: pdfBuffer }],
     });
+
+    // Die Mail ist raus — ab hier ist die Rechnung ausgeliefert. Zuerst den Stand
+    // einfrieren, dann sentAt setzen: bisher wurde nur sentAt geschrieben, und die
+    // Rechnung war unveraenderlich, ohne dass irgendwo stand, WAS ausgeliefert
+    // wurde. Genau so entstanden die rund 100 Bestandsrechnungen ohne Snapshot.
+    const actor = session?.user?.email ?? "system";
+    await freezeInvoiceSnapshot(invoiceId, actor, "E-Mail-Versand");
 
     const updated = await prisma.invoice.update({
       where: { id: invoiceId },

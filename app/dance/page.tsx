@@ -21,6 +21,9 @@ type FxPayload = {
   chfPerMxn: number;
   source: string;
   fetchedAt: string;
+  /** false = noch nie gespeichert, es gelten die Startwerte. */
+  configured?: boolean;
+  updatedAt?: string | null;
 };
 
 function todayYmd(): string {
@@ -37,6 +40,10 @@ export default function DancePage() {
   const [fx, setFx] = useState<FxPayload | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [rateForm, setRateForm] = useState<{ chfPerEur: string; chfPerMxn: string } | null>(null);
+  const [rateBusy, setRateBusy] = useState(false);
+  const [rateMsg, setRateMsg] = useState("");
+  const [rateError, setRateError] = useState("");
   const [form, setForm] = useState({
     date: todayYmd(),
     payerName: "",
@@ -55,8 +62,48 @@ export default function DancePage() {
     };
     setRows(Array.isArray(body.rows) ? body.rows : []);
     setFx(body.rates ?? null);
+    // Die Eingabefelder nur beim ersten Laden vorbelegen — sonst ueberschreibt ein
+    // Reload eine gerade getippte, noch nicht gespeicherte Korrektur.
+    setRateForm((prev) =>
+      prev ??
+      (body.rates
+        ? {
+            chfPerEur: String(body.rates.chfPerEur),
+            chfPerMxn: String(body.rates.chfPerMxn),
+          }
+        : null)
+    );
     if (!r.ok) setError(body.error ?? "Dance earnings konnten nicht geladen werden.");
   }, []);
+
+  const saveRates = useCallback(async () => {
+    if (!rateForm) return;
+    setRateBusy(true);
+    setRateError("");
+    setRateMsg("");
+    try {
+      const r = await fetch("/api/fx-rates", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chfPerEur: rateForm.chfPerEur,
+          chfPerMxn: rateForm.chfPerMxn,
+        }),
+      });
+      const body = (await r.json().catch(() => ({}))) as FxPayload & { error?: string };
+      if (!r.ok) {
+        setRateError(body.error ?? "Kurse konnten nicht gespeichert werden.");
+        return;
+      }
+      setFx(body);
+      setRateForm({ chfPerEur: String(body.chfPerEur), chfPerMxn: String(body.chfPerMxn) });
+      setRateMsg("Kurse gespeichert.");
+    } catch {
+      setRateError("Kurse konnten nicht gespeichert werden.");
+    } finally {
+      setRateBusy(false);
+    }
+  }, [rateForm]);
 
   useEffect(() => {
     void load();
@@ -80,32 +127,61 @@ export default function DancePage() {
         <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h1 className="text-xl font-bold text-gray-900">Dance Earnings</h1>
-            <button
-              type="button"
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  const r = await fetch("/api/fx-rates", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ force: true }),
-                  });
-                  const body = (await r.json()) as FxPayload;
-                  setFx(body);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
-            >
-              Wechselkurse aktualisieren
-            </button>
           </div>
-          {fx && (
-            <p className="mb-3 text-xs text-gray-500">
-              1 EUR = {fx.chfPerEur.toFixed(4)} CHF · 1 MXN = {fx.chfPerMxn.toFixed(4)} CHF
+
+          {/* Wechselkurse: von Hand gepflegt, kein automatischer Abruf. Der Kurs gilt
+              fuer NEUE Eintraege — bestehende behalten ihren eingefrorenen Kurs. */}
+          <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                  1 EUR = … CHF
+                </label>
+                <input
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  inputMode="decimal"
+                  value={rateForm?.chfPerEur ?? ""}
+                  onChange={(e) =>
+                    setRateForm((f) => ({ chfPerMxn: f?.chfPerMxn ?? "", chfPerEur: e.target.value }))
+                  }
+                  className="w-32 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                  1 MXN = … CHF
+                </label>
+                <input
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  inputMode="decimal"
+                  value={rateForm?.chfPerMxn ?? ""}
+                  onChange={(e) =>
+                    setRateForm((f) => ({ chfPerEur: f?.chfPerEur ?? "", chfPerMxn: e.target.value }))
+                  }
+                  className="w-32 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm"
+                />
+              </div>
+              <button
+                type="button"
+                disabled={rateBusy || !rateForm}
+                onClick={() => void saveRates()}
+                className="rounded-xl bg-[#4A7FC1] px-4 py-2 text-xs font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {rateBusy ? "Speichert…" : "Kurse speichern"}
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-gray-500">
+              Manuell gepflegt — gilt für neue Einträge; bestehende behalten ihren erfassten Kurs.
+              {fx?.configured === false && " Noch nie gespeichert: es gelten Startwerte."}
+              {fx?.updatedAt && ` Zuletzt geändert: ${new Date(fx.updatedAt).toLocaleString("de-CH")}.`}
             </p>
-          )}
+            {rateError && <p className="mt-1 text-xs font-medium text-red-600">{rateError}</p>}
+            {rateMsg && !rateError && <p className="mt-1 text-xs font-medium text-emerald-700">{rateMsg}</p>}
+          </div>
           <form
             className="grid grid-cols-1 gap-2 md:grid-cols-5"
             onSubmit={async (e) => {

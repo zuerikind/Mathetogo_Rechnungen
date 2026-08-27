@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { fetchLatestFxRates, FX_DEFAULTS } from "@/lib/fx-rates";
+import { FX_DEFAULTS, validateFxRates, type FxRates } from "@/lib/fx-rates";
 import { prisma } from "@/lib/prisma";
+
+/**
+ * Wechselkurse lesen und von Hand setzen. Kein externer Dienst — siehe lib/fx-rates.
+ * Gespeichert wird in FxRateSnapshot (Singleton-Zeile "default"), Decimal(12,6);
+ * der erweiterte Client in lib/prisma liefert daraus number.
+ */
 
 function isMissingTableError(error: unknown): boolean {
   return (
@@ -12,66 +18,80 @@ function isMissingTableError(error: unknown): boolean {
   );
 }
 
-async function getStoredRates() {
+type FxResponse = FxRates & { configured: boolean; updatedAt: Date | null };
+
+async function getStoredRates(): Promise<FxResponse> {
   const row = await prisma.fxRateSnapshot
     .findUnique({ where: { id: "default" } })
     .catch((err) => {
       if (isMissingTableError(err)) return null;
       throw err;
     });
-  if (!row) return null;
+  if (!row) return { ...FX_DEFAULTS, configured: false, updatedAt: null };
   return {
     chfPerEur: row.chfPerEur,
     chfPerMxn: row.chfPerMxn,
-    source: row.source ?? "database",
+    source: row.source ?? "manual",
     fetchedAt: row.fetchedAt,
+    configured: true,
+    updatedAt: row.updatedAt,
   };
 }
 
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const stored = await getStoredRates();
-  if (stored) return NextResponse.json(stored);
-  return NextResponse.json(FX_DEFAULTS);
+  return NextResponse.json(await getStoredRates());
 }
 
-export async function POST(req: NextRequest) {
+/** Manuell gesetzte Kurse speichern. Ungueltige Werte werden abgelehnt, nie stillschweigend gerundet weg. */
+export async function PUT(req: NextRequest) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const body = (await req.json().catch(() => ({}))) as { force?: boolean };
-  const stored = await getStoredRates();
-  const freshEnough =
-    stored && Date.now() - new Date(stored.fetchedAt).getTime() < 1000 * 60 * 60 * 12;
-  if (!body.force && freshEnough) return NextResponse.json({ ...stored, refreshed: false });
 
+  const body = (await req.json().catch(() => ({}))) as { chfPerEur?: unknown; chfPerMxn?: unknown };
+  const parsed = validateFxRates({ chfPerEur: body.chfPerEur, chfPerMxn: body.chfPerMxn });
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+
+  const now = new Date();
   try {
-    const latest = await fetchLatestFxRates();
     const saved = await prisma.fxRateSnapshot.upsert({
       where: { id: "default" },
       update: {
-        chfPerEur: latest.chfPerEur,
-        chfPerMxn: latest.chfPerMxn,
-        source: latest.source,
-        fetchedAt: latest.fetchedAt,
+        chfPerEur: parsed.chfPerEur,
+        chfPerMxn: parsed.chfPerMxn,
+        source: "manual",
+        fetchedAt: now,
       },
       create: {
         id: "default",
-        chfPerEur: latest.chfPerEur,
-        chfPerMxn: latest.chfPerMxn,
-        source: latest.source,
-        fetchedAt: latest.fetchedAt,
+        chfPerEur: parsed.chfPerEur,
+        chfPerMxn: parsed.chfPerMxn,
+        source: "manual",
+        fetchedAt: now,
       },
     });
     return NextResponse.json({
       chfPerEur: saved.chfPerEur,
       chfPerMxn: saved.chfPerMxn,
-      source: saved.source ?? latest.source,
+      source: saved.source ?? "manual",
       fetchedAt: saved.fetchedAt,
-      refreshed: true,
-    });
-  } catch {
-    if (stored) return NextResponse.json({ ...stored, refreshed: false, fallback: true });
-    return NextResponse.json(FX_DEFAULTS);
+      configured: true,
+      updatedAt: saved.updatedAt,
+    } satisfies FxResponse);
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      return NextResponse.json(
+        { error: "FX-Tabelle fehlt. Bitte Prisma Migration/DB Push ausfuehren." },
+        { status: 503 }
+      );
+    }
+    // Geldrelevante Mutation: Fehler wird gemeldet, nicht geschluckt.
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Kurse konnten nicht gespeichert werden." },
+      { status: 500 }
+    );
   }
 }

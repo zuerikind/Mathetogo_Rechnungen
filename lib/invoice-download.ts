@@ -1,9 +1,81 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { buildInvoiceSnapshotPayload } from "@/lib/invoice-snapshot";
+import { resolveSnapshotPayload } from "@/lib/invoice-snapshot";
 
 /** Woher die Auslieferung kam — nur für das Audit-Log. */
-export type DownloadSource = "Einzeldownload" | "Monatsexport (ZIP)";
+export type DownloadSource =
+  | "Einzeldownload"
+  | "Monatsexport (ZIP)"
+  | "E-Mail-Versand"
+  | "Status: gesendet"
+  | "Status: bezahlt";
+
+/**
+ * Friert den Stand einer Rechnung ein, ohne sie als heruntergeladen zu markieren.
+ *
+ * Auslieferung ist nicht nur der Download. Eine Rechnung, die per E-Mail rausgeht
+ * oder von Hand auf "gesendet"/"bezahlt" gesetzt wird, ist genauso beim Kunden —
+ * bisher schrieb aber nur der Download einen Snapshot. Ergebnis im Bestand: rund
+ * 100 ausgelieferte Rechnungen ohne jeden eingefrorenen Stand. Fuer die kann die
+ * Abweichungserkennung nichts vergleichen (sie verlangt einen Snapshot), und was
+ * fakturiert wurde, steht nur noch im PDF-Blob.
+ *
+ * Idempotent: der Snapshot einer Revision wird nie ueberschrieben — einmal
+ * eingefroren ist eingefroren. Mehrfachaufruf ist damit unschaedlich.
+ */
+export async function freezeInvoiceSnapshot(
+  invoiceId: string,
+  actor: string,
+  source: DownloadSource,
+  now: Date = new Date()
+): Promise<void> {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: {
+      id: true, studentId: true, year: true, month: true, totalCHF: true,
+      sessionIds: true, invoiceNumber: true, revision: true, pdfPath: true,
+      sentAt: true, paidAt: true, createdAt: true, generatedPayloadJson: true,
+    },
+  });
+  if (!invoice) return;
+
+  const existing = await prisma.invoiceSnapshot.findUnique({
+    where: { invoiceId_revision: { invoiceId: invoice.id, revision: invoice.revision } },
+    select: { id: true },
+  });
+  if (existing) return;
+
+  const { payload: snapshot } = await resolveSnapshotPayload(invoice, now);
+  await prisma.$transaction(async (tx) => {
+    await tx.invoiceSnapshot.upsert({
+      where: { invoiceId_revision: { invoiceId: invoice.id, revision: invoice.revision } },
+      update: {},
+      create: {
+        invoiceId: invoice.id,
+        revision: invoice.revision,
+        invoiceNumber: invoice.invoiceNumber,
+        totalCHF: invoice.totalCHF,
+        payloadJson: snapshot,
+        pdfPath: invoice.pdfPath,
+      },
+    });
+    await tx.invoiceAuditLog.create({
+      data: {
+        invoiceId: invoice.id,
+        action: "delivered",
+        actor,
+        afterJson: {
+          invoiceNumber: invoice.invoiceNumber,
+          revision: invoice.revision,
+          totalCHF: invoice.totalCHF,
+          sessionCount: snapshot.sessionIds.length,
+          deliveredAt: now.toISOString(),
+        },
+        note: `Rechnung ausgeliefert (${source}) — Stand eingefroren.`,
+      },
+    });
+  });
+}
 
 /**
  * Hält fest, dass eine Rechnung ausgeliefert wurde.
@@ -34,6 +106,7 @@ export async function recordInvoiceDownload(
       sentAt: true,
       paidAt: true,
       createdAt: true,
+      generatedPayloadJson: true,
       firstDownloadedAt: true,
     },
   });
@@ -44,7 +117,7 @@ export async function recordInvoiceDownload(
     return;
   }
 
-  const snapshot = await buildInvoiceSnapshotPayload(invoice, now);
+  const { payload: snapshot } = await resolveSnapshotPayload(invoice, now);
 
   await prisma.$transaction(async (tx) => {
     // Bedingtes Update: bei zwei gleichzeitigen Downloads gewinnt genau einer und

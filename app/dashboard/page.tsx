@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
-import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
+import { invalidateGlobalIncomeSummary, useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { DashboardAnalytics } from "@/components/DashboardAnalytics";
 import { MonthlyChart } from "@/components/MonthlyChart";
-import { PendingDeletionBanner } from "@/components/PendingDeletionBanner";
+import { CalendarReviewPanel } from "@/components/CalendarReviewPanel";
 import { SavingsChart, type SavingsPoint } from "@/components/SavingsChart";
 import { SessionTable, type SubscriptionAnalysisTableRow } from "@/components/SessionTable";
 import { StatCard } from "@/components/StatCard";
@@ -87,6 +87,7 @@ export default function DashboardPage() {
     monthIncome: globalMonthIncome,
     ytdIncome: globalYtdIncome,
     loading: globalIncomeLoading,
+    refresh: refreshGlobalIncome,
   } = useGlobalIncomeSummary();
   const now = getCurrentMonthYear();
 
@@ -436,15 +437,22 @@ export default function DashboardPage() {
     if ((result.pendingDeletionsTotal ?? 0) > 0) {
       parts.push(`${result.pendingDeletionsTotal} warten auf Löschbestätigung`);
     }
-    if (result.unmatched.length > 0) {
-      const n = result.unmatched.length;
+    // Offene Befunde insgesamt, nicht nur die dieses Laufs: sie stehen jetzt im
+    // Band «Kalender prüfen» auf dieser Seite und warten dort auf einen Entscheid.
+    const offeneBefunde = result.unmatchedOpenTotal ?? result.unmatched.length;
+    if (offeneBefunde > 0) {
       parts.push(
-        n === 1
-          ? "1 Kalendereintrag ohne Schülerzuordnung — Details unter Sync"
-          : `${n} Kalendereinträge ohne Schülerzuordnung — Details unter Sync`
+        offeneBefunde === 1
+          ? "1 Kalendereintrag ohne Schülerzuordnung — siehe «Kalender prüfen»"
+          : `${offeneBefunde} Kalendereinträge ohne Schülerzuordnung — siehe «Kalender prüfen»`
       );
     }
     setToast(parts.join(" · "));
+    // Der Sync hat Lektionen veraendert: den zwischengespeicherten Einkommensstand
+    // verwerfen und neu holen, sonst steht in der Kopfzeile bis zu 15 Sekunden lang
+    // die alte Summe neben den frisch geladenen Zahlen der Seite.
+    invalidateGlobalIncomeSummary();
+    void refreshGlobalIncome();
     // Das Band laedt mit: der Sync merkt die Loeschungen hier vor, also muss
     // der Entscheid direkt auf dieser Seite moeglich sein.
     setPendingRefresh((n) => n + 1);
@@ -463,7 +471,7 @@ export default function DashboardPage() {
     >
       <div className="min-w-0 space-y-5">
 
-        <PendingDeletionBanner
+        <CalendarReviewPanel
           refreshKey={pendingRefresh}
           onResolved={() => void loadSessions()}
         />

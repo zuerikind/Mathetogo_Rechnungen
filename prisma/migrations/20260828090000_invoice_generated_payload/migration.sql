@@ -1,0 +1,16 @@
+-- Der Erzeugungsstand wird an der Rechnung festgehalten.
+--
+-- Bisher entstand der InvoiceSnapshot erst bei der Auslieferung und las die
+-- Lektionen dabei FRISCH aus der Datenbank, waehrend totalCHF aus der
+-- Rechnungszeile kam. Aenderte ein Kalender-Sync zwischen Erzeugen und
+-- Ausliefern einen Betrag, beschrieb der "eingefrorene" Stand etwas anderes als
+-- das PDF, das der Kunde in der Hand hat — und die Abweichungserkennung sah
+-- nichts, weil sie den geaenderten Stand gegen sich selbst verglich.
+--
+-- Diese Spalte haelt den Stand fest, aus dem das PDF gerendert wurde. Beim
+-- Ausliefern wird er unveraendert zum Snapshot.
+--
+-- Nullable, kein Backfill: bestehende Rechnungen behalten ihr bisheriges
+-- Verhalten (Einfrieren ueber die Live-Abfrage). Historische Belege werden
+-- ausdruecklich NICHT umgeschrieben.
+ALTER TABLE "Invoice" ADD COLUMN "generatedPayloadJson" JSONB;

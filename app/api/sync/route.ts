@@ -1,9 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
+import {
+  autoResolvedIssueEventIds,
+  parseExternalUpdatedAt,
+  reconcileObservedIssue,
+  type ObservedCalendarIssue,
+} from "@/lib/calendar-sync-issues";
+import { clearIncomeSummaryCache } from "@/lib/income-summary-cache";
 import { detectInvoiceChangesInScope } from "@/lib/invoice-change-detection";
+import {
+  afterDeletionPending,
+  CALENDAR_EVENT_SEEN_RESET,
+  DELETION_CANDIDATE_WHERE,
+} from "@/lib/pending-deletion-lifecycle";
 import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
 import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
 import { zurichYearMonth } from "@/lib/month-math";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { rateAtDate, type RateHistoryEntry } from "@/lib/rate-history";
 import { resolveDeletedCalendarEvents } from "@/lib/calendar-deletions";
@@ -128,6 +141,19 @@ export async function POST(req: NextRequest) {
     }
 
     const unmatched: SyncUnmatchedEvent[] = [];
+    /**
+     * Dieselben Befunde, aber mit allem, was zum Wiedererkennen noetig ist.
+     * Der Sync-Response-Typ bleibt unveraendert; persistiert wird aus dieser Liste.
+     */
+    type IssueObservation = ObservedCalendarIssue & {
+      title: string;
+      startAt: Date | null;
+      endAt: Date | null;
+      calendarId: string;
+      details: Record<string, unknown> | null;
+    };
+    const issueObservations: IssueObservation[] = [];
+
     type UpsertTask = {
       calEventId: string;
       studentId: string;
@@ -174,36 +200,44 @@ export async function POST(req: NextRequest) {
         students.filter((s) => nameMatchesTitle(s.name, titleLower))
       );
 
+      /** Einmal notieren, zweimal gebraucht: Sync-Antwort und Dashboard-Gedaechtnis. */
+      const noteUnmatched = (
+        item: Omit<SyncUnmatchedEvent, "title" | "start">,
+        details: Record<string, unknown> | null
+      ) => {
+        unmatched.push({ title, start: startStr, ...item });
+        issueObservations.push({
+          externalEventId: calEventId,
+          externalUpdatedAt: parseExternalUpdatedAt(event.updated),
+          reason: item.reason,
+          title,
+          startAt: start,
+          endAt: end,
+          calendarId,
+          details,
+        });
+      };
+
       if (matches.length === 0) {
         const inactiveMatches = preferMostSpecificMatch(
           inactiveStudents.filter((s) => nameMatchesTitle(s.name, titleLower))
         );
         if (inactiveMatches.length > 0) {
-          unmatched.push({
-            title,
-            start: startStr,
-            reason: "inactive_match",
-            inactiveStudents: inactiveMatches.map((s) => s.name),
-          });
+          const names = inactiveMatches.map((s) => s.name);
+          noteUnmatched({ reason: "inactive_match", inactiveStudents: names }, { inactiveStudents: names });
           continue;
         }
         const suggestions = suggestCloseStudentNames(title, activeNames);
-        unmatched.push({
-          title,
-          start: startStr,
-          reason: "no_match",
-          ...(suggestions.length > 0 ? { suggestions } : {}),
-        });
+        noteUnmatched(
+          { reason: "no_match", ...(suggestions.length > 0 ? { suggestions } : {}) },
+          suggestions.length > 0 ? { suggestions } : null
+        );
         continue;
       }
       if (matches.length > 1) {
         // Ambiguous: never guess which student (and thus which tariff) applies.
-        unmatched.push({
-          title,
-          start: startStr,
-          reason: "ambiguous",
-          ambiguousStudents: matches.map((s) => s.name),
-        });
+        const names = matches.map((s) => s.name);
+        noteUnmatched({ reason: "ambiguous", ambiguousStudents: names }, { ambiguousStudents: names });
         continue;
       }
       const student = matches[0];
@@ -287,9 +321,11 @@ export async function POST(req: NextRequest) {
               year: t.year,
               notes: t.notes,
               // Der Termin ist wieder da — eine offene Loeschvormerkung ist damit
-              // gegenstandslos. Greift auch, wenn er in einem anderen Monat
+              // gegenstandslos, und ebenso ein frueheres "Behalten": verschwindet
+              // er spaeter erneut, ist das ein neuer Vorgang und darf wieder
+              // gemeldet werden. Greift auch, wenn er in einem anderen Monat
               // auftaucht: derselbe calEventId, der Upsert zieht die Zeile um.
-              pendingDeletionAt: null,
+              ...CALENDAR_EVENT_SEEN_RESET,
             },
             create: {
               studentId: t.studentId,
@@ -334,8 +370,9 @@ export async function POST(req: NextRequest) {
           student: { active: true },
           // Ausgelieferte Monate laufen unveraendert ueber den H3-Guard und P5.
           ...notDelivered,
-          // Schon vorgemerkte nicht erneut pruefen.
-          pendingDeletionAt: null,
+          // Schon vorgemerkte nicht erneut pruefen — und abgelehnte nie wieder,
+          // bis der Termin erneut im Kalender auftaucht (pending-deletion-lifecycle).
+          ...DELETION_CANDIDATE_WHERE,
         },
         select: { id: true, calEventId: true },
         orderBy: { date: "asc" },
@@ -355,7 +392,7 @@ export async function POST(req: NextRequest) {
       if (confirmedDeleted.size > 0) {
         const marked = await prisma.session.updateMany({
           where: { id: { in: Array.from(confirmedDeleted) } },
-          data: { pendingDeletionAt: new Date() },
+          data: afterDeletionPending(new Date()),
         });
         pendingMarked = marked.count;
       }
@@ -371,6 +408,86 @@ export async function POST(req: NextRequest) {
     if (allowPruneOrphans) {
       staleInvoicesRemoved = await pruneStaleInvoicesInScope({ year, month });
     }
+
+    // Nicht zugeordnete Termine festhalten, damit sie den Request ueberleben und
+    // neben den Loeschvormerkungen auf dem Dashboard erscheinen. Wie die
+    // Abweichungserkennung unten reine Zusatzarbeit: der Kalenderabgleich ist
+    // committet, ein Fehler hier darf ihn nicht als Fehlschlag erscheinen lassen.
+    let issuesOpen = 0;
+    try {
+      const observedIds = issueObservations.map((o) => o.externalEventId);
+      const stored = await prisma.calendarSyncIssue.findMany({
+        where: { externalEventId: { in: observedIds } },
+        select: { externalEventId: true, externalUpdatedAt: true, status: true, reason: true },
+      });
+      const storedById = new Map(stored.map((s) => [s.externalEventId, s]));
+      const now = new Date();
+
+      for (const observed of issueObservations) {
+        const prior = storedById.get(observed.externalEventId) ?? null;
+        const next = reconcileObservedIssue(prior, observed);
+        await prisma.calendarSyncIssue.upsert({
+          where: { externalEventId: observed.externalEventId },
+          update: {
+            status: next.status,
+            reason: observed.reason,
+            title: observed.title,
+            startAt: observed.startAt,
+            endAt: observed.endAt,
+            calendarId: observed.calendarId,
+            // DbNull, nicht undefined: undefined hiesse fuer Prisma "nicht aendern"
+            // und liesse alte Vorschlaege stehen, wenn es diesmal keine mehr gibt.
+            detailsJson: observed.details ?? Prisma.DbNull,
+            externalUpdatedAt: observed.externalUpdatedAt,
+            lastSeenAt: now,
+            // Wieder geoeffnet: die alte Erledigung gilt nicht mehr. "Ignoriert"
+            // bleibt unangetastet — reconcileObservedIssue laesst es nie wechseln.
+            ...(next.reopened ? { resolvedAt: null } : {}),
+          },
+          create: {
+            externalEventId: observed.externalEventId,
+            status: next.status,
+            reason: observed.reason,
+            title: observed.title,
+            startAt: observed.startAt,
+            endAt: observed.endAt,
+            calendarId: observed.calendarId,
+            detailsJson: observed.details ?? Prisma.DbNull,
+            externalUpdatedAt: observed.externalUpdatedAt,
+            firstSeenAt: now,
+            lastSeenAt: now,
+          },
+        });
+      }
+
+      // Titel korrigiert und die Lektion ist angelegt → der Befund ist erledigt,
+      // ohne dass jemand klicken muss.
+      const matchedEventIds = new Set(tasks.map((t) => t.calEventId));
+      const openIssues = await prisma.calendarSyncIssue.findMany({
+        where: { status: "open" },
+        select: { externalEventId: true },
+      });
+      const autoResolved = autoResolvedIssueEventIds(
+        openIssues.map((i) => i.externalEventId),
+        matchedEventIds
+      );
+      if (autoResolved.length > 0) {
+        await prisma.calendarSyncIssue.updateMany({
+          where: { externalEventId: { in: autoResolved } },
+          data: { status: "resolved", resolvedAt: now, lastSeenAt: now },
+        });
+      }
+
+      issuesOpen = await prisma.calendarSyncIssue.count({ where: { status: "open" } });
+    } catch (err) {
+      console.error("[sync] Kalender-Befunde konnten nicht gespeichert werden:", err);
+    }
+
+    // Der Sync hat Lektionen angelegt, umgehaengt oder vorgemerkt — die zwischen-
+    // gespeicherte Einkommensantwort ist damit ueberholt. Ohne das zeigt das
+    // Dashboard direkt nach dem Sync bis zu 20 Sekunden lang alte Summen neben
+    // den neuen Zahlen der Seite.
+    clearIncomeSummaryCache();
 
     // Ab hier kommt nur noch Zusatzarbeit: Der Kalenderabgleich ist committet, die
     // Sessions stehen. Ein Fehler in der Abweichungserkennung darf diese bereits
@@ -435,6 +552,8 @@ export async function POST(req: NextRequest) {
       detectionError,
       skipped: events.length - tasks.length - unmatched.length,
       unmatched,
+      /** Offene, noch nicht entschiedene Kalender-Befunde insgesamt. */
+      unmatchedOpenTotal: issuesOpen,
       totalEvents: events.length,
     });
   });

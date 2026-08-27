@@ -11,6 +11,18 @@ const SUMMARY_TTL_MS = 15_000;
 const summaryCache = new Map<string, { at: number; value: IncomeSummary }>();
 const inFlight = new Map<string, Promise<IncomeSummary>>();
 
+/**
+ * Nach einer Mutation, die Einkommen veraendert (Sync, Loeschentscheid).
+ *
+ * Ohne das zeigt die Kopfzeile bis zu 15 Sekunden lang die Summe von vor dem
+ * Sync, waehrend die Seite darunter schon die neuen Zahlen geladen hat — zwei
+ * widerspruechliche Betraege nebeneinander. Der Serverspeicher wird an derselben
+ * Stelle geleert (lib/income-summary-cache).
+ */
+export function invalidateGlobalIncomeSummary(): void {
+  summaryCache.clear();
+}
+
 export function useGlobalIncomeSummary() {
   const now = useMemo(() => new Date(), []);
   const year = now.getFullYear();

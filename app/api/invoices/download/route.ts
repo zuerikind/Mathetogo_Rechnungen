@@ -3,7 +3,7 @@ import JSZip from "jszip";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
-import { getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
+import { commitInvoiceContent, getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
 import { DELIVERED_INVOICE_WHERE, isDelivered } from "@/lib/invoice-delivery";
 import { recordInvoiceDownload } from "@/lib/invoice-download";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
@@ -129,6 +129,8 @@ export async function POST(req: NextRequest) {
     const zip = new JSZip();
     const prefix = `${year}-${String(month).padStart(2, "0")}`;
     let added = 0;
+    /** Rechnungen, die ins Archiv gekommen sind — eingefroren wird erst am Ende. */
+    const zuFrieren: string[] = [];
     const usedZipNames = new Set<string>();
     // Der ZIP-Export liefert dieselben Dokumente aus wie der Einzeldownload und wird
     // deshalb genauso erfasst: erster Download friert den Stand ein.
@@ -162,7 +164,8 @@ export async function POST(req: NextRequest) {
           usedZipNames.add(safeNameBase);
           zip.file(`${prefix}-${safeNameBase}.pdf`, Buffer.from(await storedFile.arrayBuffer()));
           added += 1;
-          await recordInvoiceDownload(existing.id, actor, "Monatsexport (ZIP)", exportedAt);
+          // Noch NICHT einfrieren — erst wenn das Archiv wirklich steht (Phase 3).
+          zuFrieren.push(existing.id);
           continue;
         }
         // Stored PDF missing (should not happen): rebuild for the ZIP only,
@@ -174,7 +177,8 @@ export async function POST(req: NextRequest) {
             usedZipNames.add(safeNameBase);
             zip.file(`${prefix}-${safeNameBase}.pdf`, await buildInvoicePdf(payload));
             added += 1;
-            await recordInvoiceDownload(existing.id, actor, "Monatsexport (ZIP)", exportedAt);
+            // Noch NICHT einfrieren — erst wenn das Archiv wirklich steht (Phase 3).
+            zuFrieren.push(existing.id);
           }
         } catch {
           // Rebuild nicht möglich — Eintrag auslassen statt ganzen Export abbrechen.
@@ -219,14 +223,17 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // Erst nach dem Upload festschreiben — gleiche Reihenfolge wie in
+      // /api/invoice/generate, damit Zeile und gespeichertes PDF nie auseinanderlaufen.
       const pdfUrl = invoicePublicUrl(year, month, studentId);
-      await prisma.invoice.update({ where: { id: invoiceId }, data: { pdfPath: pdfUrl } });
+      await commitInvoiceContent({ invoiceId, payload: { ...payload, invoiceNumber }, pdfPath: pdfUrl });
 
       usedZipNames.add(safeNameBase);
       zip.file(`${prefix}-${safeNameBase}.pdf`, pdfBuffer);
       added += 1;
       // Nach dem pdfPath-Update, damit der eingefrorene Stand den Speicherort kennt.
-      await recordInvoiceDownload(invoiceId, actor, "Monatsexport (ZIP)", exportedAt);
+      // Noch NICHT einfrieren — erst wenn das Archiv wirklich steht (Phase 3).
+      zuFrieren.push(invoiceId);
     }
 
     if (added === 0) {
@@ -236,7 +243,44 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Phase 2: Das Archiv muss zuerst stehen.
     const archive = await zip.generateAsync({ type: "nodebuffer" });
+
+    // Phase 3: Erst jetzt ausliefern-markieren.
+    //
+    // Vorher wurde jede Rechnung sofort nach ihrem PDF eingefroren. Brach der
+    // Export beim fuenften Schueler ab, waren die ersten vier unveraenderlich
+    // ausgeliefert — obwohl der Nutzer eine Fehlermeldung sah und nie ein
+    // Archiv bekam. Korrigierbar waren sie danach nur noch ueber eine Revision.
+    //
+    // Jetzt gilt: keine Datei, kein Einfrieren. Phase 1 (Nummer, PDF, Zeile)
+    // bleibt wiederholbar — dieselbe Nummer, dasselbe PDF, siehe
+    // reserveInvoiceRow —, ein Fehlversuch hinterlaesst also nur Entwuerfe.
+    //
+    // Verbleibende Bruchstelle, bewusst und dokumentiert: die Markierungen
+    // selbst sind kein einzelner Commit. Faellt die Verbindung mitten in dieser
+    // Schleife aus, sind einige Rechnungen eingefroren und andere nicht. Das ist
+    // die harmlose Richtung — eingefroren wird nur, was tatsaechlich im Archiv
+    // liegt, und der Wiederholungslauf ist idempotent (freezeInvoiceSnapshot und
+    // recordInvoiceDownload steigen bei bereits eingefrorenen Rechnungen aus).
+    // Ein Fehler hier darf das fertige Archiv nicht mehr verhindern: der Nutzer
+    // haette sonst PDFs, die als nicht ausgeliefert gelten.
+    let frozen = 0;
+    const freezeErrors: string[] = [];
+    for (const id of zuFrieren) {
+      try {
+        await recordInvoiceDownload(id, actor, "Monatsexport (ZIP)", exportedAt);
+        frozen += 1;
+      } catch (err) {
+        freezeErrors.push(id);
+        console.error("[zip-export] Einfrieren fehlgeschlagen:", id, err);
+      }
+    }
+    if (freezeErrors.length > 0) {
+      console.error(
+        `[zip-export] ${freezeErrors.length} von ${zuFrieren.length} Rechnungen nicht als ausgeliefert markiert.`
+      );
+    }
 
     return new Response(new Uint8Array(archive), {
       headers: {

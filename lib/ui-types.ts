@@ -45,6 +45,8 @@ export type SyncResponse = {
   synced: number;
   skipped: number;
   unmatched: SyncUnmatchedEvent[];
+  /** Offene, noch nicht entschiedene Kalender-Befunde insgesamt (inkl. frueherer Laeufe). */
+  unmatchedOpenTotal?: number;
   /** In diesem Lauf zur Löschung vorgemerkt (Kalendereintrag nachweislich weg). */
   pendingDeletions?: number;
   /** Offene Vormerkungen im Monat insgesamt — warten auf eine Entscheidung. */

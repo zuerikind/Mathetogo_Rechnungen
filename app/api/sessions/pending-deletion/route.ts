@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { clearIncomeSummaryCache } from "@/lib/income-summary-cache";
 import {
   confirmPendingDeletions,
   listPendingDeletions,
@@ -45,7 +46,10 @@ export async function POST(req: NextRequest) {
   const actor = session.user?.email ?? "unbekannt";
   try {
     if (body.action === "confirm") {
-      return NextResponse.json(await confirmPendingDeletions(ids, actor));
+      const result = await confirmPendingDeletions(ids, actor);
+      // Lektionen sind endgueltig weg — die zwischengespeicherte Summe stimmt nicht mehr.
+      clearIncomeSummaryCache();
+      return NextResponse.json(result);
     }
     if (body.action === "reject") {
       return NextResponse.json(await rejectPendingDeletions(ids, actor));

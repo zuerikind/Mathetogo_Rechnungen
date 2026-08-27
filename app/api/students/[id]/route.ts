@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  affectedInvoiceMonths,
+  billingScopeStudentIds,
+  evaluateRepricingGuard,
+} from "@/lib/billing-scope";
 import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
 import { zurichYearMonth } from "@/lib/month-math";
 import { prisma } from "@/lib/prisma";
@@ -107,16 +112,24 @@ export async function PUT(
     });
 
     // Warn before rewriting amounts inside months whose invoice already went out.
-    if (!Boolean(body.confirmBilledMonths) && updates.length > 0) {
-      const affected = Array.from(
-        new Set(updates.map((s) => `${zurichYearMonth(s.date).year}-${zurichYearMonth(s.date).month}`))
-      ).map((key) => {
-        const [y, m] = key.split("-").map(Number);
-        return { year: y, month: m };
-      });
+    if (updates.length > 0) {
+      const affected = affectedInvoiceMonths(updates);
+      // Familienrechnung: die Lektionen dieses Schuelers koennen auf SEINER eigenen
+      // Rechnung stehen oder auf der des verlinkten Hauptschuelers. Frueher wurde nur
+      // `studentId: params.id` geprueft — fuer ein verknuepftes Kind gibt es diese
+      // Zeile gar nicht, der Guard lief ins Leere und die Betraege einer bereits
+      // ausgelieferten Familienrechnung wurden stillschweigend neu bepreist.
+      // Wird die Verknuepfung im selben Request geaendert, zaehlen beide Ziele:
+      // die Lektion steht heute noch auf der alten Rechnung.
+      const scopeIds = Array.from(
+        new Set([
+          ...billingScopeStudentIds(params.id, existing.billedToId),
+          ...(billedToId !== undefined ? billingScopeStudentIds(params.id, billedToId) : []),
+        ])
+      );
       const billedInvoices = await prisma.invoice.findMany({
         where: {
-          studentId: params.id,
+          studentId: { in: scopeIds },
           OR: affected.map((a) => ({ year: a.year, month: a.month })),
           // Heruntergeladen zaehlt mit: die Rechnung ist raus, ihre Lektionen
           // duerfen nicht unbemerkt neu bepreist werden.
@@ -125,11 +138,18 @@ export async function PUT(
         select: { year: true, month: true },
         orderBy: [{ year: "asc" }, { month: "asc" }],
       });
-      if (billedInvoices.length > 0) {
+      const guard = evaluateRepricingGuard({
+        affected,
+        deliveredInScope: billedInvoices,
+        confirmed: Boolean(body.confirmBilledMonths),
+      });
+      if (!guard.allowed) {
+        // Vor jeder Schreiboperation: weder der Student-Update noch die
+        // Session-Neubepreisung unten laufen, die Betraege bleiben unangetastet.
         return NextResponse.json(
           {
             error: "Tarifaenderung betrifft bereits ausgelieferte Monate (gesendet, bezahlt oder heruntergeladen).",
-            billedMonths: billedInvoices.map((i) => ({ year: i.year, month: i.month })),
+            billedMonths: guard.billedMonths,
           },
           { status: 409 }
         );

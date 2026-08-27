@@ -20,14 +20,29 @@ export function formatDuration(minutes: number): string {
   return `${hours}h ${remainder}min`;
 }
 
+/**
+ * Ein Zeitpunkt, der in Europe/Zurich garantiert auf dem gemeinten Kalendertag liegt.
+ *
+ * `new Date(year, month, day)` nimmt die Zeitzone des ausfuehrenden Rechners. Auf
+ * Vercel (UTC) ging das gut, im Browser eines Nutzers oestlich von Zuerich nicht:
+ * dort ist die lokale Mitternacht des 15. bereits der 14. in Zuerich, und die
+ * Faelligkeit auf Rechnung und Mahnung waere um einen Tag verrutscht. 12:00 UTC
+ * liegt von UTC-11 bis UTC+11 auf demselben Datum — dieselbe Vorsichtsmassnahme,
+ * die lib/reminder-tokens schon benutzt.
+ */
+function zurichSafeInstant(year: number, monthIndex: number, day: number): Date {
+  return new Date(Date.UTC(year, monthIndex, day, 12, 0, 0));
+}
+
 export function getPeriodLabel(month: number, year: number): string {
-  const monthName = monthFormatter.format(new Date(year, month - 1, 1));
+  const monthName = monthFormatter.format(zurichSafeInstant(year, month - 1, 1));
   return `${monthName.charAt(0).toUpperCase()}${monthName.slice(1)} ${year}`;
 }
 
 export function getInvoiceDueDate(year: number, month: number): Date {
   // "Mid next month": always the 15th of the month after invoice period.
-  return new Date(year, month, 15);
+  // monthIndex = month (0-basiert) ist bereits der Folgemonat.
+  return zurichSafeInstant(year, month, 15);
 }
 
 /**

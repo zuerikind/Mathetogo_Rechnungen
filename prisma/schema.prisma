@@ -69,6 +69,13 @@ model Session {
   /// weiter zum Betrag, damit sich ohne Zutun keine Summe bewegt. Taucht der
   /// Termin wieder auf, hebt der Upsert die Vormerkung auf.
   pendingDeletionAt DateTime?
+  /// Der Nutzer hat die Loeschung abgelehnt ("Behalten") — oder der Monat war
+  /// bereits ausgeliefert. Ohne diese Spur setzte der naechste Sync dieselbe
+  /// Vormerkung sofort wieder: er suchte Kandidaten mit pendingDeletionAt = null,
+  /// und genau darauf setzt das Ablehnen zurueck. Der Upsert loescht das Feld,
+  /// sobald der Kalendereintrag wieder auftaucht — danach kann derselbe Termin
+  /// erneut Kandidat werden, wenn er wieder verschwindet.
+  deletionRejectedAt DateTime?
   createdAt   DateTime @default(now())
 
   @@index([year, month, date])
@@ -102,6 +109,12 @@ model Invoice {
   reviewedAt    DateTime?
   /// Zeitpunkt, zu dem der Sync die Abweichung erkannt hat.
   changeDetectedAt DateTime?
+  /// Der Stand, wie er BEIM ERZEUGEN feststand — genau das, was das PDF rendert.
+  /// Wird beim Ausliefern unveraendert zum InvoiceSnapshot. Ohne ihn las das
+  /// Einfrieren die Lektionen neu aus der Datenbank und konnte dem bereits
+  /// ausgelieferten PDF widersprechen. Null = vor dieser Aenderung erzeugt;
+  /// solche Zeilen frieren weiterhin ueber die Live-Abfrage ein.
+  generatedPayloadJson Json?
   /// Ausgabestand; jede Neuausstellung unter gleicher Nummer erhöht ihn (P6).
   revision      Int       @default(1)
   /// Storniert: die Rechnung ist gegenstandslos, bleibt aber samt Nummer und PDF
@@ -227,6 +240,49 @@ model MiscEarning {
   updatedAt DateTime          @updatedAt
 
   @@unique([year, month, source])
+}
+
+enum CalendarIssueStatus {
+  open
+  resolved
+  ignored
+}
+
+/// Kalendereintraege, die der Sync keinem Schueler zuordnen konnte.
+///
+/// Die Erkennung gab es laengst (lib/sync-unmatched), aber nur als Teil der
+/// Sync-Antwort: wer die Sync-Seite nicht offen hatte, sah den Befund nie wieder.
+/// Hier ueberlebt er den Request, damit er neben den Loeschvormerkungen auf dem
+/// Dashboard steht und einmal entschieden werden kann.
+///
+/// Identitaet ist die Google-Event-ID. `externalUpdatedAt` ist Googles eigener
+/// `updated`-Zeitstempel und dient als Versionsmarke: aendert sich der Termin
+/// materiell, darf ein bereits erledigter Fall wieder auftauchen.
+model CalendarSyncIssue {
+  id                String              @id @default(cuid())
+  /// Google-Event-ID — stabil ueber Syncs hinweg.
+  externalEventId   String              @unique
+  /// Googles `updated`-Zeitstempel beim letzten Sehen.
+  externalUpdatedAt DateTime?
+  status            CalendarIssueStatus @default(open)
+  /// SyncUnmatchedReason: "no_match" | "ambiguous" | "inactive_match"
+  reason            String
+  title             String
+  startAt           DateTime?
+  endAt             DateTime?
+  calendarId        String?
+  /// Vorschlaege bzw. mehrdeutige/inaktive Schuelernamen — der Zusatz aus SyncUnmatchedEvent.
+  detailsJson       Json?
+  firstSeenAt       DateTime            @default(now())
+  lastSeenAt        DateTime            @default(now())
+  /// Geprueft und behoben; taucht bei materieller Aenderung des Termins wieder auf.
+  resolvedAt        DateTime?
+  /// Absichtlich kein Schuelertermin; bleibt fuer diese Event-ID dauerhaft weg.
+  ignoredAt         DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([status, lastSeenAt])
 }
 
 model Tutor24Contact {

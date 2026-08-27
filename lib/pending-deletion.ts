@@ -1,7 +1,9 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { isDelivered } from "@/lib/invoice-delivery";
+import { afterDeletionRejected } from "@/lib/pending-deletion-lifecycle";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
+import { billingTargetIdOf } from "@/lib/billing-scope";
 
 /**
  * Auflösung der Löschvormerkungen aus dem Sync.
@@ -39,7 +41,7 @@ async function billingTargetId(studentId: string): Promise<string> {
     where: { id: studentId },
     select: { billedToId: true },
   });
-  return s?.billedToId ?? studentId;
+  return billingTargetIdOf(studentId, s?.billedToId ?? null);
 }
 
 async function isMonthDelivered(studentId: string, year: number, month: number): Promise<boolean> {
@@ -136,7 +138,10 @@ export async function confirmPendingDeletions(
 
     if (delivered) {
       await prisma.$transaction([
-        prisma.session.update({ where: { id: s.id }, data: { pendingDeletionAt: null } }),
+        // Auch hier die dauerhafte Marke: die Lektion darf nicht weg, der Sync
+        // soll sie deshalb nicht bei jedem Lauf erneut vorschlagen. Die Abweichung
+        // meldet weiterhin die Abweichungserkennung (P5).
+        prisma.session.update({ where: { id: s.id }, data: afterDeletionRejected(now) }),
         prisma.invoiceAuditLog.create({
           data: {
             invoiceId: auditId,
@@ -200,6 +205,7 @@ export async function rejectPendingDeletions(
   });
 
   let released = 0;
+  const now = new Date();
   for (const s of sessions) {
     const targetId = await billingTargetId(s.studentId);
     const invoice = await prisma.invoice.findUnique({
@@ -207,7 +213,9 @@ export async function rejectPendingDeletions(
       select: { id: true },
     });
     await prisma.$transaction([
-      prisma.session.update({ where: { id: s.id }, data: { pendingDeletionAt: null } }),
+      // deletionRejectedAt haelt den Entscheid fest — sonst merkt der naechste
+      // Sync dieselbe Lektion sofort wieder vor (siehe pending-deletion-lifecycle).
+      prisma.session.update({ where: { id: s.id }, data: afterDeletionRejected(now) }),
       prisma.invoiceAuditLog.create({
         data: {
           invoiceId: invoice?.id ?? monthKey(s.studentId, s.year, s.month),
