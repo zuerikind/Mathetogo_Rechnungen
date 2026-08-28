@@ -244,8 +244,13 @@ export async function buildInvoicePdf(payload: InvoicePayload): Promise<Buffer> 
       (await fetchRasterImage(`${baseUrl}/mathetogo-logo.png`))?.dataUrl;
   }
 
+  // Beide Endungen, weil das Format ohnehin aus dem Inhalt gelesen wird
+  // (sniffImageMime) und nicht aus dem Namen: der bisherige Zahlteil war ein
+  // JPEG, das .png hiess. Ein neuer Slip mit der ehrlichen Endung fiel deshalb
+  // aus der Liste — die Rechnung druckte dann kommentarlos IBAN statt Zahlteil.
   const slip = await getFirstAvailableRasterImage([
     "public/qr-raiffeisen-payment-slip.png",
+    "public/qr-raiffeisen-payment-slip.jpg",
     process.env.INVOICE_PAYMENT_SLIP_PATH ?? "",
     "public/einzahlungsschein.png",
     "public/payment-slip.png",
