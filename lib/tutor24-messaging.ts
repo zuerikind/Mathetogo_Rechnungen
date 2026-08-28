@@ -16,22 +16,61 @@ export function sleep(ms: number) {
 
 const NAV_TIMEOUT_MS = 30_000;
 
-/** goto with domcontentloaded; continues if the page is partially loaded after timeout. */
+/**
+ * Netzfehler, die voruebergehen — der Lauf darf daran nicht sterben.
+ *
+ * ERR_NETWORK_IO_SUSPENDED kommt, wenn Windows die Netzwerk-IO anhaelt: Standby,
+ * zugeklappter Deckel, schlafender WLAN-Adapter. Der Lauf dauert lange, das
+ * passiert also irgendwann zwangslaeufig. Vorher warf goto den Fehler durch bis
+ * in die Seitenschleife, die ausserhalb des try/catch der einzelnen Gesuche
+ * liegt — ein einziger Aussetzer beendete damit den ganzen Durchgang samt der
+ * noch offenen Fächer.
+ */
+const RETRYABLE_NET_ERRORS = [
+  "ERR_NETWORK_IO_SUSPENDED",
+  "ERR_NETWORK_CHANGED",
+  "ERR_INTERNET_DISCONNECTED",
+  "ERR_NAME_NOT_RESOLVED",
+  "ERR_CONNECTION_RESET",
+  "ERR_CONNECTION_CLOSED",
+  "ERR_CONNECTION_TIMED_OUT",
+  "ERR_CONNECTION_FAILED",
+  "ERR_ADDRESS_UNREACHABLE",
+  "ERR_SOCKET_NOT_CONNECTED",
+];
+
+/** Wartezeiten zwischen den Versuchen — grosszuegig, weil das Netz nach dem
+ *  Aufwachen ein paar Sekunden braucht, bis DNS wieder antwortet. */
+const NAV_RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
+
+/** goto with domcontentloaded; continues if the page is partially loaded after
+ *  timeout, and retries transient network failures (standby, WLAN change). */
 export async function gotoTutor24(
   page: import("playwright").Page,
   url: string,
   pushLog?: (s: string) => void
 ): Promise<void> {
-  try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const current = page.url();
-    if (msg.includes("Timeout") && !current.includes("about:blank")) {
-      pushLog?.(`${ts()} ⚠ Langsames Laden (${current}) — fahre fort`);
-      return;
+  for (let versuch = 0; ; versuch++) {
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+      if (versuch > 0) pushLog?.(`${ts()} ✓ Netz wieder da — ${url} geladen`);
+      break;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const current = page.url();
+      if (msg.includes("Timeout") && !current.includes("about:blank")) {
+        pushLog?.(`${ts()} ⚠ Langsames Laden (${current}) — fahre fort`);
+        return;
+      }
+      const retryable = RETRYABLE_NET_ERRORS.find((code) => msg.includes(code));
+      const delay = NAV_RETRY_DELAYS_MS[versuch];
+      if (!retryable || delay === undefined) throw err;
+      pushLog?.(
+        `${ts()} ⚠ Netzfehler ${retryable} — neuer Versuch in ${delay / 1000}s ` +
+          `(${versuch + 1}/${NAV_RETRY_DELAYS_MS.length})`
+      );
+      await sleep(delay);
     }
-    throw err;
   }
   await sleep(400);
 }

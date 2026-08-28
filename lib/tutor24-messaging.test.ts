@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sendMessageOnListing } from "./tutor24-messaging";
+import { gotoTutor24, sendMessageOnListing } from "./tutor24-messaging";
 
 /**
  * Regression: ein ElementHandle darf nach einer Navigation nicht mehr benutzt werden.
@@ -100,4 +100,69 @@ describe("sendMessageOnListing — Handles über Navigationen hinweg", () => {
     },
     30_000
   );
+});
+
+/**
+ * Regression: ERR_NETWORK_IO_SUSPENDED (Standby, WLAN-Wechsel) beendete den
+ * ganzen Lauf. Der Aufruf der Listenseite liegt ausserhalb des try/catch der
+ * einzelnen Gesuche, ein Aussetzer riss also auch die noch offenen Fächer mit.
+ *
+ * Der Fall mit erschoepften Versuchen ist bewusst NICHT getestet: er wuerde die
+ * echten 3+10+30 s abwarten. Wie oft es probiert, steht in NAV_RETRY_DELAYS_MS.
+ */
+function makeGotoPage(fehler: string[], startUrl = "about:blank") {
+  let url = startUrl;
+  const versuche: string[] = [];
+  const page = {
+    url: () => url,
+    goto: async (to: string) => {
+      const fehlerJetzt = fehler[versuche.length];
+      versuche.push(to);
+      // Timeouts melden sich ohne net::-Praefix — genau daran unterscheidet
+      // gotoTutor24 "langsam" von "kein Netz".
+      if (fehlerJetzt?.startsWith("Timeout")) throw new Error(`page.goto: ${fehlerJetzt}`);
+      if (fehlerJetzt) throw new Error(`page.goto: net::${fehlerJetzt} at ${to}`);
+      url = to;
+    },
+  };
+  return { page: page as unknown as import("playwright").Page, versuche };
+}
+
+describe("gotoTutor24 — voruebergehende Netzfehler", () => {
+  it(
+    "wiederholt nach ERR_NETWORK_IO_SUSPENDED und laedt die Seite danach",
+    async () => {
+      const stub = makeGotoPage(["ERR_NETWORK_IO_SUSPENDED"]);
+
+      // Vor dem Fix: wirft durch und beendet den Durchgang.
+      await expect(gotoTutor24(stub.page, "https://www.tutor24.ch/de/jobs/search?page=9"))
+        .resolves.toBeUndefined();
+
+      expect(stub.versuche).toHaveLength(2);
+      expect(stub.page.url()).toContain("page=9");
+    },
+    30_000
+  );
+
+  // Der Timeout-Zweig ist aelter als die Wiederholung und muss ihr vorausgehen:
+  // wuerde er in die Kandidatenliste rutschen, wartete jede langsame Seite
+  // zusaetzlich 3+10+30 s, obwohl sie laengst teilweise geladen ist.
+  it("faehrt bei Timeout mit teilweise geladener Seite fort, ohne zu wiederholen", async () => {
+    const stub = makeGotoPage(["Timeout 30000ms exceeded"], "https://www.tutor24.ch/de/jobs/123");
+
+    await expect(
+      gotoTutor24(stub.page, "https://www.tutor24.ch/de/jobs/456")
+    ).resolves.toBeUndefined();
+
+    expect(stub.versuche).toHaveLength(1);
+  });
+
+  it("wirft einen echten Fehler sofort durch, ohne zu wiederholen", async () => {
+    const stub = makeGotoPage(["ERR_CERT_AUTHORITY_INVALID"]);
+
+    await expect(gotoTutor24(stub.page, "https://www.tutor24.ch/de/jobs/search")).rejects.toThrow(
+      "ERR_CERT_AUTHORITY_INVALID"
+    );
+    expect(stub.versuche).toHaveLength(1);
+  });
 });
