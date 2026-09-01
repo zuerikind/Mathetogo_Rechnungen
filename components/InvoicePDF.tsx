@@ -267,10 +267,16 @@ export function InvoicePDF({
           subtotalCHF: payload.sessionsSubtotalCHF,
         },
       ];
-  const isFamily = sections.length > 1;
-  const recipientName = isFamily
-    ? sections.map((s) => s.student.name).join(" & ")
-    : payload.student.name;
+  // Abschnittsueberschriften, sobald der Beleg jemand anderen als den Zahler
+  // auffuehrt — auch bei nur EINEM Abschnitt. Zahlt Nikola allein fuer William,
+  // steht Nikola oben als Empfaenger und William ueber seinen Lektionen; ohne
+  // diese zweite Bedingung fielen die Lektionen namenlos unter den Zahler.
+  const isFamily =
+    sections.length > 1 || sections.some((s) => s.student.id !== payload.student.id);
+  const recipientName =
+    sections.length > 1
+      ? sections.map((s) => s.student.name).join(" & ")
+      : payload.student.name;
   const paymentSlipStyle =
     paymentSlipSrc && paymentSlipWidthPt && paymentSlipHeightPt
       ? { ...styles.paymentSlip, width: paymentSlipWidthPt, height: paymentSlipHeightPt }

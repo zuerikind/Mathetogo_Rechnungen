@@ -187,6 +187,23 @@ export function shapeSnapshotFromGeneration(input: GenerationShapeInput): Invoic
   });
 }
 
+/**
+ * Welche Abschnitte gehoeren auf den Beleg?
+ *
+ * Abschnitte ohne Lektionen fallen weg — auch der des Zahlers. Zahlt jemand nur
+ * fuer seine Kinder, stand sonst sein leerer Abschnitt mit "Zwischensumme … CHF
+ * 0.00" auf der Rechnung. Nur wenn dadurch gar nichts uebrig bliebe (z. B. eine
+ * reine Abo-Rechnung), bleibt der Zahler stehen, damit der Beleg jemanden nennt.
+ */
+export function visibleSections<T extends { student: { id: string }; sessions: unknown[] }>(
+  sections: T[],
+  payerId: string
+): T[] {
+  const withSessions = sections.filter((sec) => sec.sessions.length > 0);
+  if (withSessions.length > 0) return withSessions;
+  return sections.filter((sec) => sec.student.id === payerId);
+}
+
 export function parseSessionIds(raw: string): string[] {
   try {
     const parsed = JSON.parse(raw || "[]") as unknown;

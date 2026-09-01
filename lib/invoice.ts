@@ -14,7 +14,7 @@ import {
   excludeAlreadyBilledSessions,
 } from "@/lib/billing-scope";
 import { BILLED_ELSEWHERE_WHERE } from "@/lib/invoice-delivery";
-import { shapeSnapshotFromGeneration } from "@/lib/invoice-snapshot-shape";
+import { shapeSnapshotFromGeneration, visibleSections } from "@/lib/invoice-snapshot-shape";
 import { getTutorProfile, TutorProfileData } from "@/lib/tutor-profile";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 
@@ -188,17 +188,21 @@ export async function getInvoicePayload(
   );
 
   const roundCents = (n: number) => Math.round(n * 100) / 100;
-  const sections: InvoiceSection[] = members
-    .map((m) => {
+  // Kinder ohne Lektionen im Monat erscheinen nicht auf der Rechnung — und der
+  // Zahler selbst auch nicht, wenn er nur fuer seine Kinder zahlt (sonst stuende
+  // "Zwischensumme <Zahler> CHF 0.00" auf dem Beleg). Er bleibt nur, wenn sonst
+  // gar kein Abschnitt uebrig bliebe.
+  const sections: InvoiceSection[] = visibleSections(
+    members.map((m) => {
       const own = groupSessions.filter((s) => s.studentId === m.id);
       return {
         student: m,
         sessions: own,
         subtotalCHF: roundCents(own.reduce((acc, s) => acc + s.amountCHF, 0)),
       };
-    })
-    // Kinder ohne Lektionen im Monat erscheinen nicht auf der Rechnung.
-    .filter((sec) => sec.student.id === student.id || sec.sessions.length > 0);
+    }),
+    student.id
+  );
 
   const sessions = sections.flatMap((sec) => sec.sessions);
   const sessionsSubtotalCHF = roundCents(sessions.reduce((acc, s) => acc + s.amountCHF, 0));

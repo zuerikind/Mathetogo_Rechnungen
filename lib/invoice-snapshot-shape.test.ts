@@ -7,6 +7,7 @@ import {
   type ShapeSession,
   shapeSnapshotFromGeneration,
   pickStoredGenerationPayload,
+  visibleSections,
 } from "./invoice-snapshot-shape";
 
 const FROZEN = new Date("2026-08-02T09:00:00Z");
@@ -291,5 +292,25 @@ describe("pickStoredGenerationPayload — Auswahl zwischen gespeichert und live"
   it("ein leerer, aber gueltiger Stand ist brauchbar", () => {
     const leer = { sessionIds: [], totalCHF: 0, sections: [] };
     expect(pickStoredGenerationPayload(leer)).toBe(leer);
+  });
+});
+
+describe("visibleSections — leerer Abschnitt des Zahlers", () => {
+  const sec = (id: string, n: number) => ({ student: { id }, sessions: Array(n).fill(0) });
+
+  it("laesst den Zahler weg, wenn er nur fuer seine Kinder zahlt", () => {
+    // Vorher stand "Zwischensumme Nikola CHF 0.00" auf dem Beleg.
+    const out = visibleSections([sec("nikola", 0), sec("william", 4)], "nikola");
+    expect(out.map((s) => s.student.id)).toEqual(["william"]);
+  });
+
+  it("laesst Kinder ohne Lektionen weg, behaelt den Zahler mit Lektionen", () => {
+    const out = visibleSections([sec("vincent", 7), sec("aurel", 0), sec("elenor", 4)], "vincent");
+    expect(out.map((s) => s.student.id)).toEqual(["vincent", "elenor"]);
+  });
+
+  it("behaelt den Zahler, wenn sonst gar kein Abschnitt bliebe (z. B. reine Abo-Rechnung)", () => {
+    const out = visibleSections([sec("nikola", 0), sec("william", 0)], "nikola");
+    expect(out.map((s) => s.student.id)).toEqual(["nikola"]);
   });
 });
