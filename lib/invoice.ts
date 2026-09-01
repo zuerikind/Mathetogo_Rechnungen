@@ -23,6 +23,7 @@ import {
 import { shapeSnapshotFromGeneration, visibleSections } from "@/lib/invoice-snapshot-shape";
 import { getTutorProfile, TutorProfileData } from "@/lib/tutor-profile";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
+import { ACTIVE_SESSION_WHERE } from "@/lib/calendar-cancellation";
 
 // amountCHF bewusst neu gesetzt statt aus Session gepickt: das Prisma-Modell
 // fuehrt es seit P2c als Decimal, der erweiterte Client in lib/prisma.ts liefert
@@ -138,7 +139,8 @@ export async function getInvoicePayload(
 
   const [allGroupSessions, subscriptions] = await Promise.all([
     prisma.session.findMany({
-      where: { studentId: { in: memberIds }, year, month },
+      // Soft-stornierte Lektionen kommen auf keine Rechnung.
+      where: { studentId: { in: memberIds }, year, month, ...ACTIVE_SESSION_WHERE },
       orderBy: { date: "asc" },
       select: {
         id: true,
@@ -433,7 +435,10 @@ export async function calendarPreflight(
 
 /** Alle Lektionen eines Monats — der Umfang der Vorpruefung fuer den ZIP-Export. */
 export async function monthSessionIds(year: number, month: number): Promise<string[]> {
-  const rows = await prisma.session.findMany({ where: { year, month }, select: { id: true } });
+  const rows = await prisma.session.findMany({
+    where: { year, month, ...ACTIVE_SESSION_WHERE },
+    select: { id: true },
+  });
   return rows.map((r) => r.id);
 }
 

@@ -53,6 +53,28 @@ export type SyncResponse = {
   pendingDeletionsTotal?: number;
   /** Kandidaten, die diesmal nicht mehr einzeln geprüft wurden (Limit pro Lauf). */
   pendingUnverified?: number;
+  /**
+   * Wurde die Google-Seitenkette bis zum Ende gelesen?
+   *
+   * false heisst: die Terminliste ist unvollständig. Der Abgleich der gelesenen
+   * Termine stimmt weiterhin, aber "fehlt" bedeutet dann NICHT "abgesagt" — es
+   * wird in diesem Lauf nichts wegen blosser Abwesenheit storniert.
+   */
+  pagesComplete?: boolean;
+  pages?: number;
+  /** Kompakte Bilanz des Laufs: was automatisch geschah, was offen bleibt. */
+  summary?: {
+    /** Lektionen, die eine neue Kalender-ID bekamen statt eines Duplikats. */
+    relinked: number;
+    /** Automatisch soft-stornierte Lektionen (Absage im Kalender). */
+    cancelled: number;
+    /** Automatisch wieder aktivierte Lektionen (Termin ist zurück). */
+    reactivated: number;
+    /** Befunde, die ein Mensch entscheiden muss — blockieren die Auslieferung. */
+    needsReview: number;
+  };
+  /** Stornierkandidaten, die diesmal nicht mehr bei Google nachgefragt wurden. */
+  cancelUnverified?: number;
   staleInvoicesRemoved?: number;
   /** From API when calendar returns events (debug / UX). */
   totalEvents?: number;

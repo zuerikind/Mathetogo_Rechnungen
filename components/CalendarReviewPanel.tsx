@@ -45,12 +45,16 @@ type IntegrityReason =
   | "session_orphan"
   | "duplicate_slot"
   | "identity_ambiguous"
-  | "identity_conflict";
+  | "identity_conflict"
+  | "cancel_needs_review"
+  | "reactivate_needs_review";
 const INTEGRITY_REASONS: IntegrityReason[] = [
   "session_orphan",
   "duplicate_slot",
   "identity_ambiguous",
   "identity_conflict",
+  "cancel_needs_review",
+  "reactivate_needs_review",
 ];
 const isIntegrityRow = (row: CalendarIssueRow): boolean =>
   (INTEGRITY_REASONS as string[]).includes(row.reason);
@@ -64,6 +68,8 @@ const ISSUE_REASON_LABEL: Record<CalendarIssueRow["reason"], string> = {
   duplicate_slot: "Mögliche doppelte Lektion",
   identity_ambiguous: "Zuordnung unklar",
   identity_conflict: "Rechnung bleibt wie ausgeliefert",
+  cancel_needs_review: "Absage nicht übernommen",
+  reactivate_needs_review: "Termin zurück, Rechnung schon raus",
 };
 
 /** Was der Nutzer bei einem Integritaetsbefund tun kann — ohne Fachjargon. */
@@ -83,6 +89,14 @@ const INTEGRITY_HINT: Record<IntegrityReason, string> = {
     "Der Kalendertermin wurde wieder mit der bestehenden Lektion verknüpft, sieht dort " +
     "aber inzwischen anders aus. Weil die Rechnung dieses Monats bereits ausgeliefert ist, " +
     "bleiben Dauer und Betrag wie fakturiert. Korrektur nur über \"Neu ausstellen\".",
+  cancel_needs_review:
+    "Der Termin ist im Kalender abgesagt, die Lektion wurde aber NICHT automatisch " +
+    "storniert — sie liegt in der Vergangenheit oder steht schon auf einer ausgelieferten " +
+    "Rechnung. Sie zählt weiter zum Betrag, bis hier entschieden ist.",
+  reactivate_needs_review:
+    "Der Termin ist wieder im Kalender, der Storno wurde aber NICHT automatisch " +
+    "aufgehoben: die Rechnung dieses Monats ist bereits ausgeliefert. Eine Reaktivierung " +
+    "würde den Betrag gegen den ausgelieferten Stand verändern.",
 };
 
 const zurichDayTime = new Intl.DateTimeFormat("de-CH", {

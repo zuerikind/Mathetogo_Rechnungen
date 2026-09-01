@@ -4,6 +4,7 @@ import { isDelivered } from "@/lib/invoice-delivery";
 import { afterDeletionRejected } from "@/lib/pending-deletion-lifecycle";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { billingTargetIdOf } from "@/lib/billing-scope";
+import { ACTIVE_SESSION_WHERE } from "@/lib/calendar-cancellation";
 
 /**
  * Auflösung der Löschvormerkungen aus dem Sync.
@@ -60,6 +61,9 @@ export async function listPendingDeletions(opts?: {
   const rows = await prisma.session.findMany({
     where: {
       pendingDeletionAt: { not: null },
+      // Bereits soft-storniert: der Fall ist entschieden, er gehoert nicht mehr
+      // in die Liste der offenen Vormerkungen.
+      ...ACTIVE_SESSION_WHERE,
       ...(opts?.year !== undefined ? { year: opts.year } : {}),
       ...(opts?.month !== undefined ? { month: opts.month } : {}),
     },

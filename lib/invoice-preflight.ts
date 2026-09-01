@@ -20,6 +20,7 @@
  * genau die Taste, die im August gedrueckt worden waere.
  */
 
+import { CANCELLATION_REASONS } from "@/lib/calendar-cancellation";
 import { INTEGRITY_REASONS } from "@/lib/calendar-integrity";
 import { IDENTITY_REASONS } from "@/lib/calendar-identity";
 
@@ -27,6 +28,7 @@ import { IDENTITY_REASONS } from "@/lib/calendar-identity";
 export const BLOCKING_ISSUE_REASONS: string[] = [
   ...INTEGRITY_REASONS,
   ...IDENTITY_REASONS,
+  ...CANCELLATION_REASONS,
 ];
 
 export type PreflightIssue = {

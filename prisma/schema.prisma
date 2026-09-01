@@ -76,10 +76,38 @@ model Session {
   /// sobald der Kalendereintrag wieder auftaucht — danach kann derselbe Termin
   /// erneut Kandidat werden, wenn er wieder verschwindet.
   deletionRejectedAt DateTime?
+  /// Googles stabile Termin-Identitaet. Ueberlebt einen Wechsel der Event-ID,
+  /// wenn derselbe Termin kopiert, verschoben oder importiert wird — und ist
+  /// deshalb der bessere Anker als `calEventId` allein.
+  iCalUID     String?
+  /// Serien-Master, wenn diese Lektion eine Instanz einer Serie ist.
+  recurringEventId String?
+  /// Googles `originalStartTime` der Serieninstanz. Zusammen mit iCalUID
+  /// identifiziert es die Instanz auch dann noch, wenn sie verschoben wurde.
+  originalStartAt DateTime?
+  /// Googles `status` beim letzten Sehen: confirmed | tentative | cancelled.
+  calStatus   String?
+  /// Googles `updated` beim letzten Sehen — die Versionsmarke des Termins.
+  calUpdatedAt DateTime?
+  /// Soft-Storno: die Lektion faellt aus, die ZEILE bleibt.
+  ///
+  /// Bewusst kein Loeschen. Eine geloeschte Zeile ist nicht mehr pruefbar, nicht
+  /// mehr reaktivierbar und hinterlaesst in einem ausgelieferten Beleg eine
+  /// Position, zu der es nichts mehr gibt. Stornierte Lektionen zaehlen nicht
+  /// zum Ertrag und kommen auf keine Rechnung — taucht der Termin wieder auf,
+  /// hebt der Sync den Storno von selbst wieder auf.
+  cancelledAt DateTime?
+  /// Woher der Storno kam: "google_cancelled" (Google meldet status=cancelled),
+  /// "google_missing" (Termin nachweislich weg) oder "manual".
+  cancelReason String?
   createdAt   DateTime @default(now())
 
   @@index([year, month, date])
   @@index([studentId, year, month])
+  /// Identitaetsaufloesung Stufe c: iCalUID + urspruengliche Startzeit.
+  @@index([iCalUID, originalStartAt])
+  /// Geldabfragen filtern auf cancelledAt IS NULL.
+  @@index([year, month, cancelledAt])
 }
 
 model Invoice {

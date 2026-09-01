@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { ACTIVE_SESSION_WHERE } from "@/lib/calendar-cancellation";
 
 /**
  * Read-only Datenquelle für die Dashboard-Analysen.
@@ -17,7 +18,7 @@ export async function GET() {
       select: { id: true, name: true, active: true, ratePerMin: true, billedToId: true },
     }),
     prisma.session.findMany({
-      where: { date: { gte: since } },
+      where: { date: { gte: since }, ...ACTIVE_SESSION_WHERE },
       select: {
         id: true,
         studentId: true,
@@ -48,12 +49,14 @@ export async function GET() {
     }),
     prisma.session.groupBy({
       by: ["studentId"],
+      where: ACTIVE_SESSION_WHERE,
       _min: { date: true },
       _max: { date: true },
       _count: { _all: true },
     }),
     prisma.session.groupBy({
       by: ["year", "month"],
+      where: ACTIVE_SESSION_WHERE,
       _count: { _all: true },
       _sum: { amountCHF: true },
       orderBy: [{ year: "asc" }, { month: "asc" }],

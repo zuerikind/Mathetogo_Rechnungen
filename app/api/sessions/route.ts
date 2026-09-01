@@ -6,6 +6,7 @@ import {
   mergeManualBaselineSessions,
 } from "@/lib/manual-revenue";
 import { prisma } from "@/lib/prisma";
+import { ACTIVE_SESSION_WHERE } from "@/lib/calendar-cancellation";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -18,6 +19,9 @@ export async function GET(req: NextRequest) {
 
   const sessions = await prisma.session.findMany({
     where: {
+      // Soft-stornierte Lektionen zaehlen zu keinem Betrag; diese Liste speist
+      // Rechnungsvorschau, Dashboard und Sync-Seite.
+      ...ACTIVE_SESSION_WHERE,
       ...(studentId ? { studentId } : {}),
       ...(year ? { year: Number(year) } : {}),
       ...(month ? { month: Number(month) } : {}),

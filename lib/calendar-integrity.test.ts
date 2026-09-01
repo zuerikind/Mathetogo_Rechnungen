@@ -303,8 +303,11 @@ describe("Erkennung veraendert nichts (Quellpruefung)", () => {
     // weiterhin steuern — aber nicht die Erkennung.
     expect(integrityBlock).not.toContain("allowPruneOrphans");
     expect(integrityBlock).not.toContain("notDelivered");
-    // Der Monatsumfang ist ungefiltert: alle Lektionen des Monats.
-    expect(integrityBlock).toContain("where: { year, month }");
+    // Der Monatsumfang bleibt vollstaendig. Einzige Einschraenkung sind
+    // soft-stornierte Lektionen: die sind entschieden und weder Waise noch
+    // Doppelbelegung. Bewusst genau dieser Filter und kein anderer — ohne ihn
+    // bliebe nach jeder automatischen Absage ein Befund stehen.
+    expect(integrityBlock).toContain("where: { year, month, ...ACTIVE_SESSION_WHERE }");
   });
 
   it("der Schutz ausgelieferter Monate beim Loeschen bleibt unveraendert", () => {

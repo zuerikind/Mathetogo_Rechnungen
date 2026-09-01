@@ -9,6 +9,7 @@ import { isDelivered } from "@/lib/invoice-delivery";
 import { prisma } from "@/lib/prisma";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import { MANUAL_BASELINE_STUDENT_ID } from "@/lib/ui-types";
+import { ACTIVE_SESSION_WHERE } from "@/lib/calendar-cancellation";
 
 export async function GET(req: NextRequest) {
   const authSession = await auth();
@@ -91,6 +92,7 @@ export async function GET(req: NextRequest) {
 
   const sessionRowsRaw = await prisma.session.findMany({
     where: {
+      ...ACTIVE_SESSION_WHERE,
       ...(year ? { year: Number(year) } : {}),
       ...(month ? { month: Number(month) } : {}),
       ...studentFilter,

@@ -47,7 +47,14 @@ export type IdentityCandidate = {
   durationMin: number;
   amountCHF: number;
   calEventId: string | null;
+  /** Googles stabile Termin-Identitaet, sofern beim letzten Sync mitgeschrieben. */
+  iCalUID?: string | null;
+  /** Googles originalStartTime der Serieninstanz. */
+  originalStartAt?: Date | null;
 };
+
+/** Welche Regel hat die Lektion wiedererkannt? Nur fuer Meldung und Fehlersuche. */
+export type IdentityVia = "calEventId" | "appSessionId" | "iCalUID" | "sameStart";
 
 export type IdentityResolution =
   /** Die Event-ID gehoert bereits zu einer Lektion — normaler Upsert, nichts zu tun. */
@@ -55,27 +62,75 @@ export type IdentityResolution =
   /** Kein Kandidat: heutiges Verhalten, eine neue Lektion entsteht. */
   | { kind: "new" }
   /** Genau ein Kandidat: dieselbe Lektion, nur mit neuer Kalender-ID. */
-  | { kind: "replace"; session: IdentityCandidate; staleCalEventId: string }
+  | { kind: "replace"; session: IdentityCandidate; staleCalEventId: string; via: IdentityVia }
   /** Mehrere Kandidaten: nicht raten, nicht zusammenlegen — melden. */
-  | { kind: "ambiguous"; sessions: IdentityCandidate[] };
+  | { kind: "ambiguous"; sessions: IdentityCandidate[]; via: IdentityVia };
+
+/** Der eingehende Google-Termin, so weit er fuer die Identitaet zaehlt. */
+export type IncomingCalendarEvent = {
+  calEventId: string;
+  studentId: string;
+  start: Date;
+  /** Googles iCalUID — stabil, wenn derselbe Termin eine neue ID bekommt. */
+  iCalUID?: string | null;
+  /** Serien-Master der Instanz. */
+  recurringEventId?: string | null;
+  /** Googles originalStartTime; fehlt bei Einzelterminen. */
+  originalStartAt?: Date | null;
+  /**
+   * Unsere eigene Session-ID, falls der Termin sie traegt
+   * (`extendedProperties.private.mathetogoSessionId`).
+   *
+   * Heute schreibt nichts diesen Wert nach Google — der Sync liest den Kalender,
+   * er veraendert ihn nicht. Die Stufe ist trotzdem da und wird zuerst geprueft:
+   * sie ist die einzige Zuordnung, die nicht aus Indizien schliesst, und sobald
+   * irgendwann jemand die Eigenschaft setzt, gilt sie sofort.
+   */
+  appSessionId?: string | null;
+};
+
+const sameInstant = (a: Date | null | undefined, b: Date | null | undefined): boolean =>
+  a != null && b != null && a.getTime() === b.getTime();
 
 /**
- * Gehoert dieser neue Kalendertermin zu einer Lektion, die es schon gibt?
+ * Gehoert dieser Kalendertermin zu einer Lektion, die es schon gibt?
+ *
+ * Die Reihenfolge ist die Aussage. Sie geht von "sicher" nach "erschlossen",
+ * und die erste Stufe, die greift, entscheidet:
+ *
+ *   a) calEventId ist bereits verknuepft   — kein Zweifel moeglich
+ *   b) der Termin traegt unsere Session-ID — von uns selbst gesetzt
+ *   c) iCalUID + urspruengliche Startzeit  — Googles eigene stabile Identitaet
+ *   d) gleicher Schueler, exakt gleiche Startzeit, alte ID im Kalender weg
+ *   e) sonst: mehrdeutig oder neu
+ *
+ * Stufe (c) faengt, was (d) nicht kann: eine VERSCHOBENE Serieninstanz. Wird der
+ * Termin vom 18.09. 15:00 auf 16:00 gezogen, behaelt Google iCalUID und
+ * originalStartTime — die Lektion wird wiedererkannt und mitverschoben, statt
+ * als Waise liegenzubleiben und daneben neu zu entstehen. Ueber (d) allein waere
+ * das nicht moeglich, und Raten ist dort zu Recht verboten.
+ *
+ * Fuer JEDE Stufe gilt dieselbe Sperre: ein Kandidat, dessen alte `calEventId`
+ * noch im Kalender steht, wird nie beansprucht. Sonst wuerde eine lebende
+ * Verknuepfung gestohlen und ein echter Termin verloere seine Lektion.
  *
  * `googleEventIds` muss der VOLLSTAENDIGE Satz aller im Sync-Fenster gelieferten
  * Event-IDs sein — auch der nicht zugeordneten. Sonst gilt ein Termin, dessen
- * Titel gerade nicht passt, faelschlich als verschwunden, und seine Lektion
- * wuerde an einen fremden Termin gehaengt.
+ * Titel gerade nicht passt, faelschlich als verschwunden.
  *
  * `claimedSessionIds` sind Lektionen, die in DIESEM Lauf bereits einem anderen
- * neuen Termin zugeordnet wurden. Ohne diese Sperre koennten zwei neue Termine
- * dieselbe Zeile beanspruchen — die zweite Zuordnung wuerde die erste
- * ueberschreiben und eine echte Lektion verschwinden lassen.
+ * Termin zugeordnet wurden. Ohne diese Sperre koennten zwei Termine dieselbe
+ * Zeile beanspruchen — die zweite Zuordnung wuerde die erste ueberschreiben und
+ * eine echte Lektion verschwinden lassen.
  */
 export function resolveCalendarIdentity(args: {
   calEventId: string;
   studentId: string;
   start: Date;
+  iCalUID?: string | null;
+  recurringEventId?: string | null;
+  originalStartAt?: Date | null;
+  appSessionId?: string | null;
   /** Bestehende Lektionen des Monats. */
   sessions: readonly IdentityCandidate[];
   googleEventIds: ReadonlySet<string>;
@@ -84,29 +139,65 @@ export function resolveCalendarIdentity(args: {
   const { calEventId, studentId, start, sessions, googleEventIds } = args;
   const claimed = args.claimedSessionIds ?? new Set<string>();
 
+  // (a) Bereits verknuepft.
   const already = sessions.find((s) => s.calEventId === calEventId);
   if (already) return { kind: "linked", sessionId: already.id };
 
-  const candidates = sessions.filter((s) => {
-    if (s.studentId !== studentId) return false;
-    if (s.date.getTime() !== start.getTime()) return false;
+  /** Darf diese Zeile ueberhaupt beansprucht werden? Gilt auf jeder Stufe. */
+  const beanspruchbar = (s: IdentityCandidate): boolean => {
+    if (claimed.has(s.id)) return false;
     if (!s.calEventId) return false;
     if (s.calEventId.startsWith(MANUAL_PREFIX)) return false;
-    // Die alte ID existiert noch → zwei echte Termine, keine Ersetzung.
+    // Die alte ID steht noch im Kalender → lebende Verknuepfung, Finger weg.
     if (googleEventIds.has(s.calEventId)) return false;
-    if (claimed.has(s.id)) return false;
     return true;
-  });
+  };
 
-  if (candidates.length === 0) return { kind: "new" };
-  if (candidates.length === 1) {
-    return {
-      kind: "replace",
-      session: candidates[0],
-      staleCalEventId: candidates[0].calEventId as string,
-    };
+  const entscheide = (
+    kandidaten: IdentityCandidate[],
+    via: IdentityVia
+  ): IdentityResolution | null => {
+    if (kandidaten.length === 0) return null;
+    if (kandidaten.length === 1) {
+      return {
+        kind: "replace",
+        session: kandidaten[0],
+        staleCalEventId: kandidaten[0].calEventId as string,
+        via,
+      };
+    }
+    return { kind: "ambiguous", sessions: kandidaten, via };
+  };
+
+  // (b) Der Termin nennt unsere eigene Session-ID.
+  if (args.appSessionId) {
+    const treffer = sessions.filter((s) => s.id === args.appSessionId && beanspruchbar(s));
+    const res = entscheide(treffer, "appSessionId");
+    if (res) return res;
   }
-  return { kind: "ambiguous", sessions: candidates };
+
+  // (c) Googles stabile Identitaet: iCalUID + urspruengliche Startzeit.
+  //
+  // Die urspruengliche Startzeit ist der Anker der Instanz. Fehlt sie (echter
+  // Einzeltermin), zaehlt die Startzeit selbst — dann ist iCalUID allein schon
+  // eindeutig, weil ein Einzeltermin nur eine Instanz hat.
+  if (args.iCalUID) {
+    const ankerNeu = args.originalStartAt ?? start;
+    const treffer = sessions.filter((s) => {
+      if (s.iCalUID !== args.iCalUID) return false;
+      if (!beanspruchbar(s)) return false;
+      const ankerAlt = s.originalStartAt ?? s.date;
+      return sameInstant(ankerAlt, ankerNeu);
+    });
+    const res = entscheide(treffer, "iCalUID");
+    if (res) return res;
+  }
+
+  // (d) Gleicher Schueler, exakt gleiche Startzeit.
+  const gleicheZeit = sessions.filter(
+    (s) => s.studentId === studentId && s.date.getTime() === start.getTime() && beanspruchbar(s)
+  );
+  return entscheide(gleicheZeit, "sameStart") ?? { kind: "new" };
 }
 
 export type PreservedField = {

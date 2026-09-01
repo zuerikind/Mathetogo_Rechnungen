@@ -1,5 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { google } from "googleapis";
+import { google, type calendar_v3 } from "googleapis";
+import { fetchAllPages } from "@/lib/calendar-pagination";
+import {
+  ACTIVE_SESSION_WHERE,
+  CALENDAR_EVENT_ACTIVE_RESET,
+  decideCancellation,
+  decideReactivation,
+  describeCancelReview,
+  describeReactivateReview,
+  type CancelReason,
+} from "@/lib/calendar-cancellation";
 import {
   autoResolvedIssueEventIds,
   parseExternalUpdatedAt,
@@ -22,6 +32,7 @@ import {
   identityReplacementPlan,
   resolveCalendarIdentity,
   type IdentityCandidate,
+  type IdentityVia,
   type PreservedField,
 } from "@/lib/calendar-identity";
 import { clearIncomeSummaryCache } from "@/lib/income-summary-cache";
@@ -118,26 +129,69 @@ export async function POST(req: NextRequest) {
     console.warn("[sync] Could not list calendars, falling back to primary:", err);
   }
 
-  let eventsRes;
+  // Alle Seiten, nicht nur die erste.
+  //
+  // `maxResults: 500` war eine stille Obergrenze: was dahinter lag, fehlte in
+  // der Antwort — und "fehlt" bedeutet fuer den Abgleich "im Kalender geloescht".
+  // Mit der automatischen Stornierung waere daraus ein Storno echter Lektionen
+  // geworden. `pagesComplete` sagt, ob die Kette wirklich zu Ende gelesen wurde;
+  // nur dann darf Abwesenheit ueberhaupt als Absage gelten.
+  //
+  // `showDeleted: true` liefert abgesagte Termine ausdruecklich mit
+  // `status: "cancelled"` mit. Das ist eine Aussage von Google statt eines
+  // Rueckschlusses aus dem Fehlen — der einzige Beweis, der stark genug ist, um
+  // ohne Rueckfrage zu stornieren.
+  let paged;
   try {
-    eventsRes = await calendar.events.list({
-      calendarId,
-      timeMin,
-      timeMax,
-      timeZone: "Europe/Zurich",
-      singleEvents: true,
-      orderBy: "startTime",
-      maxResults: 500,
-    });
+    paged = await fetchAllPages<calendar_v3.Schema$Event>(
+      async (pageToken) => {
+        const res = await calendar.events.list({
+          calendarId,
+          timeMin,
+          timeMax,
+          timeZone: "Europe/Zurich",
+          singleEvents: true,
+          orderBy: "startTime",
+          showDeleted: true,
+          maxResults: 500,
+          ...(pageToken ? { pageToken } : {}),
+        });
+        return {
+          items: res.data.items ?? [],
+          nextPageToken: res.data.nextPageToken,
+          nextSyncToken: res.data.nextSyncToken,
+        };
+      },
+      {
+        keyOf: (e) => e.id ?? null,
+        // Waehrend des Blaetterns kann derselbe Termin abgesagt werden. Dann
+        // liefert eine spaetere Seite ihn als `cancelled` — und genau diese,
+        // neuere Fassung muss gewinnen, sonst wird eine abgesagte Lektion
+        // weiter fakturiert.
+        versionOf: (e) => e.updated ?? null,
+      }
+    );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[sync] Calendar API error:", msg);
     return NextResponse.json({ error: `Calendar API error: ${msg}` }, { status: 500 });
   }
 
-  const events = eventsRes.data.items ?? [];
-  console.log("[sync] total events found:", events.length);
-  console.log("[sync] event titles:", events.map((e) => e.summary));
+  const allItems = paged.items;
+  const pagesComplete = paged.complete;
+  // Abgesagte Termine laufen NICHT durch den Abgleich: Google liefert sie ohne
+  // Titel und ohne Startzeit, sie sind keinem Schueler zuzuordnen. Sie sind
+  // Beweismittel fuer die Stornierung, nicht Vorlage fuer eine Lektion.
+  const cancelledEventIds = new Set(
+    allItems
+      .filter((e) => e.status === "cancelled")
+      .map((e) => e.id)
+      .filter((id): id is string => typeof id === "string")
+  );
+  const events = allItems.filter((e) => e.status !== "cancelled");
+  console.log(
+    `[sync] ${allItems.length} Eintraege auf ${paged.pages} Seite(n), vollstaendig=${pagesComplete}, davon ${cancelledEventIds.size} abgesagt`
+  );
 
   return runSyncDbSerialized(async () => {
     const allStudents = await prisma.student.findMany({
@@ -189,6 +243,16 @@ export async function POST(req: NextRequest) {
       replaceSessionId: string | null;
       /** Der Stand VOR der Ersetzung — im ausgelieferten Monat bleibt er stehen. */
       replaceHistoric: { durationMin: number; amountCHF: number } | null;
+      /** Ueber welche Regel die Lektion wiedererkannt wurde. */
+      replaceVia: IdentityVia | null;
+      /** Googles eigene Identitaetsmerkmale — werden mitgeschrieben. */
+      iCalUID: string | null;
+      recurringEventId: string | null;
+      originalStartAt: Date | null;
+      calStatus: string | null;
+      calUpdatedAt: Date | null;
+      /** War die getroffene Lektion soft-storniert? Dann ist das eine Reaktivierung. */
+      reactivates: boolean;
     };
     const tasks: UpsertTask[] = [];
     const eventIds = events.map((event) => event.id).filter((id): id is string => typeof id === "string");
@@ -199,32 +263,70 @@ export async function POST(req: NextRequest) {
       (
         await prisma.session.findMany({
           where: { calEventId: { in: eventIds } },
-          select: { calEventId: true, studentId: true, durationMin: true, amountCHF: true },
+          select: {
+            id: true,
+            calEventId: true,
+            studentId: true,
+            durationMin: true,
+            amountCHF: true,
+            // Soft-stornierte gehoeren ausdruecklich dazu: taucht ihr Termin
+            // wieder auf, sollen sie reaktiviert und nicht verdoppelt werden.
+            cancelledAt: true,
+          },
         })
       )
         .filter(
-          (s): s is { calEventId: string; studentId: string; durationMin: number; amountCHF: number } =>
-            typeof s.calEventId === "string"
+          (
+            s
+          ): s is {
+            id: string;
+            calEventId: string;
+            studentId: string;
+            durationMin: number;
+            amountCHF: number;
+            cancelledAt: Date | null;
+          } => typeof s.calEventId === "string"
         )
         .map((s) => [s.calEventId, s] as const)
     );
 
-    // Kandidaten fuer die Identitaetserkennung: alle Lektionen des Monats. Eine
-    // Ersetzung setzt exakt dieselbe Startzeit voraus, also liegt der Kandidat
-    // zwangslaeufig im selben Monat wie der Termin.
-    const monthSessionCandidates: IdentityCandidate[] = await prisma.session.findMany({
-      where: { year, month },
-      select: {
-        id: true,
-        studentId: true,
-        date: true,
-        durationMin: true,
-        amountCHF: true,
-        calEventId: true,
-      },
-    });
+    // Kandidaten fuer die Identitaetserkennung: alle Lektionen des Monats,
+    // stornierte eingeschlossen. Eine Ersetzung ueber iCalUID oder gleiche
+    // Startzeit setzt denselben Monat voraus.
+    const monthSessionCandidates: (IdentityCandidate & { cancelledAt: Date | null })[] =
+      await prisma.session.findMany({
+        where: { year, month },
+        select: {
+          id: true,
+          studentId: true,
+          date: true,
+          durationMin: true,
+          amountCHF: true,
+          calEventId: true,
+          iCalUID: true,
+          originalStartAt: true,
+          cancelledAt: true,
+        },
+      });
     /** In diesem Lauf bereits vergebene Lektionen — keine darf zweimal ersetzt werden. */
     const claimedSessionIds = new Set<string>();
+    /**
+     * Befunde aus einer NICHT ausgefuehrten Automatik: der Sync hat die
+     * Aenderung erkannt, durfte sie aber nicht anwenden (vergangen oder bereits
+     * fakturiert). Sie blockieren die Auslieferung, bis jemand entschieden hat.
+     */
+    type ReviewFinding = {
+      key: string;
+      reason: "cancel_needs_review" | "reactivate_needs_review";
+      title: string;
+      startAt: Date;
+      studentId: string;
+      studentName: string;
+      sessionIds: string[];
+      details: Record<string, unknown>;
+    };
+    const reviewFindings: ReviewFinding[] = [];
+
     /** Mehrdeutige Ersetzungen: nicht raten, sondern zur Pruefung vorlegen. */
     const ambiguousIdentities: {
       key: string;
@@ -305,23 +407,46 @@ export async function POST(req: NextRequest) {
       //
       // Nur fuer Termine, deren ID noch zu keiner Lektion gehoert. Alles andere
       // laeuft unveraendert ueber den Upsert.
+      const iCalUID = event.iCalUID ?? null;
+      const recurringEventId = event.recurringEventId ?? null;
+      const originalStartRaw =
+        event.originalStartTime?.dateTime ?? event.originalStartTime?.date ?? null;
+      const originalStartAt = originalStartRaw ? new Date(originalStartRaw) : null;
+      const calStatus = event.status ?? null;
+      const calUpdatedAt = parseExternalUpdatedAt(event.updated);
+      // Wir schreiben diese Eigenschaft heute nirgends nach Google; wird sie
+      // eines Tages gesetzt, gilt sie sofort als staerkster Anker (Stufe b).
+      const appSessionId =
+        typeof event.extendedProperties?.private?.mathetogoSessionId === "string"
+          ? event.extendedProperties.private.mathetogoSessionId
+          : null;
+
       let replaceSessionId: string | null = null;
       let replaceHistoric: { durationMin: number; amountCHF: number } | null = null;
+      let replaceVia: IdentityVia | null = null;
+      let reactivates = linkedSession?.cancelledAt != null;
       if (!linkedSession) {
         const identity = resolveCalendarIdentity({
           calEventId,
           studentId: student.id,
           start,
+          iCalUID,
+          recurringEventId,
+          originalStartAt,
+          appSessionId,
           sessions: monthSessionCandidates,
           googleEventIds: googleEventIdSet,
           claimedSessionIds,
         });
         if (identity.kind === "replace") {
           replaceSessionId = identity.session.id;
+          replaceVia = identity.via;
           replaceHistoric = {
             durationMin: identity.session.durationMin,
             amountCHF: identity.session.amountCHF,
           };
+          reactivates =
+            monthSessionCandidates.find((s) => s.id === identity.session.id)?.cancelledAt != null;
           claimedSessionIds.add(identity.session.id);
         } else if (identity.kind === "ambiguous") {
           // Kein automatischer Zusammenschluss. Die Lektion entsteht wie bisher
@@ -374,6 +499,13 @@ export async function POST(req: NextRequest) {
         year: eventYm.year,
         replaceSessionId,
         replaceHistoric,
+        replaceVia,
+        iCalUID,
+        recurringEventId,
+        originalStartAt,
+        calStatus,
+        calUpdatedAt,
+        reactivates,
       });
     }
 
@@ -447,6 +579,41 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Der Termin ist wieder da — darf der Storno von selbst fallen?
+    //
+    // Nur in die Zukunft und nur unfakturiert, also exakt derselbe Schnitt wie
+    // bei der Stornierung. Vergangenes und Ausgeliefertes wird gemeldet statt
+    // angefasst: dort wuerde ein automatisch wieder eingebuchter Betrag den
+    // Stand veraendern, ohne dass jemand es angeordnet haette.
+    const reactivateBlocked = new Set<string>();
+    let autoReactivated = 0;
+    const reaktivierungsZeitpunkt = new Date();
+    for (const t of tasks) {
+      if (!t.reactivates) continue;
+      const entscheid = decideReactivation({
+        session: { cancelledAt: reaktivierungsZeitpunkt, date: t.date },
+        billed: protectedStudentIdSet.has(t.studentId),
+        now: reaktivierungsZeitpunkt,
+      });
+      if (entscheid.kind === "reactivate") {
+        autoReactivated += 1;
+        continue;
+      }
+      if (entscheid.kind === "skip") continue;
+      reactivateBlocked.add(t.calEventId);
+      const sessionId = t.replaceSessionId ?? existingByEventId.get(t.calEventId)?.id ?? null;
+      reviewFindings.push({
+        key: `reactivate_needs_review:${sessionId ?? t.calEventId}`,
+        reason: "reactivate_needs_review",
+        title: describeReactivateReview(t.studentName, t.date, entscheid.why),
+        startAt: t.date,
+        studentId: t.studentId,
+        studentName: t.studentName,
+        sessionIds: sessionId ? [sessionId] : [],
+        details: { why: entscheid.why },
+      });
+    }
+
     // Default interactive transaction timeout is too low for a full month of upserts
     // (leads to P2028 "Transaction not found" when Prisma closes the tx mid-loop).
     await prisma.$transaction(
@@ -474,9 +641,18 @@ export async function POST(req: NextRequest) {
                       notes: t.notes,
                     }
                   : {}),
+                // Googles eigene Identitaetsmerkmale immer mitschreiben: sie
+                // sind der Anker, an dem der naechste ID-Wechsel erkannt wird,
+                // und tragen selbst keine finanzielle Aussage.
+                iCalUID: t.iCalUID,
+                recurringEventId: t.recurringEventId,
+                originalStartAt: t.originalStartAt,
+                calStatus: t.calStatus,
+                calUpdatedAt: t.calUpdatedAt,
                 // Der Termin ist wieder da, nur unter anderer ID: eine offene
                 // Loeschvormerkung ist damit gegenstandslos.
                 ...CALENDAR_EVENT_SEEN_RESET,
+                ...(reactivateBlocked.has(t.calEventId) ? {} : CALENDAR_EVENT_ACTIVE_RESET),
               },
             });
             continue;
@@ -498,7 +674,15 @@ export async function POST(req: NextRequest) {
               // er spaeter erneut, ist das ein neuer Vorgang und darf wieder
               // gemeldet werden. Greift auch, wenn er in einem anderen Monat
               // auftaucht: derselbe calEventId, der Upsert zieht die Zeile um.
+              iCalUID: t.iCalUID,
+              recurringEventId: t.recurringEventId,
+              originalStartAt: t.originalStartAt,
+              calStatus: t.calStatus,
+              calUpdatedAt: t.calUpdatedAt,
               ...CALENDAR_EVENT_SEEN_RESET,
+              // Der Storno faellt mit dem Wiederauftauchen — ausser die Lektion
+              // steht auf einer ausgelieferten Rechnung.
+              ...(reactivateBlocked.has(t.calEventId) ? {} : CALENDAR_EVENT_ACTIVE_RESET),
             },
             create: {
               studentId: t.studentId,
@@ -509,6 +693,11 @@ export async function POST(req: NextRequest) {
               month: t.month,
               year: t.year,
               notes: t.notes,
+              iCalUID: t.iCalUID,
+              recurringEventId: t.recurringEventId,
+              originalStartAt: t.originalStartAt,
+              calStatus: t.calStatus,
+              calUpdatedAt: t.calUpdatedAt,
             },
           });
         }
@@ -516,6 +705,129 @@ export async function POST(req: NextRequest) {
       },
       { maxWait: 20_000, timeout: 180_000 }
     );
+
+    // ── Automatische Stornierung ────────────────────────────────────────────
+    //
+    // Eine abgesagte Lektion soll niemanden mehr beschaeftigen. Der Storno ist
+    // weich (die Zeile bleibt), umkehrbar (taucht der Termin wieder auf, faellt
+    // er von selbst) und trifft nur Zukuenftiges und Unfakturiertes. Alles
+    // andere wird gemeldet statt angefasst — siehe lib/calendar-cancellation.
+    let autoCancelled = 0;
+    let cancelUnverified = 0;
+    const jetzt = new Date();
+    const zuStornieren: { id: string; reason: CancelReason }[] = [];
+    const bereitsBehandelt = new Set<string>();
+
+    const notiereReview = (
+      s: { id: string; studentId: string; date: Date; student: { name: string } },
+      why: "past" | "billed"
+    ) => {
+      reviewFindings.push({
+        key: `cancel_needs_review:${s.id}`,
+        reason: "cancel_needs_review",
+        title: describeCancelReview(s.student.name, s.date, why),
+        startAt: s.date,
+        studentId: s.studentId,
+        studentName: s.student.name,
+        sessionIds: [s.id],
+        details: { why },
+      });
+    };
+
+    const stornoAuswahl = {
+      id: true,
+      studentId: true,
+      date: true,
+      durationMin: true,
+      amountCHF: true,
+      calEventId: true,
+      cancelledAt: true,
+      student: { select: { name: true } },
+    } as const;
+
+    try {
+      // (A) Google meldet die Absage ausdruecklich (showDeleted: true).
+      //     Eine Aussage, kein Rueckschluss — sie reicht allein.
+      const explizit =
+        cancelledEventIds.size > 0
+          ? await prisma.session.findMany({
+              where: { calEventId: { in: Array.from(cancelledEventIds) } },
+              select: stornoAuswahl,
+            })
+          : [];
+      for (const s of explizit) {
+        bereitsBehandelt.add(s.id);
+        const entscheid = decideCancellation({
+          session: s,
+          evidence: "google_cancelled",
+          billed: protectedStudentIdSet.has(s.studentId),
+          now: jetzt,
+        });
+        if (entscheid.kind === "cancel") zuStornieren.push({ id: s.id, reason: entscheid.reason });
+        else if (entscheid.kind === "review") notiereReview(s, entscheid.why);
+      }
+
+      // (B) Der Termin fehlt nur. Das ist der schwache Beweis und zaehlt nur bei
+      //     vollstaendig gelesener Seitenkette UND bestaetigter Einzelabfrage.
+      if (pagesComplete) {
+        const fehlend = await prisma.session.findMany({
+          where: {
+            year,
+            month,
+            calEventId:
+              googleEventIds.length === 0
+                ? { not: null }
+                : { not: null, notIn: googleEventIds },
+            ...ACTIVE_SESSION_WHERE,
+            // Deaktivierte Schueler koennen nicht mehr matchen und saehen
+            // deshalb immer wie geloescht aus.
+            student: { active: true },
+            ...(bereitsBehandelt.size > 0
+              ? { id: { notIn: Array.from(bereitsBehandelt) } }
+              : {}),
+          },
+          select: stornoAuswahl,
+          orderBy: { date: "asc" },
+        });
+
+        // Eine Kalenderabfrage pro Kandidat — gedeckelt, damit ein grosses
+        // Aufraeumen nicht in die Laufzeitgrenze der Function laeuft.
+        const zuPruefen = fehlend.slice(0, PENDING_VERIFY_LIMIT);
+        cancelUnverified = fehlend.length - zuPruefen.length;
+        const bestaetigt = await resolveDeletedCalendarEvents(
+          calendar,
+          calendarId,
+          zuPruefen.map((s) => ({ sessionId: s.id, calEventId: s.calEventId as string }))
+        );
+        for (const s of zuPruefen) {
+          const entscheid = decideCancellation({
+            session: s,
+            evidence: "missing",
+            billed: protectedStudentIdSet.has(s.studentId),
+            now: jetzt,
+            syncComplete: true,
+            deletionConfirmed: bestaetigt.has(s.id),
+          });
+          if (entscheid.kind === "cancel") zuStornieren.push({ id: s.id, reason: entscheid.reason });
+          else if (entscheid.kind === "review") notiereReview(s, entscheid.why);
+        }
+      }
+
+      // Geschrieben wird gebuendelt, nach Grund getrennt.
+      for (const reason of ["google_cancelled", "google_missing"] as const) {
+        const ids = zuStornieren.filter((z) => z.reason === reason).map((z) => z.id);
+        if (ids.length === 0) continue;
+        const res = await prisma.session.updateMany({
+          where: { id: { in: ids } },
+          data: { cancelledAt: jetzt, cancelReason: reason },
+        });
+        autoCancelled += res.count;
+      }
+    } catch (err) {
+      // Wie die uebrigen Zusatzschritte: der Kalenderabgleich ist committet und
+      // darf durch einen Fehler hier nicht als Fehlschlag erscheinen.
+      console.error("[sync] Automatische Stornierung fehlgeschlagen:", err);
+    }
 
     // Waisen werden nicht mehr geloescht, sondern zur Loeschung vorgemerkt.
     //
@@ -541,6 +853,8 @@ export async function POST(req: NextRequest) {
           // Lektionen deaktivierter Schueler koennen nicht mehr matchen und saehen
           // deshalb immer wie Waisen aus.
           student: { active: true },
+          // Soft-stornierte sind bereits entschieden.
+          ...ACTIVE_SESSION_WHERE,
           // Ausgelieferte Monate laufen unveraendert ueber den H3-Guard und P5.
           ...notDelivered,
           // Schon vorgemerkte nicht erneut pruefen — und abgelehnte nie wieder,
@@ -595,7 +909,10 @@ export async function POST(req: NextRequest) {
     let integrityError: string | null = null;
     try {
       const monthSessions = await prisma.session.findMany({
-        where: { year, month },
+        // Soft-stornierte sind weder Waise noch Doppelbelegung — sie sind
+        // entschieden. Ohne diesen Filter bliebe nach jeder automatischen
+        // Absage ein Befund stehen, der die Auslieferung blockiert.
+        where: { year, month, ...ACTIVE_SESSION_WHERE },
         select: {
           id: true,
           studentId: true,
@@ -667,6 +984,25 @@ export async function POST(req: NextRequest) {
           studentName: a.studentName,
           sessionIds: a.sessionIds,
           newCalEventId: a.newCalEventId,
+          year,
+          month,
+        },
+      });
+    }
+    for (const r of reviewFindings) {
+      issueObservations.push({
+        externalEventId: r.key,
+        externalUpdatedAt: null,
+        reason: r.reason,
+        title: r.title,
+        startAt: r.startAt,
+        endAt: null,
+        calendarId,
+        details: {
+          studentId: r.studentId,
+          studentName: r.studentName,
+          sessionIds: r.sessionIds,
+          ...r.details,
           year,
           month,
         },
@@ -887,6 +1223,19 @@ export async function POST(req: NextRequest) {
       unmatched,
       /** Offene, noch nicht entschiedene Kalender-Befunde insgesamt. */
       unmatchedOpenTotal: issuesOpen,
+      /** Wurde die Seitenkette vollstaendig gelesen? Nur dann zaehlt Abwesenheit. */
+      pagesComplete,
+      pages: paged.pages,
+      /** Zusammenfassung des Laufs — was automatisch geschah, was offen bleibt. */
+      summary: {
+        relinked: tasks.filter((t) => t.replaceSessionId !== null).length,
+        cancelled: autoCancelled,
+        reactivated: autoReactivated,
+        needsReview:
+          ambiguousIdentities.length + identityConflicts.length + reviewFindings.length,
+      },
+      /** Kandidaten, die diesmal nicht mehr bei Google nachgefragt wurden (Limit). */
+      cancelUnverified,
       /** Stage 2: Lektionen, die statt eines Duplikats eine neue Kalender-ID bekamen. */
       identityReplacements: tasks.filter((t) => t.replaceSessionId !== null).length,
       /** Mehrdeutige Ersetzungen — nicht zusammengelegt, zur Pruefung vorgelegt. */

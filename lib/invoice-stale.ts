@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { DELIVERED_INVOICE_WHERE, isPrunableDraft } from "@/lib/invoice-delivery";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import { INVOICE_BUCKET, invoiceStoragePath, supabase } from "@/lib/supabase";
+import { ACTIVE_SESSION_WHERE } from "@/lib/calendar-cancellation";
 
 /** Live billable amount for a student/month (sessions + Rechnung-Abo, inkl. Familienrechnungs-Gruppe). */
 export async function getBillableTotalCHF(
@@ -40,7 +41,9 @@ export async function getBillableTotalCHF(
 
   const [sessions, subscriptions] = await Promise.all([
     prisma.session.findMany({
-      where: { studentId: { in: memberIds }, year, month },
+      // Stornierte zaehlen nicht als abrechenbar — sonst haelt eine abgesagte
+      // Lektion eine leere Entwurfsrechnung am Leben.
+      where: { studentId: { in: memberIds }, year, month, ...ACTIVE_SESSION_WHERE },
       select: { amountCHF: true },
     }),
     prisma.platformSubscription.findMany({

@@ -23,6 +23,7 @@ import {
   supabase,
 } from "@/lib/supabase";
 import { MANUAL_BASELINE_STUDENT_ID } from "@/lib/ui-types";
+import { ACTIVE_SESSION_WHERE } from "@/lib/calendar-cancellation";
 
 function sanitizeFileName(value: string): string {
   return value
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest) {
 
     // Export everyone billable for the month (sessions + Abo), not only students with a saved Invoice row.
     const sessionRows = await prisma.session.findMany({
-      where: { year, month },
+      where: { year, month, ...ACTIVE_SESSION_WHERE },
       select: {
         studentId: true,
         student: { select: { name: true } },

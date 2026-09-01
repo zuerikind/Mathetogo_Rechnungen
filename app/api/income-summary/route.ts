@@ -22,6 +22,7 @@ import {
 } from "@/lib/income-summary-cache";
 import { prisma } from "@/lib/prisma";
 import { subscriptionProrationForMonth, type SubscriptionBillingInput } from "@/lib/subscription-billing";
+import { ACTIVE_SESSION_WHERE } from "@/lib/calendar-cancellation";
 
 function isMissingTableError(error: unknown): boolean {
   return (
@@ -105,11 +106,12 @@ export async function GET(req: NextRequest) {
       baselineMonths.has(month)
         ? Promise.resolve({ _sum: { amountCHF: 0 as number | null } })
         : prisma.session.aggregate({
-            where: { year, month },
+            where: { year, month, ...ACTIVE_SESSION_WHERE },
             _sum: { amountCHF: true },
           }),
       prisma.session.aggregate({
         where: {
+          ...ACTIVE_SESSION_WHERE,
           year,
           month: {
             lte: month,

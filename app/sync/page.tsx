@@ -172,6 +172,46 @@ export default function SyncPage() {
               <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
                 ✓ {result.synced} synchronisiert
               </span>
+              {(result.summary?.relinked ?? 0) > 0 && (
+                <span
+                  className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700"
+                  title="Google hat diesen Terminen eine neue ID gegeben. Die bestehende Lektion wurde weitergeführt, statt eine zweite anzulegen."
+                >
+                  ↻ {result.summary?.relinked} neu verknüpft
+                </span>
+              )}
+              {(result.summary?.cancelled ?? 0) > 0 && (
+                <span
+                  className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+                  title="Im Kalender abgesagt und automatisch storniert. Die Zeile bleibt erhalten und zählt zu keinem Betrag — taucht der Termin wieder auf, wird sie von selbst reaktiviert."
+                >
+                  ⊘ {result.summary?.cancelled} automatisch storniert
+                </span>
+              )}
+              {(result.summary?.reactivated ?? 0) > 0 && (
+                <span
+                  className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700"
+                  title="Der Termin ist wieder im Kalender — der Storno wurde automatisch aufgehoben."
+                >
+                  ↺ {result.summary?.reactivated} reaktiviert
+                </span>
+              )}
+              {(result.summary?.needsReview ?? 0) > 0 && (
+                <span
+                  className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900"
+                  title="Der Sync hat die Änderung erkannt, durfte sie aber nicht anwenden — vergangene Lektion, bereits ausgelieferte Rechnung oder unklare Zuordnung. Unter «Kalender prüfen» entscheiden."
+                >
+                  ⚠ {result.summary?.needsReview} manuell zu prüfen
+                </span>
+              )}
+              {result.pagesComplete === false && (
+                <span
+                  className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-800"
+                  title="Die Kalenderabfrage war unvollständig. Es wurde deshalb nichts wegen blosser Abwesenheit storniert."
+                >
+                  Kalenderliste unvollständig — kein Storno aus Abwesenheit
+                </span>
+              )}
               {(result.pendingDeletionsTotal ?? 0) > 0 && (
                 <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-800">
                   {result.pendingDeletionsTotal} Lektion(en) warten auf Löschbestätigung

@@ -18,6 +18,7 @@
  *     Umbenennung macht aus einem Zahnarzttermin keine Lektion.
  */
 
+import type { CancellationIssueType } from "@/lib/calendar-cancellation";
 import type { IdentityIssueType } from "@/lib/calendar-identity";
 import type { IntegrityFindingType } from "@/lib/calendar-integrity";
 import type { SyncUnmatchedReason } from "@/lib/sync-unmatched";
@@ -36,7 +37,8 @@ export type CalendarIssueStatusValue = "open" | "resolved" | "ignored";
 export type CalendarIssueReason =
   | SyncUnmatchedReason
   | IntegrityFindingType
-  | IdentityIssueType;
+  | IdentityIssueType
+  | CancellationIssueType;
 
 /** Ein in diesem Lauf beobachteter, nicht zuordenbarer Termin. */
 export type ObservedCalendarIssue = {

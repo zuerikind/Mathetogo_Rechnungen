@@ -52,11 +52,18 @@ describe("blockingCalendarIssues", () => {
     ).toEqual([]);
   });
 
-  it("alle vier Befundarten halten die Auslieferung auf", () => {
-    expect(BLOCKING_ISSUE_REASONS.sort()).toEqual([
+  it("jede Befundart, die Geld betreffen kann, haelt die Auslieferung auf", () => {
+    expect([...BLOCKING_ISSUE_REASONS].sort()).toEqual([
+      // Automatik erkannt, aber nicht ausgefuehrt (vergangen / ausgeliefert)
+      "cancel_needs_review",
+      // Zwei Lektionen zur selben Zeit
       "duplicate_slot",
+      // Identitaetswechsel mit mehr als einem Kandidaten
       "identity_ambiguous",
+      // Ausgelieferter Monat: Verknuepfung repariert, Betrag bewusst stehen gelassen
       "identity_conflict",
+      "reactivate_needs_review",
+      // Lektion ohne Kalendertermin
       "session_orphan",
     ]);
   });

@@ -8,6 +8,7 @@ import {
   type InvoiceDiff,
 } from "@/lib/invoice-diff";
 import type { InvoiceSnapshotPayload } from "@/lib/invoice-snapshot-shape";
+import { ACTIVE_SESSION_WHERE } from "@/lib/calendar-cancellation";
 
 /**
  * Erkennt Abweichungen zwischen ausgelieferten Rechnungen und dem heutigen Stand.
@@ -80,7 +81,10 @@ async function detectChangesForInvoice(
   const liveSessions =
     snapshotSessionIds.length > 0
       ? await prisma.session.findMany({
-          where: { id: { in: snapshotSessionIds } },
+          // Eine soft-stornierte Lektion faellt hier bewusst heraus: gegenueber
+          // dem eingefrorenen Stand ist sie verschwunden, und genau das soll die
+          // Abweichungserkennung melden.
+          where: { id: { in: snapshotSessionIds }, ...ACTIVE_SESSION_WHERE },
           select: {
             id: true,
             studentId: true,
