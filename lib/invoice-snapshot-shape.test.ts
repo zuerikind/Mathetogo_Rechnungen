@@ -8,6 +8,7 @@ import {
   shapeSnapshotFromGeneration,
   pickStoredGenerationPayload,
   visibleSections,
+  invoiceRecipientName,
 } from "./invoice-snapshot-shape";
 
 const FROZEN = new Date("2026-08-02T09:00:00Z");
@@ -312,5 +313,30 @@ describe("visibleSections — leerer Abschnitt des Zahlers", () => {
   it("behaelt den Zahler, wenn sonst gar kein Abschnitt bliebe (z. B. reine Abo-Rechnung)", () => {
     const out = visibleSections([sec("nikola", 0), sec("william", 0)], "nikola");
     expect(out.map((s) => s.student.id)).toEqual(["nikola"]);
+  });
+});
+
+describe("invoiceRecipientName — wer steht oben auf dem Beleg", () => {
+  const sec = (id: string, name: string) => ({ student: { id, name } });
+
+  it("nennt den Zahler UND das Kind, auch wenn nur das Kind Lektionen hat", () => {
+    // Nikola zahlt fuer William; Williams Abschnitt ist der einzige.
+    expect(invoiceRecipientName({ id: "nikola", name: "Nikola" }, [sec("william", "William")]))
+      .toBe("Nikola & William");
+  });
+
+  it("Familienrechnung bleibt unveraendert", () => {
+    expect(
+      invoiceRecipientName({ id: "vincent", name: "Vincent" }, [
+        sec("vincent", "Vincent"),
+        sec("aurel", "Aurel"),
+        sec("elenor", "Elenor"),
+      ])
+    ).toBe("Vincent & Aurel & Elenor");
+  });
+
+  it("Einzelrechnung nennt nur den Schueler selbst", () => {
+    expect(invoiceRecipientName({ id: "aditya", name: "Aditya" }, [sec("aditya", "Aditya")]))
+      .toBe("Aditya");
   });
 });

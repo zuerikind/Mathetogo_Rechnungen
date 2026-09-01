@@ -204,6 +204,25 @@ export function visibleSections<T extends { student: { id: string }; sessions: u
   return sections.filter((sec) => sec.student.id === payerId);
 }
 
+/**
+ * Wer steht oben auf dem Beleg?
+ *
+ * Der Zahler zuerst, danach jeder weitere Schueler, der mit Lektionen darauf
+ * erscheint. Zahlt Nikola fuer William, muessen beide dort stehen — vorher fiel
+ * William weg, sobald der leere Abschnitt des Zahlers entfernt wurde, und die
+ * Rechnung nannte nur noch Nikola.
+ */
+export function invoiceRecipientName(
+  payer: { id: string; name: string },
+  sections: { student: { id: string; name: string } }[]
+): string {
+  const weitere = sections
+    .map((sec) => sec.student)
+    .filter((s) => s.id !== payer.id)
+    .map((s) => s.name);
+  return [payer.name, ...weitere].join(" & ");
+}
+
 export function parseSessionIds(raw: string): string[] {
   try {
     const parsed = JSON.parse(raw || "[]") as unknown;

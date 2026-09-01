@@ -14,6 +14,7 @@ import {
   InvoicePayload,
 } from "@/lib/invoice";
 import { getRevisionNotice } from "@/lib/invoice-format";
+import { invoiceRecipientName } from "@/lib/invoice-snapshot-shape";
 
 type InvoicePDFProps = {
   payload: InvoicePayload;
@@ -273,10 +274,7 @@ export function InvoicePDF({
   // diese zweite Bedingung fielen die Lektionen namenlos unter den Zahler.
   const isFamily =
     sections.length > 1 || sections.some((s) => s.student.id !== payload.student.id);
-  const recipientName =
-    sections.length > 1
-      ? sections.map((s) => s.student.name).join(" & ")
-      : payload.student.name;
+  const recipientName = invoiceRecipientName(payload.student, sections);
   const paymentSlipStyle =
     paymentSlipSrc && paymentSlipWidthPt && paymentSlipHeightPt
       ? { ...styles.paymentSlip, width: paymentSlipWidthPt, height: paymentSlipHeightPt }
