@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { getInvoicePdfDownloadBaseName } from "@/lib/invoice";
+import {
+  calendarPreflight,
+  getInvoicePdfDownloadBaseName,
+  getPeriodLabel,
+  parseInvoiceSessionIds,
+} from "@/lib/invoice";
 import { recordInvoiceDownload } from "@/lib/invoice-download";
+import { preflightBlockMessage } from "@/lib/invoice-preflight";
 import { INVOICE_BUCKET, invoiceStoragePath, supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -120,6 +126,27 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const loaded = await loadInvoicePdf(params.id, req.nextUrl.searchParams.get("revision"));
   if (!loaded.ok) return loaded.response;
+
+  // Der ERSTE Download liefert aus: ab hier ist die Rechnung unveraenderlich.
+  // Deshalb hier die Vorpruefung — aber nur beim ersten Mal. Ist die Rechnung
+  // bereits draussen, waere eine Sperre sinnlos und wuerde nur den Zugriff auf
+  // ein zugestelltes Dokument verhindern.
+  const row = await prisma.invoice.findUnique({
+    where: { id: loaded.invoiceId },
+    select: { firstDownloadedAt: true, sessionIds: true, month: true, year: true },
+  });
+  if (row && !row.firstDownloadedAt) {
+    const blocking = await calendarPreflight(parseInvoiceSessionIds(row.sessionIds));
+    if (blocking.length > 0) {
+      return NextResponse.json(
+        {
+          error: preflightBlockMessage(blocking, getPeriodLabel(row.month, row.year)),
+          calendarIssues: blocking.map((i) => ({ key: i.key, reason: i.reason, title: i.title })),
+        },
+        { status: 409 }
+      );
+    }
+  }
 
   const session = await auth();
   // Erst nach erfolgreichem Laden protokollieren — ein fehlgeschlagener Abruf

@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
-import { commitInvoiceContent, getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
+import {
+  calendarPreflight,
+  commitInvoiceContent,
+  getInvoicePayload,
+  getPeriodLabel,
+  reserveInvoiceRow,
+} from "@/lib/invoice";
 import { isDelivered } from "@/lib/invoice-delivery";
+import { preflightWarningMessage } from "@/lib/invoice-preflight";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { supabase, INVOICE_BUCKET, invoiceStoragePath, invoicePublicUrl } from "@/lib/supabase";
 
@@ -87,7 +94,21 @@ export async function POST(req: NextRequest) {
     const pdfUrl = invoicePublicUrl(year, month, studentId);
     await commitInvoiceContent({ invoiceId, payload: { ...payload, invoiceNumber }, pdfPath: pdfUrl });
 
-    return NextResponse.json({ invoiceId, pdfUrl, invoiceNumber });
+    // Der Entwurf darf entstehen — er ist aenderbar, und wer eine Zahl sehen will,
+    // soll sie sehen. Aber er darf nicht unbemerkt entstehen: gesperrt wird erst
+    // beim Versand, und bis dahin muss der Nutzer wissen, dass der Kalender fuer
+    // genau diese Lektionen noch einen offenen Befund hat.
+    const blocking = await calendarPreflight(payload.sessions.map((s) => s.id));
+
+    return NextResponse.json({
+      invoiceId,
+      pdfUrl,
+      invoiceNumber,
+      calendarWarning:
+        blocking.length > 0
+          ? preflightWarningMessage(blocking, getPeriodLabel(month, year))
+          : null,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Fehler beim Generieren." },

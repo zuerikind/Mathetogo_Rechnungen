@@ -14,6 +14,12 @@ import {
   excludeAlreadyBilledSessions,
 } from "@/lib/billing-scope";
 import { BILLED_ELSEWHERE_WHERE } from "@/lib/invoice-delivery";
+import {
+  blockingCalendarIssues,
+  BLOCKING_ISSUE_REASONS,
+  sessionIdsFromIssueDetails,
+  type PreflightIssue,
+} from "@/lib/invoice-preflight";
 import { shapeSnapshotFromGeneration, visibleSections } from "@/lib/invoice-snapshot-shape";
 import { getTutorProfile, TutorProfileData } from "@/lib/tutor-profile";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
@@ -391,6 +397,54 @@ export async function commitInvoiceContent(params: {
       generatedPayloadJson: generated as unknown as Prisma.InputJsonValue,
     },
   });
+}
+
+/**
+ * Kalender-Vorpruefung fuer eine Menge Lektionen — die IO-Seite von
+ * lib/invoice-preflight.
+ *
+ * Aufrufer geben die Lektionen, um die es geht: die `sessionIds` der Rechnung
+ * beim Versand, die Payload-Positionen beim Erzeugen, alle Lektionen des Monats
+ * beim ZIP-Export. Zurueck kommen die offenen Befunde, die auf genau diesen
+ * Lektionen sitzen — nichts aus anderen Monaten, nichts von anderen Schuelern.
+ */
+export async function calendarPreflight(
+  billedSessionIds: readonly string[]
+): Promise<PreflightIssue[]> {
+  const ids = new Set(billedSessionIds);
+  if (ids.size === 0) return [];
+
+  const rows = await prisma.calendarSyncIssue.findMany({
+    where: { status: "open", reason: { in: BLOCKING_ISSUE_REASONS } },
+    select: { externalEventId: true, reason: true, title: true, detailsJson: true },
+    orderBy: { startAt: "asc" },
+  });
+
+  return blockingCalendarIssues({
+    openIssues: rows.map((r) => ({
+      key: r.externalEventId,
+      reason: r.reason,
+      title: r.title,
+      sessionIds: sessionIdsFromIssueDetails(r.detailsJson),
+    })),
+    billedSessionIds: ids,
+  });
+}
+
+/** Alle Lektionen eines Monats — der Umfang der Vorpruefung fuer den ZIP-Export. */
+export async function monthSessionIds(year: number, month: number): Promise<string[]> {
+  const rows = await prisma.session.findMany({ where: { year, month }, select: { id: true } });
+  return rows.map((r) => r.id);
+}
+
+/** Die Positionen einer Rechnungszeile; unlesbares JSON zaehlt als "keine". */
+export function parseInvoiceSessionIds(sessionIds: string | null | undefined): string[] {
+  try {
+    const parsed: unknown = JSON.parse(sessionIds || "[]");
+    return Array.isArray(parsed) ? parsed.map((v) => String(v)) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Safe ASCII-ish basename for downloads, e.g. `aiyana_04_2026.pdf` */

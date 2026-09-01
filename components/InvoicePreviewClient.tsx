@@ -65,6 +65,8 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
   const [generatedPdfUrl, setGeneratedPdfUrl] = useState<string | null>(null);
   const [settings, setSettings] = useState<TutorSettings | null>(null);
   const [sendState, setSendState] = useState<string>("");
+  /** Offene Kalender-Befunde auf den Lektionen dieser Rechnung — sperren den Versand. */
+  const [calendarWarning, setCalendarWarning] = useState<string>("");
   const [previewNonce, setPreviewNonce] = useState(0);
   const [parentName, setParentName] = useState("");
   const [parentPhone, setParentPhone] = useState("");
@@ -201,6 +203,7 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
     });
     const data = await response.json();
     if (!response.ok) { setSendState(data.error ?? "Fehler beim Generieren."); return null; }
+    setCalendarWarning(typeof data.calendarWarning === "string" ? data.calendarWarning : "");
     setInvoice((old) => ({ id: data.invoiceId, sentAt: old?.sentAt ?? null }));
     setGeneratedPdfUrl(typeof data.pdfUrl === "string" ? data.pdfUrl : null);
     setPreviewNonce((n) => n + 1);
@@ -452,6 +455,11 @@ export function InvoicePreviewClient({ studentId, year, month }: Props) {
             )}
             {sendState && (
               <p className="mt-2 text-xs text-gray-500">{sendState}</p>
+            )}
+            {calendarWarning && (
+              <p className="mt-2 whitespace-pre-line rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800">
+                {calendarWarning}
+              </p>
             )}
           </div>
 

@@ -34,12 +34,24 @@ type CalendarIssueRow = {
     parts?: { durationMin: number; amountCHF: number }[];
     monthDelivered?: boolean;
     staleCalEventId?: string;
+    // Identitaetsbefunde (Stage 2)
+    preserved?: { field: string; historic: number; incoming: number }[];
+    newCalEventId?: string;
   } | null;
 };
 
-/** Befunde der Integritaetspruefung — anderer Lebenszyklus, eigener Abschnitt. */
-type IntegrityReason = "session_orphan" | "duplicate_slot";
-const INTEGRITY_REASONS: IntegrityReason[] = ["session_orphan", "duplicate_slot"];
+/** Befunde der Integritaets- und Identitaetspruefung — eigener Abschnitt. */
+type IntegrityReason =
+  | "session_orphan"
+  | "duplicate_slot"
+  | "identity_ambiguous"
+  | "identity_conflict";
+const INTEGRITY_REASONS: IntegrityReason[] = [
+  "session_orphan",
+  "duplicate_slot",
+  "identity_ambiguous",
+  "identity_conflict",
+];
 const isIntegrityRow = (row: CalendarIssueRow): boolean =>
   (INTEGRITY_REASONS as string[]).includes(row.reason);
 
@@ -50,6 +62,8 @@ const ISSUE_REASON_LABEL: Record<CalendarIssueRow["reason"], string> = {
   inactive_match: "Schüler deaktiviert",
   session_orphan: "Kalendertermin fehlt",
   duplicate_slot: "Mögliche doppelte Lektion",
+  identity_ambiguous: "Zuordnung unklar",
+  identity_conflict: "Rechnung bleibt wie ausgeliefert",
 };
 
 /** Was der Nutzer bei einem Integritaetsbefund tun kann — ohne Fachjargon. */
@@ -61,6 +75,14 @@ const INTEGRITY_HINT: Record<IntegrityReason, string> = {
   duplicate_slot:
     "Für diesen Zeitpunkt stehen mehrere Lektionen in der App — das ergibt einen " +
     "zu hohen Betrag. Meist bleibt beim Ändern eines Termins die alte Zeile zurück.",
+  identity_ambiguous:
+    "Ein Kalendertermin hat eine neue ID bekommen, und mehrere bestehende Lektionen " +
+    "kämen als dieselbe in Frage. Es wurde nichts zusammengelegt und nichts gelöscht — " +
+    "bitte im Kalender klären, welche Lektion gemeint ist.",
+  identity_conflict:
+    "Der Kalendertermin wurde wieder mit der bestehenden Lektion verknüpft, sieht dort " +
+    "aber inzwischen anders aus. Weil die Rechnung dieses Monats bereits ausgeliefert ist, " +
+    "bleiben Dauer und Betrag wie fakturiert. Korrektur nur über \"Neu ausstellen\".",
 };
 
 const zurichDayTime = new Intl.DateTimeFormat("de-CH", {

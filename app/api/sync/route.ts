@@ -15,6 +15,15 @@ import {
   isIntegrityReason,
   type IntegrityFinding,
 } from "@/lib/calendar-integrity";
+import {
+  describeAmbiguousIdentity,
+  describeIdentityConflict,
+  identityIssueKey,
+  identityReplacementPlan,
+  resolveCalendarIdentity,
+  type IdentityCandidate,
+  type PreservedField,
+} from "@/lib/calendar-identity";
 import { clearIncomeSummaryCache } from "@/lib/income-summary-cache";
 import { detectInvoiceChangesInScope } from "@/lib/invoice-change-detection";
 import {
@@ -166,15 +175,26 @@ export async function POST(req: NextRequest) {
     type UpsertTask = {
       calEventId: string;
       studentId: string;
+      studentName: string;
       date: Date;
       durationMin: number;
       amountCHF: number;
       notes: string | null;
       month: number;
       year: number;
+      /**
+       * Stage 2: Google hat der bestehenden Lektion eine neue ID gegeben. Statt
+       * einer zweiten Zeile wird diese hier aktualisiert. null = normaler Upsert.
+       */
+      replaceSessionId: string | null;
+      /** Der Stand VOR der Ersetzung — im ausgelieferten Monat bleibt er stehen. */
+      replaceHistoric: { durationMin: number; amountCHF: number } | null;
     };
     const tasks: UpsertTask[] = [];
     const eventIds = events.map((event) => event.id).filter((id): id is string => typeof id === "string");
+    // Der VOLLSTAENDIGE Satz der gelieferten Event-IDs — auch der nicht
+    // zugeordneten. Nur so heisst "nicht enthalten" wirklich "im Kalender weg".
+    const googleEventIdSet = new Set(eventIds);
     const existingByEventId = new Map(
       (
         await prisma.session.findMany({
@@ -188,6 +208,33 @@ export async function POST(req: NextRequest) {
         )
         .map((s) => [s.calEventId, s] as const)
     );
+
+    // Kandidaten fuer die Identitaetserkennung: alle Lektionen des Monats. Eine
+    // Ersetzung setzt exakt dieselbe Startzeit voraus, also liegt der Kandidat
+    // zwangslaeufig im selben Monat wie der Termin.
+    const monthSessionCandidates: IdentityCandidate[] = await prisma.session.findMany({
+      where: { year, month },
+      select: {
+        id: true,
+        studentId: true,
+        date: true,
+        durationMin: true,
+        amountCHF: true,
+        calEventId: true,
+      },
+    });
+    /** In diesem Lauf bereits vergebene Lektionen — keine darf zweimal ersetzt werden. */
+    const claimedSessionIds = new Set<string>();
+    /** Mehrdeutige Ersetzungen: nicht raten, sondern zur Pruefung vorlegen. */
+    const ambiguousIdentities: {
+      key: string;
+      title: string;
+      startAt: Date;
+      studentId: string;
+      studentName: string;
+      sessionIds: string[];
+      newCalEventId: string;
+    }[] = [];
 
     for (const event of events) {
       const title = event.summary ?? "";
@@ -252,7 +299,53 @@ export async function POST(req: NextRequest) {
       const student = matches[0];
 
       const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
-      const existingSession = existingByEventId.get(calEventId);
+      const linkedSession = existingByEventId.get(calEventId);
+
+      // ── Stage 2: hat diese Lektion nur eine neue Kalender-ID bekommen? ──────
+      //
+      // Nur fuer Termine, deren ID noch zu keiner Lektion gehoert. Alles andere
+      // laeuft unveraendert ueber den Upsert.
+      let replaceSessionId: string | null = null;
+      let replaceHistoric: { durationMin: number; amountCHF: number } | null = null;
+      if (!linkedSession) {
+        const identity = resolveCalendarIdentity({
+          calEventId,
+          studentId: student.id,
+          start,
+          sessions: monthSessionCandidates,
+          googleEventIds: googleEventIdSet,
+          claimedSessionIds,
+        });
+        if (identity.kind === "replace") {
+          replaceSessionId = identity.session.id;
+          replaceHistoric = {
+            durationMin: identity.session.durationMin,
+            amountCHF: identity.session.amountCHF,
+          };
+          claimedSessionIds.add(identity.session.id);
+        } else if (identity.kind === "ambiguous") {
+          // Kein automatischer Zusammenschluss. Die Lektion entsteht wie bisher
+          // (eine verworfene Lektion waere der teurere Fehler), aber der Fall
+          // geht als Befund ins Band "Kalender pruefen" — und blockiert dort die
+          // Auslieferung, bis jemand entschieden hat.
+          ambiguousIdentities.push({
+            key: identityIssueKey("identity_ambiguous", calEventId),
+            title: describeAmbiguousIdentity(student.name, start, identity.sessions.length),
+            startAt: start,
+            studentId: student.id,
+            studentName: student.name,
+            sessionIds: identity.sessions.map((s) => s.id),
+            newCalEventId: calEventId,
+          });
+        }
+      }
+
+      // Die Ersetzung IST dieselbe Lektion: fuer die Bepreisung zaehlt sie wie
+      // ein Wiedersehen, damit ein Tarifwechsel mit Stichtag nicht ueber die
+      // neue ID doch noch alte Lektionen neu bepreist.
+      const existingSession =
+        linkedSession ??
+        (replaceHistoric ? { studentId: student.id, ...replaceHistoric } : undefined);
       // New sessions get the tariff effective on the lesson date, not today's.
       let amountCHF = durationMin * rateAtDate(rateHistoryByStudent.get(student.id) ?? [], student.ratePerMin, start);
       // Nur beim SELBEN Schueler. Wird ein Kalendertitel korrigiert, haengt der
@@ -272,12 +365,15 @@ export async function POST(req: NextRequest) {
       tasks.push({
         calEventId,
         studentId: student.id,
+        studentName: student.name,
         date: start,
         durationMin,
         amountCHF,
         notes: event.description ?? null,
         month: eventYm.month,
         year: eventYm.year,
+        replaceSessionId,
+        replaceHistoric,
       });
     }
 
@@ -285,7 +381,7 @@ export async function POST(req: NextRequest) {
     // That way unmatched titles do not block orphan deletion: sessions whose
     // Google event was deleted are removed, while sessions for unmatched titles
     // (event still present) are preserved.
-    const googleEventIds = Array.from(new Set(eventIds));
+    const googleEventIds = Array.from(googleEventIdSet);
     const allowPruneOrphans = pruneOrphans === true;
 
     // Lektionen in Monaten mit bereits ausgelieferter Rechnung werden nie gelöscht:
@@ -313,11 +409,79 @@ export async function POST(req: NextRequest) {
     const notDelivered =
       protectedStudentIds.length > 0 ? { studentId: { notIn: protectedStudentIds } } : {};
 
+    // Stage 2: was darf eine Identitaetsersetzung schreiben? Rein entschieden,
+    // bevor die Transaktion laeuft — im ausgelieferten Monat wird nur die
+    // technische Verknuepfung repariert, die Finanzwerte bleiben stehen.
+    const protectedStudentIdSet = new Set(protectedStudentIds);
+    const identityPlans = new Map<string, ReturnType<typeof identityReplacementPlan>>();
+    /** Ausgelieferte Monate, in denen der Termin inzwischen anders aussieht. */
+    const identityConflicts: {
+      key: string;
+      title: string;
+      startAt: Date;
+      studentId: string;
+      studentName: string;
+      sessionIds: string[];
+      preserved: PreservedField[];
+      newCalEventId: string;
+    }[] = [];
+    for (const t of tasks) {
+      if (!t.replaceSessionId || !t.replaceHistoric) continue;
+      const plan = identityReplacementPlan({
+        existing: t.replaceHistoric,
+        incoming: { durationMin: t.durationMin, amountCHF: t.amountCHF },
+        monthDelivered: protectedStudentIdSet.has(t.studentId),
+      });
+      identityPlans.set(t.calEventId, plan);
+      if (plan.preserved.length > 0) {
+        identityConflicts.push({
+          key: identityIssueKey("identity_conflict", t.replaceSessionId),
+          title: describeIdentityConflict(t.studentName, t.date, plan.preserved),
+          startAt: t.date,
+          studentId: t.studentId,
+          studentName: t.studentName,
+          sessionIds: [t.replaceSessionId],
+          preserved: plan.preserved,
+          newCalEventId: t.calEventId,
+        });
+      }
+    }
+
     // Default interactive transaction timeout is too low for a full month of upserts
     // (leads to P2028 "Transaction not found" when Prisma closes the tx mid-loop).
     await prisma.$transaction(
       async (tx) => {
         for (const t of tasks) {
+          // Identitaetsersetzung: bestehende Zeile weiterfuehren statt eine
+          // zweite anlegen. Genau die zweite Zeile hat Leo, Elenor und Luca
+          // doppelt fakturiert.
+          if (t.replaceSessionId) {
+            const plan = identityPlans.get(t.calEventId);
+            await tx.session.update({
+              where: { id: t.replaceSessionId },
+              data: {
+                // Die Verknuepfung wird immer repariert — sie ist keine
+                // Finanzangabe, und ohne sie bliebe die Lektion fuer immer Waise.
+                calEventId: t.calEventId,
+                ...(plan?.updateEditableFields
+                  ? {
+                      studentId: t.studentId,
+                      date: t.date,
+                      durationMin: t.durationMin,
+                      amountCHF: t.amountCHF,
+                      month: t.month,
+                      year: t.year,
+                      notes: t.notes,
+                    }
+                  : {}),
+                // Der Termin ist wieder da, nur unter anderer ID: eine offene
+                // Loeschvormerkung ist damit gegenstandslos.
+                ...CALENDAR_EVENT_SEEN_RESET,
+              },
+            });
+            continue;
+          }
+
           await tx.session.upsert({
             where: { calEventId: t.calEventId },
             update: {
@@ -468,6 +632,7 @@ export async function POST(req: NextRequest) {
           endAt: null,
           calendarId,
           details: {
+            studentId: finding.studentId,
             studentName: finding.studentName,
             sessionIds: finding.sessionIds,
             amountCHF: finding.amountCHF,
@@ -483,6 +648,50 @@ export async function POST(req: NextRequest) {
     } catch (err: unknown) {
       integrityError = err instanceof Error ? err.message : String(err);
       console.error("[sync] Integritaetspruefung fehlgeschlagen:", err);
+    }
+
+    // Stage-2-Befunde in dasselbe Band. Sie tragen `sessionIds`, weil die
+    // Rechnungs-Vorpruefung genau darueber entscheidet, welche Rechnung ein
+    // Befund aufhaelt.
+    for (const a of ambiguousIdentities) {
+      issueObservations.push({
+        externalEventId: a.key,
+        externalUpdatedAt: null,
+        reason: "identity_ambiguous",
+        title: a.title,
+        startAt: a.startAt,
+        endAt: null,
+        calendarId,
+        details: {
+          studentId: a.studentId,
+          studentName: a.studentName,
+          sessionIds: a.sessionIds,
+          newCalEventId: a.newCalEventId,
+          year,
+          month,
+        },
+      });
+    }
+    for (const c of identityConflicts) {
+      issueObservations.push({
+        externalEventId: c.key,
+        externalUpdatedAt: null,
+        reason: "identity_conflict",
+        title: c.title,
+        startAt: c.startAt,
+        endAt: null,
+        calendarId,
+        details: {
+          studentId: c.studentId,
+          studentName: c.studentName,
+          sessionIds: c.sessionIds,
+          preserved: c.preserved,
+          newCalEventId: c.newCalEventId,
+          monthDelivered: true,
+          year,
+          month,
+        },
+      });
     }
 
     // Nicht zugeordnete Termine festhalten, damit sie den Request ueberleben und
@@ -505,7 +714,13 @@ export async function POST(req: NextRequest) {
         // einen Zustand, kein Ereignis. Solange der Zustand besteht, bleibt der
         // Befund offen — ein voreiliges "Erledigt" darf ihn nicht dauerhaft
         // verstecken. Nur "Ignorieren" haelt.
-        const next = isIntegrityReason(observed.reason)
+        // identity_ambiguous gehoert dazu: solange beide Kandidaten dastehen und
+        // der Termin unverknuepft ist, besteht der Zustand fort. identity_conflict
+        // dagegen ist ein Ereignis — die Verknuepfung wurde einmal repariert und
+        // die Finanzwerte bewusst stehen gelassen; ist das quittiert, bleibt es
+        // quittiert.
+        const next =
+          isIntegrityReason(observed.reason) || observed.reason === "identity_ambiguous"
           ? {
               status: integrityIssueStatus(prior?.status ?? null),
               reopened: prior?.status === "resolved",
@@ -573,14 +788,20 @@ export async function POST(req: NextRequest) {
         const openIntegrity = await prisma.calendarSyncIssue.findMany({
           where: {
             status: "open",
-            reason: { in: INTEGRITY_REASONS },
+            // Nur Zustandsbefunde. identity_conflict bleibt aussen vor: er wird
+            // nach der Reparatur nie wieder beobachtet und wuerde sich sonst im
+            // naechsten Lauf selbst erledigen, obwohl die Abweichung besteht.
+            reason: { in: [...INTEGRITY_REASONS, "identity_ambiguous"] },
             startAt: { gte: monthStart, lt: monthEnd },
           },
           select: { externalEventId: true },
         });
         const behoben = integrityIssuesToClose(
           openIntegrity.map((i) => i.externalEventId),
-          new Set(integrityFindings.map((f) => f.key))
+          new Set([
+            ...integrityFindings.map((f) => f.key),
+            ...ambiguousIdentities.map((a) => a.key),
+          ])
         );
         if (behoben.length > 0) {
           await prisma.calendarSyncIssue.updateMany({
@@ -666,6 +887,12 @@ export async function POST(req: NextRequest) {
       unmatched,
       /** Offene, noch nicht entschiedene Kalender-Befunde insgesamt. */
       unmatchedOpenTotal: issuesOpen,
+      /** Stage 2: Lektionen, die statt eines Duplikats eine neue Kalender-ID bekamen. */
+      identityReplacements: tasks.filter((t) => t.replaceSessionId !== null).length,
+      /** Mehrdeutige Ersetzungen — nicht zusammengelegt, zur Pruefung vorgelegt. */
+      identityAmbiguous: ambiguousIdentities.length,
+      /** Ausgelieferte Monate, in denen nur die Verknuepfung repariert wurde. */
+      identityConflicts: identityConflicts.length,
       /** Integritaetspruefung dieses Monats — reine Erkennung, nichts veraendert. */
       integrityOrphans: integrityFindings.filter((f) => f.type === "session_orphan").length,
       integrityDuplicates: integrityFindings.filter((f) => f.type === "duplicate_slot").length,

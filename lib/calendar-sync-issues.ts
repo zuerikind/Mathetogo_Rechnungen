@@ -18,6 +18,7 @@
  *     Umbenennung macht aus einem Zahnarzttermin keine Lektion.
  */
 
+import type { IdentityIssueType } from "@/lib/calendar-identity";
 import type { IntegrityFindingType } from "@/lib/calendar-integrity";
 import type { SyncUnmatchedReason } from "@/lib/sync-unmatched";
 
@@ -26,11 +27,16 @@ export type CalendarIssueStatusValue = "open" | "resolved" | "ignored";
 /**
  * Alle Befundarten, die im Band «Kalender prüfen» landen.
  *
- * Die beiden Integritaetsbefunde teilen sich Speicher und Entscheid-Workflow mit
- * den nicht zugeordneten Terminen, folgen aber einem anderen Lebenszyklus:
- * siehe integrityIssueStatus in lib/calendar-integrity.
+ * Die Integritaetsbefunde teilen sich Speicher und Entscheid-Workflow mit den
+ * nicht zugeordneten Terminen, folgen aber einem anderen Lebenszyklus: siehe
+ * integrityIssueStatus in lib/calendar-integrity. Dasselbe gilt fuer
+ * `identity_ambiguous`; `identity_conflict` ist dagegen ein Ereignis und laeuft
+ * ueber reconcileObservedIssue wie ein nicht zugeordneter Termin.
  */
-export type CalendarIssueReason = SyncUnmatchedReason | IntegrityFindingType;
+export type CalendarIssueReason =
+  | SyncUnmatchedReason
+  | IntegrityFindingType
+  | IdentityIssueType;
 
 /** Ein in diesem Lauf beobachteter, nicht zuordenbarer Termin. */
 export type ObservedCalendarIssue = {

@@ -3,9 +3,17 @@ import JSZip from "jszip";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { buildInvoicePdf } from "@/lib/invoice-pdf";
-import { commitInvoiceContent, getInvoicePayload, reserveInvoiceRow } from "@/lib/invoice";
+import {
+  calendarPreflight,
+  commitInvoiceContent,
+  getInvoicePayload,
+  getPeriodLabel,
+  monthSessionIds,
+  reserveInvoiceRow,
+} from "@/lib/invoice";
 import { DELIVERED_INVOICE_WHERE, isDelivered } from "@/lib/invoice-delivery";
 import { recordInvoiceDownload } from "@/lib/invoice-download";
+import { preflightBlockMessage } from "@/lib/invoice-preflight";
 import { pruneStaleInvoiceIfUnbillable } from "@/lib/invoice-stale";
 import { getSubscriptionInvoiceLines } from "@/lib/subscription-billing";
 import {
@@ -47,6 +55,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "year und month sind erforderlich." },
         { status: 400 }
+      );
+    }
+
+    // Der Monatsexport liefert ALLE Rechnungen des Monats aus — ein offener
+    // Kalender-Befund auf irgendeiner davon haelt deshalb das ganze Archiv auf.
+    // Bewusst vor jeder Nummernvergabe und jedem PDF-Bau: ein Abbruch soll gar
+    // nichts hinterlassen.
+    const blocking = await calendarPreflight(await monthSessionIds(year, month));
+    if (blocking.length > 0) {
+      return NextResponse.json(
+        {
+          error: preflightBlockMessage(blocking, getPeriodLabel(month, year)),
+          calendarIssues: blocking.map((i) => ({ key: i.key, reason: i.reason, title: i.title })),
+        },
+        { status: 409 }
       );
     }
 

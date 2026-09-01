@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { freezeInvoiceSnapshot } from "@/lib/invoice-download";
+import { calendarPreflight, getPeriodLabel, parseInvoiceSessionIds } from "@/lib/invoice";
+import { isDelivered } from "@/lib/invoice-delivery";
+import { preflightBlockMessage } from "@/lib/invoice-preflight";
 import { prisma } from "@/lib/prisma";
 import { parseReminderStage } from "@/lib/reminder-tokens";
 
@@ -27,7 +30,18 @@ try {
 
     const invoice = await prisma.invoice.findUnique({
       where: { id: invoiceId },
-      select: { id: true, pdfPath: true, sentAt: true, paidAt: true, voidedAt: true, invoiceNumber: true },
+      select: {
+        id: true,
+        pdfPath: true,
+        sentAt: true,
+        paidAt: true,
+        firstDownloadedAt: true,
+        voidedAt: true,
+        invoiceNumber: true,
+        sessionIds: true,
+        month: true,
+        year: true,
+      },
     });
 
     if (!invoice) {
@@ -49,6 +63,23 @@ try {
         { error: "Bitte zuerst die Rechnung generieren." },
         { status: 409 }
       );
+    }
+
+    // "Gesendet"/"bezahlt" von Hand friert den Stand ein — dieselbe Auslieferung
+    // wie der E-Mail-Versand, also dieselbe Vorpruefung. Eine bereits
+    // ausgelieferte Rechnung laeuft nicht hinein: dort ist das Dokument raus, und
+    // eine Sperre wuerde nur noch die Nachpflege des Status verhindern.
+    if ((status === "sent" || status === "paid") && !isDelivered(invoice)) {
+      const blocking = await calendarPreflight(parseInvoiceSessionIds(invoice.sessionIds));
+      if (blocking.length > 0) {
+        return NextResponse.json(
+          {
+            error: preflightBlockMessage(blocking, getPeriodLabel(invoice.month, invoice.year)),
+            calendarIssues: blocking.map((i) => ({ key: i.key, reason: i.reason, title: i.title })),
+          },
+          { status: 409 }
+        );
+      }
     }
 
     const now = new Date();

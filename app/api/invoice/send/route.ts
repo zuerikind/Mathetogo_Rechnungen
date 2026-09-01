@@ -3,7 +3,13 @@ import { Resend } from "resend";
 import { auth } from "@/auth";
 import { freezeInvoiceSnapshot } from "@/lib/invoice-download";
 import { prisma } from "@/lib/prisma";
-import { formatAmount, getPeriodLabel } from "@/lib/invoice";
+import {
+  calendarPreflight,
+  formatAmount,
+  getPeriodLabel,
+  parseInvoiceSessionIds,
+} from "@/lib/invoice";
+import { preflightBlockMessage } from "@/lib/invoice-preflight";
 import { supabase, INVOICE_BUCKET, invoiceStoragePath } from "@/lib/supabase";
 import { getTutorProfile } from "@/lib/tutor-profile";
 
@@ -61,6 +67,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Bitte E-Mail-Adresse des Schülers hinterlegen." },
         { status: 400 }
+      );
+    }
+
+    // Kalender-Vorpruefung — die letzte Stelle, an der sich der August-Fehler
+    // noch aufhalten laesst. Danach ist die Mail raus und die Rechnung
+    // unveraenderlich. Bewusst ohne "trotzdem senden": der Weg heraus fuehrt
+    // ueber "Kalender prüfen".
+    const blocking = await calendarPreflight(parseInvoiceSessionIds(invoice.sessionIds));
+    if (blocking.length > 0) {
+      return NextResponse.json(
+        {
+          error: preflightBlockMessage(blocking, getPeriodLabel(invoice.month, invoice.year)),
+          calendarIssues: blocking.map((i) => ({ key: i.key, reason: i.reason, title: i.title })),
+        },
+        { status: 409 }
       );
     }
 
