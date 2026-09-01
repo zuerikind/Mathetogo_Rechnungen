@@ -18,16 +18,26 @@
  *     Umbenennung macht aus einem Zahnarzttermin keine Lektion.
  */
 
+import type { IntegrityFindingType } from "@/lib/calendar-integrity";
 import type { SyncUnmatchedReason } from "@/lib/sync-unmatched";
 
 export type CalendarIssueStatusValue = "open" | "resolved" | "ignored";
+
+/**
+ * Alle Befundarten, die im Band «Kalender prüfen» landen.
+ *
+ * Die beiden Integritaetsbefunde teilen sich Speicher und Entscheid-Workflow mit
+ * den nicht zugeordneten Terminen, folgen aber einem anderen Lebenszyklus:
+ * siehe integrityIssueStatus in lib/calendar-integrity.
+ */
+export type CalendarIssueReason = SyncUnmatchedReason | IntegrityFindingType;
 
 /** Ein in diesem Lauf beobachteter, nicht zuordenbarer Termin. */
 export type ObservedCalendarIssue = {
   externalEventId: string;
   /** Googles `updated` — Versionsmarke des Termins; null wenn Google nichts liefert. */
   externalUpdatedAt: Date | null;
-  reason: SyncUnmatchedReason;
+  reason: CalendarIssueReason;
 };
 
 /** Der gespeicherte Stand desselben Termins, falls es ihn schon gibt. */

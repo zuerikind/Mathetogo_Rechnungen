@@ -19,7 +19,7 @@ type PendingDeletionRow = {
 type CalendarIssueRow = {
   id: string;
   externalEventId: string;
-  reason: SyncUnmatchedEvent["reason"];
+  reason: SyncUnmatchedEvent["reason"] | IntegrityReason;
   title: string;
   startAt: string | null;
   endAt: string | null;
@@ -28,14 +28,39 @@ type CalendarIssueRow = {
     suggestions?: string[];
     ambiguousStudents?: string[];
     inactiveStudents?: string[];
+    // Integritaetsbefunde
+    studentName?: string;
+    amountCHF?: number;
+    parts?: { durationMin: number; amountCHF: number }[];
+    monthDelivered?: boolean;
+    staleCalEventId?: string;
   } | null;
 };
 
-/** Kurzes deutsches Etikett je Nichtzuordnungs-Grund — kein Rohwert in der Oberfläche. */
+/** Befunde der Integritaetspruefung — anderer Lebenszyklus, eigener Abschnitt. */
+type IntegrityReason = "session_orphan" | "duplicate_slot";
+const INTEGRITY_REASONS: IntegrityReason[] = ["session_orphan", "duplicate_slot"];
+const isIntegrityRow = (row: CalendarIssueRow): boolean =>
+  (INTEGRITY_REASONS as string[]).includes(row.reason);
+
+/** Kurzes deutsches Etikett je Grund — kein Rohwert in der Oberfläche. */
 const ISSUE_REASON_LABEL: Record<CalendarIssueRow["reason"], string> = {
   no_match: "Kein Treffer",
   ambiguous: "Mehrdeutig",
   inactive_match: "Schüler deaktiviert",
+  session_orphan: "Kalendertermin fehlt",
+  duplicate_slot: "Mögliche doppelte Lektion",
+};
+
+/** Was der Nutzer bei einem Integritaetsbefund tun kann — ohne Fachjargon. */
+const INTEGRITY_HINT: Record<IntegrityReason, string> = {
+  session_orphan:
+    "Diese Lektion steht in der App, hat im Kalender aber keinen Termin mehr — " +
+    "etwa weil er verschoben, gelöscht oder in eine Serie umgewandelt wurde. " +
+    "Sie zählt weiter zum Betrag. Bitte im Kalender prüfen.",
+  duplicate_slot:
+    "Für diesen Zeitpunkt stehen mehrere Lektionen in der App — das ergibt einen " +
+    "zu hohen Betrag. Meist bleibt beim Ändern eines Termins die alte Zeile zurück.",
 };
 
 const zurichDayTime = new Intl.DateTimeFormat("de-CH", {
@@ -182,6 +207,13 @@ export function CalendarReviewPanel({
 
   if (rows.length === 0 && issues.length === 0) return null;
 
+  // Zwei Arten von Befunden, zwei Abschnitte: «im Kalender, aber keinem Schüler
+  // zuzuordnen» (unmatched) und «App und Kalender passen nicht zusammen» (Integrität).
+  const unmatchedIssues = issues.filter(
+    (i): i is CalendarIssueRow & { reason: SyncUnmatchedEvent["reason"] } => !isIntegrityRow(i)
+  );
+  const integrityIssues = issues.filter(isIntegrityRow);
+
   const badgeCls =
     "rounded-full bg-white/80 px-2 py-0.5 text-xs font-bold text-red-900 ring-1 ring-red-200";
 
@@ -195,7 +227,12 @@ export function CalendarReviewPanel({
               {rows.length} fehlend · {formatAmount(totalCHF)}
             </span>
           )}
-          {issues.length > 0 && <span className={badgeCls}>{issues.length} ohne Zuordnung</span>}
+          {unmatchedIssues.length > 0 && (
+            <span className={badgeCls}>{unmatchedIssues.length} ohne Zuordnung</span>
+          )}
+          {integrityIssues.length > 0 && (
+            <span className={badgeCls}>{integrityIssues.length} Abgleich</span>
+          )}
         </span>
       </div>
 
@@ -270,15 +307,103 @@ export function CalendarReviewPanel({
         </div>
       )}
 
-      {issues.length > 0 && (
+      {integrityIssues.length > 0 && (
         <div className={rows.length > 0 ? "mt-5 border-t border-red-200 pt-4" : "mt-4"}>
+          <h3 className="text-sm font-semibold text-red-900">App und Kalender passen nicht zusammen</h3>
+          <p className="mt-1 text-sm text-red-800">
+            Reine Prüfung — es wurde nichts geändert. Diese Lektionen zählen weiter zum Betrag,
+            auch wenn die Rechnung des Monats bereits ausgeliefert ist.
+          </p>
+
+          <ul className="mt-3 space-y-1.5">
+            {integrityIssues.map((issue) => {
+              const reason = issue.reason as IntegrityReason;
+              const parts = issue.detailsJson?.parts ?? [];
+              return (
+                <li
+                  key={issue.id}
+                  className="flex flex-col gap-2 rounded-xl bg-white/70 px-3 py-2 text-sm sm:flex-row sm:items-start sm:justify-between"
+                >
+                  <span className="min-w-0">
+                    <span className="block font-medium leading-snug text-gray-900">
+                      {issue.title}
+                    </span>
+                    <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-600">
+                      <span
+                        className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700"
+                        // Rohe Kalender-ID nur hier, für die Fehlersuche.
+                        title={issue.detailsJson?.staleCalEventId ?? undefined}
+                      >
+                        {ISSUE_REASON_LABEL[reason]}
+                      </span>
+                      {formatIssueWhen(issue.startAt, issue.endAt) && (
+                        <span>{formatIssueWhen(issue.startAt, issue.endAt)}</span>
+                      )}
+                      {parts.length > 0 && (
+                        <span>
+                          {parts
+                            .map((p) => `${p.durationMin} Min · ${formatAmount(p.amountCHF)}`)
+                            .join("  +  ")}
+                        </span>
+                      )}
+                      {typeof issue.detailsJson?.amountCHF === "number" && parts.length > 1 && (
+                        <span className="font-semibold text-gray-900">
+                          zusammen {formatAmount(issue.detailsJson.amountCHF)}
+                        </span>
+                      )}
+                      {issue.detailsJson?.monthDelivered ? (
+                        <span
+                          className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-900"
+                          title="Der Monat ist ausgeliefert — hier wird nichts automatisch geändert. Korrektur läuft über «Neu ausstellen»."
+                        >
+                          Monat ausgeliefert
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="mt-1 block text-xs text-gray-600">{INTEGRITY_HINT[reason]}</span>
+                  </span>
+                  <span className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void decideIssue("resolve", [issue.id])}
+                      title="Angeschaut. Besteht der Befund beim nächsten Sync weiter, erscheint er wieder."
+                      className="rounded-lg bg-slate-700 px-3 py-1 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
+                    >
+                      Erledigt
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void decideIssue("ignore", [issue.id])}
+                      title="So gewollt — dieser Befund wird nicht mehr gemeldet."
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition hover:border-gray-400 disabled:opacity-40"
+                    >
+                      Ignorieren
+                    </button>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {unmatchedIssues.length > 0 && (
+        <div
+          className={
+            rows.length > 0 || integrityIssues.length > 0
+              ? "mt-5 border-t border-red-200 pt-4"
+              : "mt-4"
+          }
+        >
           <h3 className="text-sm font-semibold text-red-900">Nicht zugeordnete Kalendereinträge</h3>
           <p className="mt-1 text-sm text-red-800">
             Im Kalender vorhanden, aber keinem Schüler zuzuordnen — diese Stunden wurden nicht übernommen.
           </p>
 
           <ul className="mt-3 space-y-1.5">
-            {issues.map((issue) => (
+            {unmatchedIssues.map((issue) => (
               <li
                 key={issue.id}
                 className="flex flex-col gap-2 rounded-xl bg-white/70 px-3 py-2 text-sm sm:flex-row sm:items-start sm:justify-between"

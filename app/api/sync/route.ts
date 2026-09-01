@@ -6,6 +6,15 @@ import {
   reconcileObservedIssue,
   type ObservedCalendarIssue,
 } from "@/lib/calendar-sync-issues";
+import {
+  describeIntegrityFinding,
+  findCalendarIntegrityIssues,
+  INTEGRITY_REASONS,
+  integrityIssuesToClose,
+  integrityIssueStatus,
+  isIntegrityReason,
+  type IntegrityFinding,
+} from "@/lib/calendar-integrity";
 import { clearIncomeSummaryCache } from "@/lib/income-summary-cache";
 import { detectInvoiceChangesInScope } from "@/lib/invoice-change-detection";
 import {
@@ -409,6 +418,73 @@ export async function POST(req: NextRequest) {
       staleInvoicesRemoved = await pruneStaleInvoicesInScope({ year, month });
     }
 
+    // ── Integritaetspruefung: erkennen, nichts anfassen ──────────────────────
+    //
+    // Bewusst WEDER an allowPruneOrphans NOCH an notDelivered gehaengt. Genau
+    // diese Kopplung hat Leo, Elenor und Luca durchrutschen lassen: in jedem
+    // Monat mit ausgelieferter Rechnung — also in allen, um die es beim Geld
+    // geht — fand gar keine Pruefung mehr statt. Ausgelieferte Monate bleiben
+    // unantastbar; geprueft werden sie trotzdem. Ein Fehler hier darf den
+    // bereits committeten Kalenderabgleich nicht als Fehlschlag erscheinen
+    // lassen, deshalb dieselbe Behandlung wie bei der Abweichungserkennung.
+    let integrityFindings: IntegrityFinding[] = [];
+    let integrityError: string | null = null;
+    try {
+      const monthSessions = await prisma.session.findMany({
+        where: { year, month },
+        select: {
+          id: true,
+          studentId: true,
+          date: true,
+          durationMin: true,
+          amountCHF: true,
+          calEventId: true,
+          student: { select: { name: true } },
+        },
+      });
+      integrityFindings = findCalendarIntegrityIssues({
+        sessions: monthSessions.map((s) => ({
+          id: s.id,
+          studentId: s.studentId,
+          studentName: s.student.name,
+          date: s.date,
+          durationMin: s.durationMin,
+          amountCHF: s.amountCHF,
+          calEventId: s.calEventId,
+        })),
+        googleEventIds: new Set(googleEventIds),
+        deliveredStudentIds: new Set(protectedStudentIds),
+      });
+
+      for (const finding of integrityFindings) {
+        issueObservations.push({
+          externalEventId: finding.key,
+          // Integritaetsbefunde haben keine Google-Version — der Zustand selbst
+          // ist die Aussage, nicht eine Terminaenderung.
+          externalUpdatedAt: null,
+          reason: finding.type,
+          title: describeIntegrityFinding(finding),
+          startAt: finding.startAt,
+          endAt: null,
+          calendarId,
+          details: {
+            studentName: finding.studentName,
+            sessionIds: finding.sessionIds,
+            amountCHF: finding.amountCHF,
+            parts: finding.parts,
+            monthDelivered: finding.monthDelivered,
+            year,
+            month,
+            // Nur zur Fehlersuche; die Oberflaeche zeigt sie nicht offen an.
+            ...(finding.staleCalEventId ? { staleCalEventId: finding.staleCalEventId } : {}),
+          },
+        });
+      }
+    } catch (err: unknown) {
+      integrityError = err instanceof Error ? err.message : String(err);
+      console.error("[sync] Integritaetspruefung fehlgeschlagen:", err);
+    }
+
     // Nicht zugeordnete Termine festhalten, damit sie den Request ueberleben und
     // neben den Loeschvormerkungen auf dem Dashboard erscheinen. Wie die
     // Abweichungserkennung unten reine Zusatzarbeit: der Kalenderabgleich ist
@@ -425,7 +501,16 @@ export async function POST(req: NextRequest) {
 
       for (const observed of issueObservations) {
         const prior = storedById.get(observed.externalEventId) ?? null;
-        const next = reconcileObservedIssue(prior, observed);
+        // Integritaetsbefunde folgen einem eigenen Lebenszyklus: sie beschreiben
+        // einen Zustand, kein Ereignis. Solange der Zustand besteht, bleibt der
+        // Befund offen — ein voreiliges "Erledigt" darf ihn nicht dauerhaft
+        // verstecken. Nur "Ignorieren" haelt.
+        const next = isIntegrityReason(observed.reason)
+          ? {
+              status: integrityIssueStatus(prior?.status ?? null),
+              reopened: prior?.status === "resolved",
+            }
+          : reconcileObservedIssue(prior, observed);
         await prisma.calendarSyncIssue.upsert({
           where: { externalEventId: observed.externalEventId },
           update: {
@@ -476,6 +561,33 @@ export async function POST(req: NextRequest) {
           where: { externalEventId: { in: autoResolved } },
           data: { status: "resolved", resolvedAt: now, lastSeenAt: now },
         });
+      }
+
+      // Behobene Integritaetsbefunde schliessen sich selbst: die doppelte Zeile
+      // ist weg, der Termin wieder da — dann soll keine Warnung stehen bleiben.
+      // Nur fuer den gerade geprueften Monat: fuer andere Monate liegen in
+      // diesem Lauf keine Kalenderdaten vor, "nicht gesehen" waere kein Beweis.
+      if (integrityError === null) {
+        const monthStart = new Date(year, month - 1, 1);
+        const monthEnd = new Date(year, month, 1);
+        const openIntegrity = await prisma.calendarSyncIssue.findMany({
+          where: {
+            status: "open",
+            reason: { in: INTEGRITY_REASONS },
+            startAt: { gte: monthStart, lt: monthEnd },
+          },
+          select: { externalEventId: true },
+        });
+        const behoben = integrityIssuesToClose(
+          openIntegrity.map((i) => i.externalEventId),
+          new Set(integrityFindings.map((f) => f.key))
+        );
+        if (behoben.length > 0) {
+          await prisma.calendarSyncIssue.updateMany({
+            where: { externalEventId: { in: behoben } },
+            data: { status: "resolved", resolvedAt: now, lastSeenAt: now },
+          });
+        }
       }
 
       issuesOpen = await prisma.calendarSyncIssue.count({ where: { status: "open" } });
@@ -554,6 +666,11 @@ export async function POST(req: NextRequest) {
       unmatched,
       /** Offene, noch nicht entschiedene Kalender-Befunde insgesamt. */
       unmatchedOpenTotal: issuesOpen,
+      /** Integritaetspruefung dieses Monats — reine Erkennung, nichts veraendert. */
+      integrityOrphans: integrityFindings.filter((f) => f.type === "session_orphan").length,
+      integrityDuplicates: integrityFindings.filter((f) => f.type === "duplicate_slot").length,
+      /** null = Pruefung lief; Text = sie lief nicht, der Sync selbst war erfolgreich. */
+      integrityError,
       totalEvents: events.length,
     });
   });
