@@ -18,7 +18,19 @@ export function SyncButton({ year, month, onSynced }: SyncButtonProps) {
       const res = await fetch("/api/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ year, month, pruneOrphans: true }),
+        // Die alte Waisen-Bereinigung ist abgeschaltet: keine Loeschvormerkungen
+        // mehr und kein Aufraeumen von Entwurfsrechnungen. Im Kalender geloeschte
+        // Termine laufen ausschliesslich ueber die neue Soft-Stornierung, die
+        // unabhaengig von diesem Schalter arbeitet — sie storniert weich statt zu
+        // loeschen, nimmt Vergangenes und Fakturiertes aus und hebt sich selbst
+        // auf, sobald der Termin wieder auftaucht.
+        //
+        // Bewusst ausgeschrieben statt weggelassen: der Server leitet
+        // `allowPruneOrphans` mit `pruneOrphans === true` ab, ein fehlendes Feld
+        // waere also ebenfalls false. Aber ein Schalter, der stillschweigend
+        // durch Abwesenheit wirkt, laedt dazu ein, ihn versehentlich wieder zu
+        // setzen. Hier steht, was gilt.
+        body: JSON.stringify({ year, month, pruneOrphans: false }),
       });
       const json = (await res.json()) as SyncResponse & { error?: string };
       if (!res.ok) {
