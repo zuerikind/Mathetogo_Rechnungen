@@ -3,6 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ACTIVE_SESSION_WHERE,
+  CANCELLATION_REASONS,
+  MANUAL_CANCELLATION_ACTION,
   decideCancellation,
   decideReactivation,
   isActiveSession,
@@ -355,5 +357,19 @@ describe("Quellpruefung", () => {
   it("das Modul kennt keine Datenbank", () => {
     const src = readFileSync(path.join(__dirname, "calendar-cancellation.ts"), "utf8");
     expect(src).not.toMatch(/prisma|\$transaction|findMany|updateMany/);
+  });
+});
+
+describe("Ausweg von Hand", () => {
+  it("jeder blockierende Befund hat genau einen Eingriff", () => {
+    // Ohne Eingriff bliebe dem Nutzer nur Wegklicken — und die Lektion zaehlte
+    // weiter zum Betrag, obwohl der Termin abgesagt ist. Kommt eine dritte
+    // Befundart dazu, faellt hier auf, dass ihr Knopf fehlt.
+    expect(Object.keys(MANUAL_CANCELLATION_ACTION).sort()).toEqual(
+      [...CANCELLATION_REASONS].sort()
+    );
+    expect(new Set(Object.values(MANUAL_CANCELLATION_ACTION)).size).toBe(
+      CANCELLATION_REASONS.length
+    );
   });
 });

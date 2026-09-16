@@ -601,7 +601,12 @@ export async function POST(req: NextRequest) {
       }
       if (entscheid.kind === "skip") continue;
       reactivateBlocked.add(t.calEventId);
-      const sessionId = t.replaceSessionId ?? existingByEventId.get(t.calEventId)?.id ?? null;
+      const bestehend = existingByEventId.get(t.calEventId);
+      const sessionId = t.replaceSessionId ?? bestehend?.id ?? null;
+      // Der Betrag der GESPEICHERTEN Lektion, nicht der des eingehenden Termins:
+      // im ausgelieferten Monat bleibt der historische Stand stehen, und die
+      // Rueckfrage im Band soll die Zahl nennen, die wirklich zurueckkommt.
+      const betragCHF = t.replaceHistoric?.amountCHF ?? bestehend?.amountCHF ?? t.amountCHF;
       reviewFindings.push({
         key: `reactivate_needs_review:${sessionId ?? t.calEventId}`,
         reason: "reactivate_needs_review",
@@ -610,7 +615,11 @@ export async function POST(req: NextRequest) {
         studentId: t.studentId,
         studentName: t.studentName,
         sessionIds: sessionId ? [sessionId] : [],
-        details: { why: entscheid.why },
+        details: {
+          why: entscheid.why,
+          amountCHF: betragCHF,
+          monthDelivered: entscheid.why === "billed",
+        },
       });
     }
 
@@ -719,7 +728,13 @@ export async function POST(req: NextRequest) {
     const bereitsBehandelt = new Set<string>();
 
     const notiereReview = (
-      s: { id: string; studentId: string; date: Date; student: { name: string } },
+      s: {
+        id: string;
+        studentId: string;
+        date: Date;
+        amountCHF: number;
+        student: { name: string };
+      },
       why: "past" | "billed"
     ) => {
       reviewFindings.push({
@@ -730,7 +745,11 @@ export async function POST(req: NextRequest) {
         studentId: s.studentId,
         studentName: s.student.name,
         sessionIds: [s.id],
-        details: { why },
+        // Betrag und Auslieferungsstand fuer die Rueckfrage im Band: wer hier
+        // storniert, aendert eine Rechnungssumme und soll sehen, welche.
+        // `billed` heisst hier exakt "Monat ausgeliefert": protectedStudentIds
+        // entsteht aus DELIVERED_INVOICE_WHERE plus Familienkindern.
+        details: { why, amountCHF: s.amountCHF, monthDelivered: why === "billed" },
       });
     };
 

@@ -49,6 +49,23 @@ export const CANCELLATION_REASONS = [
 ] as const;
 export type CancellationIssueType = (typeof CANCELLATION_REASONS)[number];
 
+/**
+ * Der Eingriff, den ein Mensch bei diesem Befund von Hand ausloesen kann.
+ *
+ * Diese Befunde entstehen, weil die Automatik nicht eingreifen durfte — dann
+ * muss die Oberflaeche den Eingriff anbieten, sonst bleibt nur Wegklicken und die
+ * Lektion zaehlt weiter zum Betrag. Jeder blockierende Befund braucht genau
+ * einen Ausweg; der Test darueber haelt das fest, falls eine dritte Befundart
+ * dazukommt.
+ */
+export const MANUAL_CANCELLATION_ACTION: Record<
+  CancellationIssueType,
+  "cancel" | "reactivate"
+> = {
+  cancel_needs_review: "cancel",
+  reactivate_needs_review: "reactivate",
+};
+
 export type CancellationEvidence = "google_cancelled" | "missing";
 
 export type CancelReason = "google_cancelled" | "google_missing";

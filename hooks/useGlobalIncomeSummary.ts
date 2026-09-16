@@ -10,6 +10,8 @@ type IncomeSummary = {
 const SUMMARY_TTL_MS = 15_000;
 const summaryCache = new Map<string, { at: number; value: IncomeSummary }>();
 const inFlight = new Map<string, Promise<IncomeSummary>>();
+/** Eingehaengte Verbraucher, die nach einer Invalidierung neu laden muessen. */
+const subscribers = new Set<() => void>();
 
 /**
  * Nach einer Mutation, die Einkommen veraendert (Sync, Loeschentscheid).
@@ -21,6 +23,12 @@ const inFlight = new Map<string, Promise<IncomeSummary>>();
  */
 export function invalidateGlobalIncomeSummary(): void {
   summaryCache.clear();
+  // Den Speicher zu leeren genuegt nicht: der Hook laedt nur beim Mounten. Ohne
+  // diesen Anstoss zeigte die Kopfzeile nach einem Storno oder einem
+  // Loeschentscheid bis zum naechsten Seitenwechsel die alte Summe — nicht 15
+  // Sekunden, sondern unbegrenzt. Doppelte Abfragen kostet das keine: gleichzeitige
+  // Laeufe auf denselben Monat teilen sich den Request ueber `inFlight`.
+  subscribers.forEach((reload) => reload());
 }
 
 export function useGlobalIncomeSummary() {
@@ -76,6 +84,10 @@ export function useGlobalIncomeSummary() {
 
   useEffect(() => {
     void load();
+    subscribers.add(load);
+    return () => {
+      subscribers.delete(load);
+    };
   }, [load]);
 
   return { monthIncome, ytdIncome, loading, error, refresh: load };

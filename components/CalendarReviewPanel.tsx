@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { invalidateGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { formatAmount, formatDate } from "@/lib/invoice-format";
 import { formatUnmatchedHeadline, unmatchedActionHint, type SyncUnmatchedEvent } from "@/lib/sync-unmatched";
 
@@ -31,6 +32,8 @@ type CalendarIssueRow = {
     // Integritaetsbefunde
     studentName?: string;
     amountCHF?: number;
+    /** Lektionen, auf die sich der Befund bezieht — Ziel von Storno/Reaktivierung. */
+    sessionIds?: string[];
     parts?: { durationMin: number; amountCHF: number }[];
     monthDelivered?: boolean;
     staleCalEventId?: string;
@@ -206,6 +209,8 @@ export function CalendarReviewPanel({
         );
       }
       await load();
+      // Bestätigen löscht Lektionen — die Kopfzeile zeigt sonst die alte Summe.
+      invalidateGlobalIncomeSummary();
       onResolved?.();
     } catch {
       alert("Aktion fehlgeschlagen — keine Änderung vorgenommen.");
@@ -214,9 +219,23 @@ export function CalendarReviewPanel({
     }
   };
 
-  /** Entscheid über Kalender-Befunde: erledigt oder absichtlich kein Schülertermin. */
-  const decideIssue = async (action: "resolve" | "ignore", ids: string[]) => {
+  /** Entscheid über Kalender-Befunde: ausblenden, dauerhaft ausblenden, oder wirklich eingreifen. */
+  const decideIssue = async (
+    action: "resolve" | "ignore" | "cancel" | "reactivate",
+    ids: string[]
+  ) => {
     if (ids.length === 0) return;
+    // "Ignorieren" ist eine Einbahnstrasse: es gibt keine Liste ignorierter
+    // Befunde und keinen Weg zurück. Bei Geldbeträgen darf das kein Einfachklick sein.
+    if (
+      action === "ignore" &&
+      !window.confirm(
+        "Dieser Befund wird nie wieder gemeldet — auch dann nicht, wenn er eine " +
+          "Rechnung betrifft. Das lässt sich hier nicht rückgängig machen.\n\nWirklich dauerhaft ausblenden?"
+      )
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/calendar-issues", {
@@ -234,11 +253,44 @@ export function CalendarReviewPanel({
         return;
       }
       await load();
+      // Storno und Reaktivierung verändern Beträge — Seite und Kopfzeile müssen
+      // nachladen, sonst steht die alte Summe über den neuen Zahlen.
+      if (action === "cancel" || action === "reactivate") invalidateGlobalIncomeSummary();
+      onResolved?.();
     } catch {
       alert("Aktion fehlgeschlagen — keine Änderung vorgenommen.");
     } finally {
       setBusy(false);
     }
+  };
+
+  /**
+   * Der eigentliche Eingriff bei den Absage-Befunden, mit einer Rückfrage, die
+   * den Betrag nennt — hier ändert sich eine Rechnungssumme.
+   */
+  const applyCancellation = async (
+    issue: CalendarIssueRow,
+    reason: "cancel_needs_review" | "reactivate_needs_review"
+  ) => {
+    if ((issue.detailsJson?.sessionIds?.length ?? 0) === 0) {
+      alert("Zu diesem Befund ist keine Lektion hinterlegt — bitte von Hand prüfen.");
+      return;
+    }
+    const betrag =
+      typeof issue.detailsJson?.amountCHF === "number"
+        ? ` (${formatAmount(issue.detailsJson.amountCHF)})`
+        : "";
+    const ausgeliefert = issue.detailsJson?.monthDelivered
+      ? "\n\nDie Rechnung dieses Monats ist bereits ausgeliefert: der Betrag weicht danach vom " +
+        "versendeten Stand ab. Die Abweichung wird gemeldet, korrigiert wird über «Neu ausstellen»."
+      : "";
+    const frage =
+      reason === "cancel_needs_review"
+        ? `Lektion stornieren${betrag}?\n\nSie zählt danach nicht mehr zum Betrag. Die Zeile bleibt ` +
+          `erhalten — kommt der Termin zurück in den Kalender, meldet der Sync das wieder.${ausgeliefert}`
+        : `Storno aufheben${betrag}?\n\nDie Lektion zählt danach wieder zum Betrag.${ausgeliefert}`;
+    if (!window.confirm(frage)) return;
+    await decideIssue(reason === "cancel_needs_review" ? "cancel" : "reactivate", [issue.id]);
   };
 
   if (rows.length === 0 && issues.length === 0) return null;
@@ -350,6 +402,12 @@ export function CalendarReviewPanel({
             Reine Prüfung — es wurde nichts geändert. Diese Lektionen zählen weiter zum Betrag,
             auch wenn die Rechnung des Monats bereits ausgeliefert ist.
           </p>
+          <p className="mt-1 text-xs text-red-700">
+            <b>Ich habe es behoben</b> blendet aus, bis der nächste Sync es bestätigt — besteht der
+            Fehler weiter, kommt die Zeile zurück. <b>So ist es richtig</b> blendet dauerhaft aus.
+            Bei Absagen ändert <b>Lektion stornieren</b> den Betrag wirklich;{" "}
+            <b>Lektion zählt weiter</b> lässt ihn, wie er ist.
+          </p>
 
           <ul className="mt-3 space-y-1.5">
             {integrityIssues.map((issue) => {
@@ -398,25 +456,76 @@ export function CalendarReviewPanel({
                     </span>
                     <span className="mt-1 block text-xs text-gray-600">{INTEGRITY_HINT[reason]}</span>
                   </span>
+                  {/*
+                    Zwei Sorten Zeile, zwei Sorten Antwort.
+
+                    Zustandsbefunde (Waise, Doppelbelegung, unklare Zuordnung) haben
+                    keinen Eingriff, den die App anbieten könnte — die Korrektur
+                    passiert im Kalender. Dort bleibt es beim Ausblenden.
+
+                    Bei den beiden Absage-Befunden lautet die Frage dagegen, ob die
+                    Lektion zum Betrag zählen soll, und genau das kann die App tun.
+                    Der zweite Knopf ist dort bewusst "resolve" und nicht "ignore":
+                    "die Lektion zählt weiter" ist eine Antwort auf diesen einen Fall,
+                    keine dauerhafte Blindstellung — und ein Befund, der sich nie
+                    wiederholt, braucht keine Einbahnstrasse.
+                  */}
                   <span className="flex shrink-0 gap-2">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void decideIssue("resolve", [issue.id])}
-                      title="Angeschaut. Besteht der Befund beim nächsten Sync weiter, erscheint er wieder."
-                      className="rounded-lg bg-slate-700 px-3 py-1 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
-                    >
-                      Erledigt
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void decideIssue("ignore", [issue.id])}
-                      title="So gewollt — dieser Befund wird nicht mehr gemeldet."
-                      className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition hover:border-gray-400 disabled:opacity-40"
-                    >
-                      Ignorieren
-                    </button>
+                    {reason === "cancel_needs_review" || reason === "reactivate_needs_review" ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void applyCancellation(issue, reason)}
+                          title={
+                            reason === "cancel_needs_review"
+                              ? "Die Absage nachziehen: die Lektion zählt nicht mehr zum Betrag. Die Zeile bleibt erhalten."
+                              : "Den Storno aufheben: die Lektion zählt wieder zum Betrag."
+                          }
+                          className="rounded-lg bg-red-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-red-700 disabled:opacity-40"
+                        >
+                          {reason === "cancel_needs_review"
+                            ? "Lektion stornieren"
+                            : "Storno aufheben"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void decideIssue("resolve", [issue.id])}
+                          title={
+                            reason === "cancel_needs_review"
+                              ? "Die Lektion hat stattgefunden: sie bleibt im Betrag, der Befund ist beantwortet."
+                              : "Der Storno bleibt bestehen: die Lektion zählt weiterhin nicht."
+                          }
+                          className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition hover:border-gray-400 disabled:opacity-40"
+                        >
+                          {reason === "cancel_needs_review"
+                            ? "Lektion zählt weiter"
+                            : "Storno bleibt"}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void decideIssue("resolve", [issue.id])}
+                          title="Ausgeblendet, bis der nächste Sync es bestätigt. Besteht der Fehler weiter, kommt er zurück."
+                          className="rounded-lg bg-slate-700 px-3 py-1 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
+                        >
+                          Ich habe es behoben
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void decideIssue("ignore", [issue.id])}
+                          title="Dieser Befund ist so gewollt und wird nie wieder gemeldet."
+                          className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition hover:border-gray-400 disabled:opacity-40"
+                        >
+                          So ist es richtig
+                        </button>
+                      </>
+                    )}
                   </span>
                 </li>
               );
@@ -436,6 +545,10 @@ export function CalendarReviewPanel({
           <h3 className="text-sm font-semibold text-red-900">Nicht zugeordnete Kalendereinträge</h3>
           <p className="mt-1 text-sm text-red-800">
             Im Kalender vorhanden, aber keinem Schüler zuzuordnen — diese Stunden wurden nicht übernommen.
+          </p>
+          <p className="mt-1 text-xs text-red-700">
+            <b>Im Kalender korrigiert</b> blendet aus, bis sich der Termin wieder ändert.{" "}
+            <b>Keine Nachhilfestunde</b> blendet diesen Termin dauerhaft aus.
           </p>
 
           <ul className="mt-3 space-y-1.5">
@@ -480,19 +593,19 @@ export function CalendarReviewPanel({
                     type="button"
                     disabled={busy}
                     onClick={() => void decideIssue("resolve", [issue.id])}
-                    title="Geprüft und behoben. Ändert sich der Termin später wesentlich, taucht er wieder auf."
+                    title="Titel oder Schüler sind im Kalender korrigiert. Ändert sich der Termin später wieder, taucht er erneut auf."
                     className="rounded-lg bg-slate-700 px-3 py-1 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
                   >
-                    Erledigt
+                    Im Kalender korrigiert
                   </button>
                   <button
                     type="button"
                     disabled={busy}
                     onClick={() => void decideIssue("ignore", [issue.id])}
-                    title="Kein Schülertermin. Dieser Kalendereintrag wird nicht mehr gemeldet."
+                    title="Zahnarzt, Ferien, Geburtstag — dieser Kalendereintrag wird nie wieder gemeldet."
                     className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition hover:border-gray-400 disabled:opacity-40"
                   >
-                    Ignorieren
+                    Keine Nachhilfestunde
                   </button>
                 </span>
               </li>

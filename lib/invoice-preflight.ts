@@ -80,8 +80,11 @@ export function preflightBlockMessage(
     `Auslieferung gestoppt: ${issues.length} offene${issues.length === 1 ? "r" : ""} ` +
     `Kalender-Befund${issues.length === 1 ? "" : "e"} betrifft die Lektionen dieser Rechnung ` +
     `(${periodLabel}).\n${liste}\n` +
-    `Bitte unter "Kalender prüfen" entscheiden — erledigen, wenn behoben, oder ` +
-    `ignorieren, wenn es so gewollt ist. Danach kann die Rechnung raus.`
+    // Bewusst ohne Aufzaehlung der Knoepfe: je nach Befundart sind es andere
+    // (eine Absage wird storniert, eine Doppelbelegung im Kalender behoben).
+    // Eine Liste hier waere fuer die Haelfte der Faelle falsch.
+    `Bitte unter "Kalender prüfen" entscheiden — dort steht zu jedem Befund, was ` +
+    `er bedeutet und welche Antworten es gibt. Danach kann die Rechnung raus.`
   );
 }
 
