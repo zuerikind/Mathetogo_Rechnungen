@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { StudentTable } from "@/components/StudentTable";
-import { STANDARD_RATE_PER_MIN } from "@/lib/pricing";
+import { STANDARD_RATE_PER_MIN, typicalLessonMinutes } from "@/lib/pricing";
 import { monthOptions } from "@/lib/ui-format";
 import type { SessionWithStudent, Student } from "@/lib/ui-types";
 
@@ -78,7 +78,15 @@ export default function StudentsPage() {
       .filter((s) => s.active !== false)
       .map((student) => {
         const own = sessions.filter((ses) => ses.studentId === student.id);
-        return { ...student, totalEarned: own.reduce((acc, s) => acc + s.amountCHF, 0), sessions: own.length };
+        return {
+          ...student,
+          totalEarned: own.reduce((acc, s) => acc + s.amountCHF, 0),
+          sessions: own.length,
+          // Die Dauer aus den echten Lektionen, damit "CHF/Lektion" fuer jeden
+          // Schueler dasselbe bedeutet.
+          lessonMin: typicalLessonMinutes(own),
+          lessonMinVaries: new Set(own.map((s) => s.durationMin)).size > 1,
+        };
       }),
     [students, sessions]
   );

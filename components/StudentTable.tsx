@@ -1,18 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import {
-  classPriceFromRate,
-  LONG_CLASS_MINUTES,
-  LONG_SESSION_STUDENT_NAMES,
-  STANDARD_CLASS_MINUTES,
-} from "@/lib/pricing";
+import { classPriceFromRate } from "@/lib/pricing";
 import { formatCHF } from "@/lib/ui-format";
 import type { Student } from "@/lib/ui-types";
 
 type StudentWithStats = Student & {
   totalEarned: number;
   sessions: number;
+  /** Typische Lektionsdauer aus den echten Lektionen; null = noch keine. */
+  lessonMin: number | null;
+  /** Dieser Schüler hat unterschiedlich lange Lektionen. */
+  lessonMinVaries: boolean;
 };
 
 type StudentTableProps = {
@@ -46,11 +45,30 @@ export function StudentTable({ students, onEdit, onDeactivate }: StudentTablePro
               </td>
               <td className="px-5 py-3 text-gray-600">{s.subject}</td>
               <td className="px-5 py-3 text-gray-600">{s.ratePerMin.toFixed(2)}</td>
+              {/*
+                Die Dauer steht dabei, sonst ist die Zahl nicht lesbar: 60.00 kann
+                eine 50-Minuten-Lektion oder eine ganze Stunde sein, und genau das
+                war vorher nicht zu unterscheiden.
+              */}
               <td className="px-5 py-3 text-gray-600">
-                {classPriceFromRate(
-                  s.ratePerMin,
-                  LONG_SESSION_STUDENT_NAMES.has(s.name) ? LONG_CLASS_MINUTES : STANDARD_CLASS_MINUTES
-                ).toFixed(0)}
+                {s.lessonMin === null ? (
+                  <span className="text-gray-400" title="Noch keine Lektionen — die Dauer steht nicht fest.">
+                    —
+                  </span>
+                ) : (
+                  <span
+                    title={
+                      s.lessonMinVaries
+                        ? `Häufigste Dauer: ${s.lessonMin} Min. Dieser Schüler hat unterschiedlich lange Lektionen — der Betrag gilt für ${s.lessonMin} Minuten.`
+                        : `Alle Lektionen dauern ${s.lessonMin} Minuten.`
+                    }
+                  >
+                    {classPriceFromRate(s.ratePerMin, s.lessonMin).toFixed(2)}
+                    <span className="ml-1.5 text-xs text-gray-400">
+                      {s.lessonMin} Min{s.lessonMinVaries ? " ⌀" : ""}
+                    </span>
+                  </span>
+                )}
               </td>
               <td className="px-5 py-3 font-medium text-gray-800">{formatCHF(s.totalEarned)}</td>
               <td className="px-5 py-3 text-gray-600">{s.sessions}</td>
