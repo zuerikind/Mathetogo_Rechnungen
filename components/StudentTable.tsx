@@ -46,27 +46,27 @@ export function StudentTable({ students, onEdit, onDeactivate }: StudentTablePro
               <td className="px-5 py-3 text-gray-600">{s.subject}</td>
               <td className="px-5 py-3 text-gray-600">{s.ratePerMin.toFixed(2)}</td>
               {/*
-                Die Dauer steht dabei, sonst ist die Zahl nicht lesbar: 60.00 kann
-                eine 50-Minuten-Lektion oder eine ganze Stunde sein, und genau das
-                war vorher nicht zu unterscheiden.
+                Nur die Zahl — die Spalte soll auf einen Blick vergleichbar sein.
+                Die Dauer, aus der sie entsteht, steht im Titel: sie ist die
+                Erklaerung, wenn jemand nachfragt, aber nicht der Inhalt der Zelle.
               */}
               <td className="px-5 py-3 text-gray-600">
                 {s.lessonMin === null ? (
-                  <span className="text-gray-400" title="Noch keine Lektionen — die Dauer steht nicht fest.">
+                  <span
+                    className="text-gray-400"
+                    title="Noch keine Lektionen in diesem Jahr — die Dauer einer Lektion steht damit nicht fest."
+                  >
                     —
                   </span>
                 ) : (
                   <span
                     title={
                       s.lessonMinVaries
-                        ? `Häufigste Dauer: ${s.lessonMin} Min. Dieser Schüler hat unterschiedlich lange Lektionen — der Betrag gilt für ${s.lessonMin} Minuten.`
-                        : `Alle Lektionen dauern ${s.lessonMin} Minuten.`
+                        ? `Für ${s.lessonMin} Minuten — die häufigste Dauer dieses Schülers. Er hat auch Lektionen anderer Länge.`
+                        : `Für ${s.lessonMin} Minuten — so lang ist jede Lektion dieses Schülers.`
                     }
                   >
                     {classPriceFromRate(s.ratePerMin, s.lessonMin).toFixed(2)}
-                    <span className="ml-1.5 text-xs text-gray-400">
-                      {s.lessonMin} Min{s.lessonMinVaries ? " ⌀" : ""}
-                    </span>
                   </span>
                 )}
               </td>
