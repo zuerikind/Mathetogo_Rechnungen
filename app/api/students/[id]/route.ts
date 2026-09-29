@@ -1,29 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  affectedInvoiceMonths,
-  billingScopeStudentIds,
-  evaluateRepricingGuard,
-} from "@/lib/billing-scope";
+import { affectedInvoiceMonths, billingScopeStudentIds } from "@/lib/billing-scope";
+import { checkTariffEffectiveDate, earliestTariffDate } from "@/lib/delivered-freeze";
+import { clearIncomeSummaryCache } from "@/lib/income-summary-cache";
 import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
 import { zurichYearMonth } from "@/lib/month-math";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 
-function startOfLocalDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-}
-
-function parseLocalDateOnly(value: unknown): Date | null {
-  if (typeof value !== "string") return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
-  if (!m) return null;
-  const y = Number(m[1]);
-  const mo = Number(m[2]) - 1;
-  const day = Number(m[3]);
-  const d = new Date(y, mo, day);
-  if (d.getFullYear() !== y || d.getMonth() !== mo || d.getDate() !== day) return null;
-  return startOfLocalDay(d);
-}
+const roundCents = (n: number) => Math.round(n * 100) / 100;
 
 export async function GET(
   _req: NextRequest,
@@ -37,6 +21,19 @@ export async function GET(
   return NextResponse.json(student);
 }
 
+/** Was eine Tarifaenderung konkret bewirkt — wird vor dem Speichern gezeigt. */
+export type TariffPreview = {
+  oldRate: number;
+  newRate: number;
+  effectiveFrom: string;
+  lessonCount: number;
+  beforeCHF: number;
+  afterCHF: number;
+  months: { year: number; month: number; lessonCount: number; beforeCHF: number; afterCHF: number }[];
+  /** Monate im Umfang, deren Rechnung schon raus ist (nur Vormonat/laufender Monat moeglich). */
+  billedMonths: { year: number; month: number }[];
+};
+
 export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -46,8 +43,6 @@ export async function PUT(
 
   const body = await req.json();
   const { name, subject, ratePerMin, email, active } = body;
-  const recalculateAllSessions = Boolean(body.recalculateAllSessions);
-  const effectiveFromRaw = body.effectiveFrom as unknown;
   // undefined = nicht ändern; "" oder null = Verknüpfung lösen; string = neuer Rechnungsempfänger.
   const billedToId =
     body.billedToId === undefined ? undefined : body.billedToId ? String(body.billedToId) : null;
@@ -87,73 +82,90 @@ export async function PUT(
   const nextRate = ratePerMin !== undefined ? Number(ratePerMin) : existing.ratePerMin;
   const rateChanged = ratePerMin !== undefined && Number(ratePerMin) !== existing.ratePerMin;
 
-  if (rateChanged && !recalculateAllSessions && parseLocalDateOnly(effectiveFromRaw) == null) {
-    return NextResponse.json(
-      {
-        error:
-          "Fuer Tarifaenderungen bitte effectiveFrom als YYYY-MM-DD angeben oder recalculateAllSessions auf true setzen.",
-      },
-      { status: 400 }
-    );
-  }
-
-  const effectiveDay = recalculateAllSessions ? null : parseLocalDateOnly(effectiveFromRaw);
-
+  // ── Tarifaenderung ─────────────────────────────────────────────────────────
+  //
+  // Sie wirkt hoechstens im laufenden Monat und im Vormonat (plus Zukunft) —
+  // dieselbe Grenze wie beim Kalender-Sync. Aeltere Monate sind abgeschlossen:
+  // "gesamte Historie neu berechnen" gibt es deshalb nicht mehr.
+  //
+  // Und sie passiert nie ohne ausdrueckliche Bestaetigung: ohne confirmTariff
+  // liefert die Route nur eine Vorschau (409) und schreibt nichts.
+  let effectiveDay: Date | null = null;
   let updates: { id: string; date: Date; durationMin: number }[] = [];
   if (rateChanged) {
-    const sessions = await prisma.session.findMany({
-      where: { studentId: params.id },
-      select: { id: true, date: true, durationMin: true },
-    });
-    updates = sessions.filter((s) => {
-      if (recalculateAllSessions) return true;
-      if (!effectiveDay) return false;
-      return s.date >= effectiveDay;
-    });
+    if (body.recalculateAllSessions) {
+      return NextResponse.json(
+        { error: "Die gesamte Historie neu zu berechnen ist nicht mehr möglich — abgeschlossene Monate bleiben unverändert." },
+        { status: 400 }
+      );
+    }
+    if (!Number.isFinite(nextRate) || nextRate <= 0) {
+      return NextResponse.json({ error: "Ungültiger Tarif." }, { status: 400 });
+    }
+    const now = new Date();
+    const check = checkTariffEffectiveDate(body.effectiveFrom, now);
+    if (!check.ok) {
+      return NextResponse.json(
+        { error: check.error, earliestEffectiveFrom: earliestTariffDate(now) },
+        { status: 400 }
+      );
+    }
+    effectiveDay = check.effectiveFrom;
 
-    // Warn before rewriting amounts inside months whose invoice already went out.
-    if (updates.length > 0) {
-      const affected = affectedInvoiceMonths(updates);
-      // Familienrechnung: die Lektionen dieses Schuelers koennen auf SEINER eigenen
-      // Rechnung stehen oder auf der des verlinkten Hauptschuelers. Frueher wurde nur
-      // `studentId: params.id` geprueft — fuer ein verknuepftes Kind gibt es diese
-      // Zeile gar nicht, der Guard lief ins Leere und die Betraege einer bereits
-      // ausgelieferten Familienrechnung wurden stillschweigend neu bepreist.
-      // Wird die Verknuepfung im selben Request geaendert, zaehlen beide Ziele:
-      // die Lektion steht heute noch auf der alten Rechnung.
+    const sessions = await prisma.session.findMany({
+      where: { studentId: params.id, date: { gte: effectiveDay } },
+      select: { id: true, date: true, durationMin: true, amountCHF: true, cancelledAt: true },
+      orderBy: { date: "asc" },
+    });
+    updates = sessions;
+
+    if (body.confirmTariff !== true) {
+      // Nur zaehlende Lektionen in die Vorschau — stornierte werden mit
+      // umgerechnet, bewegen aber keinen Betrag.
+      const counted = sessions.filter((s) => s.cancelledAt === null);
+      const byMonth = new Map<string, TariffPreview["months"][number]>();
+      for (const s of counted) {
+        const ym = zurichYearMonth(s.date);
+        const key = `${ym.year}-${ym.month}`;
+        const row = byMonth.get(key) ?? { ...ym, lessonCount: 0, beforeCHF: 0, afterCHF: 0 };
+        row.lessonCount += 1;
+        row.beforeCHF = roundCents(row.beforeCHF + s.amountCHF);
+        row.afterCHF = roundCents(row.afterCHF + roundCents(s.durationMin * nextRate));
+        byMonth.set(key, row);
+      }
+      const months = Array.from(byMonth.values());
+
       const scopeIds = Array.from(
         new Set([
           ...billingScopeStudentIds(params.id, existing.billedToId),
           ...(billedToId !== undefined ? billingScopeStudentIds(params.id, billedToId) : []),
         ])
       );
-      const billedInvoices = await prisma.invoice.findMany({
-        where: {
-          studentId: { in: scopeIds },
-          OR: affected.map((a) => ({ year: a.year, month: a.month })),
-          // Heruntergeladen zaehlt mit: die Rechnung ist raus, ihre Lektionen
-          // duerfen nicht unbemerkt neu bepreist werden.
-          ...DELIVERED_INVOICE_WHERE,
-        },
-        select: { year: true, month: true },
-        orderBy: [{ year: "asc" }, { month: "asc" }],
-      });
-      const guard = evaluateRepricingGuard({
-        affected,
-        deliveredInScope: billedInvoices,
-        confirmed: Boolean(body.confirmBilledMonths),
-      });
-      if (!guard.allowed) {
-        // Vor jeder Schreiboperation: weder der Student-Update noch die
-        // Session-Neubepreisung unten laufen, die Betraege bleiben unangetastet.
-        return NextResponse.json(
-          {
-            error: "Tarifaenderung betrifft bereits ausgelieferte Monate (gesendet, bezahlt oder heruntergeladen).",
-            billedMonths: guard.billedMonths,
-          },
-          { status: 409 }
-        );
-      }
+      const affected = affectedInvoiceMonths(counted);
+      const billedMonths =
+        affected.length === 0
+          ? []
+          : await prisma.invoice.findMany({
+              where: {
+                studentId: { in: scopeIds },
+                OR: affected.map((a) => ({ year: a.year, month: a.month })),
+                ...DELIVERED_INVOICE_WHERE,
+              },
+              select: { year: true, month: true },
+              orderBy: [{ year: "asc" }, { month: "asc" }],
+            });
+
+      const preview: TariffPreview = {
+        oldRate: existing.ratePerMin,
+        newRate: nextRate,
+        effectiveFrom: String(body.effectiveFrom).trim(),
+        lessonCount: counted.length,
+        beforeCHF: roundCents(months.reduce((a, m) => a + m.beforeCHF, 0)),
+        afterCHF: roundCents(months.reduce((a, m) => a + m.afterCHF, 0)),
+        months,
+        billedMonths,
+      };
+      return NextResponse.json({ needsConfirmation: true, preview }, { status: 409 });
     }
   }
 
@@ -162,63 +174,49 @@ export async function PUT(
     data: {
       ...(name !== undefined && { name }),
       ...(subject !== undefined && { subject }),
-      ...(ratePerMin !== undefined && { ratePerMin: Number(ratePerMin) }),
+      ...(ratePerMin !== undefined && { ratePerMin: nextRate }),
       ...(email !== undefined && { email }),
       ...(active !== undefined && { active }),
       ...(billedToId !== undefined && { billedToId }),
     },
   });
 
-  if (rateChanged) {
-    // Keep the rate history in sync so late-synced past lessons get the correct tariff.
-    if (recalculateAllSessions) {
-      // "This rate always applied": collapse history to a single entry.
-      await prisma.$transaction([
-        prisma.studentRateHistory.deleteMany({ where: { studentId: params.id } }),
-        prisma.studentRateHistory.create({
-          data: { studentId: params.id, ratePerMin: nextRate, effectiveFrom: new Date(0) },
-        }),
-      ]);
-    } else if (effectiveDay) {
-      const historyCount = await prisma.studentRateHistory.count({
-        where: { studentId: params.id },
-      });
-      if (historyCount === 0) {
-        // Backfill: the old rate applied before this change.
-        await prisma.studentRateHistory.create({
-          data: { studentId: params.id, ratePerMin: existing.ratePerMin, effectiveFrom: new Date(0) },
+  if (rateChanged && effectiveDay) {
+    const historyCount = await prisma.studentRateHistory.count({
+      where: { studentId: params.id },
+    });
+    // Verlauf und Lektionen in EINER Transaktion: entweder gilt der neue Tarif
+    // ueberall ab Stichtag, oder nirgends.
+    await prisma.$transaction([
+      // Backfill: der alte Satz galt vor dieser Aenderung.
+      ...(historyCount === 0
+        ? [
+            prisma.studentRateHistory.create({
+              data: { studentId: params.id, ratePerMin: existing.ratePerMin, effectiveFrom: new Date(0) },
+            }),
+          ]
+        : []),
+      // Spaetere Verlaufseintraege widersprechen dem neuen Satz ab Stichtag und
+      // wuerden neu synchronisierte Lektionen still mit dem alten Satz bepreisen.
+      prisma.studentRateHistory.deleteMany({
+        where: { studentId: params.id, effectiveFrom: { gte: effectiveDay } },
+      }),
+      prisma.studentRateHistory.create({
+        data: { studentId: params.id, ratePerMin: nextRate, effectiveFrom: effectiveDay },
+      }),
+      ...updates.map((s) => {
+        const ym = zurichYearMonth(s.date);
+        return prisma.session.update({
+          where: { id: s.id },
+          data: {
+            amountCHF: roundCents(s.durationMin * nextRate),
+            month: ym.month,
+            year: ym.year,
+          },
         });
-      }
-      // Eine Tarifaenderung ab X rechnet oben JEDE Lektion ab X auf nextRate um.
-      // Spaetere Verlaufseintraege widersprechen dem und bepreisen neu
-      // synchronisierte Lektionen still mit dem alten Satz weiter — genau so blieb
-      // am 10.07.2026 ein 1.20-Eintrag ab 01.07. stehen, obwohl die Korrektur
-      // (1.30 ab 01.06.) laengst erfasst war. Ab Stichtag gilt nur noch nextRate.
-      await prisma.$transaction([
-        prisma.studentRateHistory.deleteMany({
-          where: { studentId: params.id, effectiveFrom: { gte: effectiveDay } },
-        }),
-        prisma.studentRateHistory.create({
-          data: { studentId: params.id, ratePerMin: nextRate, effectiveFrom: effectiveDay },
-        }),
-      ]);
-    }
-
-    if (updates.length > 0) {
-      await prisma.$transaction(
-        updates.map((s) => {
-          const ym = zurichYearMonth(s.date);
-          return prisma.session.update({
-            where: { id: s.id },
-            data: {
-              amountCHF: Math.round(s.durationMin * nextRate * 100) / 100,
-              month: ym.month,
-              year: ym.year,
-            },
-          });
-        })
-      );
-    }
+      }),
+    ]);
+    clearIncomeSummaryCache();
   }
 
   return NextResponse.json(student);

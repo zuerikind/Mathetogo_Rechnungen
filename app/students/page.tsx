@@ -5,8 +5,12 @@ import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { StudentTable } from "@/components/StudentTable";
 import { STANDARD_RATE_PER_MIN, typicalLessonMinutes } from "@/lib/pricing";
-import { monthOptions } from "@/lib/ui-format";
+import { formatCHF, monthOptions } from "@/lib/ui-format";
+import { earliestTariffDate } from "@/lib/delivered-freeze";
 import type { SessionWithStudent, Student } from "@/lib/ui-types";
+import type { TariffPreview } from "@/app/api/students/[id]/route";
+
+const formatYmd = (ymd: string) => ymd.split("-").reverse().join(".");
 
 type EditableStudent = Student & { totalEarned: number; sessions: number };
 
@@ -38,16 +42,18 @@ export default function StudentsPage() {
   useEffect(() => {
     setEffectiveFrom(todayYmd());
   }, []);
-  const [recalculateAllSessions, setRecalculateAllSessions] = useState(false);
   const [tariffError, setTariffError] = useState("");
-  const [billedWarning, setBilledWarning] = useState<{
+  /** Vorschau des Servers: was die Tarifänderung konkret bewirkt. Erst danach wird gespeichert. */
+  const [tariffPreview, setTariffPreview] = useState<{
     url: string;
     method: "PUT" | "POST";
     payload: Record<string, unknown>;
     opts?: { closePanelsOnSuccess?: boolean };
-    months: { year: number; month: number }[];
+    preview: TariffPreview;
   } | null>(null);
-  const [applyingBilled, setApplyingBilled] = useState(false);
+  const [tariffConfirmed, setTariffConfirmed] = useState(false);
+  const [applyingTariff, setApplyingTariff] = useState(false);
+  const earliestTariff = earliestTariffDate(new Date());
 
   const monthLabel = (m: { year: number; month: number }) =>
     `${monthOptions.find((o) => o.value === m.month)?.label ?? m.month} ${m.year}`;
@@ -115,10 +121,11 @@ export default function StudentsPage() {
     }
     const data = await res.json().catch(() => ({}));
 
-    // Server warns when the recalculation touches already sent/paid months.
-    const billedMonths = data.billedMonths as { year: number; month: number }[] | undefined;
-    if (res.status === 409 && Array.isArray(billedMonths) && billedMonths.length > 0) {
-      setBilledWarning({ url, method, payload, opts, months: billedMonths });
+    // Tarifänderung: der Server schreibt nichts, sondern zeigt zuerst, was passiert.
+    if (res.status === 409 && data.needsConfirmation && data.preview) {
+      setTariffDialogOpen(false);
+      setTariffConfirmed(false);
+      setTariffPreview({ url, method, payload, opts, preview: data.preview as TariffPreview });
       return false;
     }
 
@@ -126,18 +133,18 @@ export default function StudentsPage() {
     return false;
   };
 
-  const applyBilledChange = async (regenerateInvoices: boolean) => {
-    if (!billedWarning) return;
-    setApplyingBilled(true);
+  const applyTariffChange = async (regenerateInvoices: boolean) => {
+    if (!tariffPreview || !tariffConfirmed) return;
+    setApplyingTariff(true);
     try {
-      const { url, method, payload, opts, months } = billedWarning;
-      const ok = await submitPayload(url, method, { ...payload, confirmBilledMonths: true }, opts);
+      const { url, method, payload, opts, preview } = tariffPreview;
+      const ok = await submitPayload(url, method, { ...payload, confirmTariff: true }, opts);
       if (!ok) return;
-      setBilledWarning(null);
+      setTariffPreview(null);
       if (regenerateInvoices) {
         const studentId = url.split("/").pop() ?? "";
         const failed: string[] = [];
-        for (const m of months) {
+        for (const m of preview.billedMonths) {
           const res = await fetch("/api/invoice/generate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -150,7 +157,7 @@ export default function StudentsPage() {
         }
       }
     } finally {
-      setApplyingBilled(false);
+      setApplyingTariff(false);
     }
   };
 
@@ -169,7 +176,6 @@ export default function StudentsPage() {
     if (method === "PUT" && editing && oldRate !== undefined && newRate !== oldRate) {
       setPendingSave({ url, method, body: payload });
       setEffectiveFrom(todayYmd());
-      setRecalculateAllSessions(false);
       setTariffError("");
       setTariffDialogOpen(true);
       return;
@@ -180,11 +186,14 @@ export default function StudentsPage() {
 
   const confirmTariffChange = async () => {
     if (!pendingSave) return;
-    const extra: Record<string, unknown> = {
-      recalculateAllSessions,
-      ...(recalculateAllSessions ? {} : { effectiveFrom }),
-    };
-    await submitPayload(pendingSave.url, pendingSave.method, { ...pendingSave.body, ...extra }, { closePanelsOnSuccess: true });
+    if (effectiveFrom < earliestTariff) {
+      setTariffError(
+        `Frühestens ab ${formatYmd(earliestTariff)} möglich — ältere Monate sind abgeschlossen.`
+      );
+      return;
+    }
+    // Ohne confirmTariff: der Server liefert nur die Vorschau (siehe submitPayload).
+    await submitPayload(pendingSave.url, pendingSave.method, { ...pendingSave.body, effectiveFrom }, { closePanelsOnSuccess: true });
   };
 
   const inputClass = "w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none transition focus:border-[#4A7FC1] focus:ring-2 focus:ring-[#4A7FC1]/20";
@@ -316,7 +325,7 @@ export default function StudentsPage() {
                     gewählten Schülers (mit eigenem Abschnitt pro Kind).
                   </p>
                 </div>
-                {tariffError && !tariffDialogOpen && !billedWarning && (
+                {tariffError && !tariffDialogOpen && !tariffPreview && (
                   <p className="text-sm text-red-600">{tariffError}</p>
                 )}
                 <button
@@ -334,44 +343,28 @@ export default function StudentsPage() {
       {tariffDialogOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl">
-            <h4 className="text-base font-semibold text-gray-900">Tarif aendern</h4>
+            <h4 className="text-base font-semibold text-gray-900">Tarif ändern</h4>
             <p className="mt-2 text-sm text-gray-600">
-              Soll der neue Tarif auch fuer bestehende Lektionen neu berechnet werden? Waehle, ab welchem
-              Datum die neuen Preise gelten sollen — oder wende ihn auf die gesamte Historie an.
+              Ab wann soll der neue Tarif gelten? Alle Lektionen ab diesem Tag werden mit dem neuen Tarif
+              berechnet. Im nächsten Schritt siehst du genau, welche Beträge sich ändern — gespeichert wird
+              erst nach deiner Bestätigung.
             </p>
 
-            <div className="mt-4 space-y-3">
-              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-100 bg-gray-50 p-3 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={recalculateAllSessions}
-                  onChange={(e) => setRecalculateAllSessions(e.target.checked)}
-                  className="mt-1"
-                />
-                <span>
-                  <span className="font-semibold text-gray-900">Gesamte Historie neu berechnen</span>
-                  <span className="mt-1 block text-xs text-gray-500">
-                    Alle gespeicherten Sessions dieses Schuelers werden mit dem neuen Tarif ueberschrieben
-                    (z. B. nachtraegliche Korrektur / Vereinheitlichung).
-                  </span>
-                </span>
+            <div className="mt-4 space-y-1">
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                Gültig ab (Datum)
               </label>
-
-              <div className={`space-y-1 ${recalculateAllSessions ? "opacity-40 pointer-events-none" : ""}`}>
-                <label className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-                  Gueltig ab (Datum)
-                </label>
-                <input
-                  type="date"
-                  value={effectiveFrom}
-                  onChange={(e) => setEffectiveFrom(e.target.value)}
-                  className={inputClass}
-                />
-                <p className="text-xs text-gray-500">
-                  Es werden nur Sessions ab diesem Kalendertag (00:00) neu berechnet. Aeltere Sessions bleiben
-                  unveraendert.
-                </p>
-              </div>
+              <input
+                type="date"
+                value={effectiveFrom}
+                min={earliestTariff}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+                className={inputClass}
+              />
+              <p className="text-xs text-gray-500">
+                Frühestens ab {formatYmd(earliestTariff)} (Vormonat). Ältere Monate sind abgeschlossen und
+                bleiben immer unverändert.
+              </p>
             </div>
 
             {tariffError && <p className="mt-3 text-sm text-red-600">{tariffError}</p>}
@@ -393,61 +386,114 @@ export default function StudentsPage() {
                 onClick={() => void confirmTariffChange()}
                 className="rounded-xl bg-[#4A7FC1] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
               >
-                Speichern und anwenden
+                Weiter: Auswirkung prüfen
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {billedWarning && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl">
-            <h4 className="text-base font-semibold text-gray-900">Bereits verrechnete Monate betroffen</h4>
-            <p className="mt-2 text-sm text-gray-600">
-              Diese Tarifänderung berechnet Lektionen in Monaten neu, deren Rechnung bereits gesendet oder
-              bezahlt wurde:
-            </p>
-            <p className="mt-2 text-sm font-semibold text-gray-900">
-              {billedWarning.months.map(monthLabel).join(", ")}
-            </p>
-            <p className="mt-3 text-xs text-gray-500">
-              <span className="font-semibold">Mit neuer Rechnung:</span> Tarif anwenden und die Rechnungen dieser
-              Monate mit den neuen Beträgen neu erstellen (PDF wird ersetzt — muss neu versendet werden).
-              <br />
-              <span className="font-semibold">Ohne neue Rechnung:</span> nur die Lektionen neu berechnen — die
-              verschickte Rechnung bleibt unverändert.
-            </p>
-            {tariffError && <p className="mt-3 text-sm text-red-600">{tariffError}</p>}
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={applyingBilled}
-                onClick={() => setBilledWarning(null)}
-                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 disabled:opacity-50"
-              >
-                Abbrechen
-              </button>
-              <button
-                type="button"
-                disabled={applyingBilled}
-                onClick={() => void applyBilledChange(false)}
-                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 disabled:opacity-50"
-              >
-                Ändern ohne neue Rechnung
-              </button>
-              <button
-                type="button"
-                disabled={applyingBilled}
-                onClick={() => void applyBilledChange(true)}
-                className="rounded-xl bg-[#4A7FC1] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
-              >
-                {applyingBilled ? "Wird angewendet…" : "Ändern + neue Rechnung"}
-              </button>
+      {tariffPreview && (() => {
+        const p = tariffPreview.preview;
+        const diff = Math.round((p.afterCHF - p.beforeCHF) * 100) / 100;
+        const name = typeof tariffPreview.payload.name === "string" ? tariffPreview.payload.name : "Schüler";
+        const billed = p.billedMonths.length > 0;
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl">
+              <h4 className="text-base font-semibold text-gray-900">Ist das dein Ziel?</h4>
+              <p className="mt-2 text-sm text-gray-700">
+                <b>{name}</b>: Tarif von <b>{p.oldRate} CHF/Min ({formatCHF(p.oldRate * 60)}/h)</b> auf{" "}
+                <b>{p.newRate} CHF/Min ({formatCHF(p.newRate * 60)}/h)</b>, gültig ab{" "}
+                <b>{formatYmd(p.effectiveFrom)}</b>.
+              </p>
+
+              {p.lessonCount === 0 ? (
+                <p className="mt-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
+                  Ab diesem Datum gibt es noch keine Lektionen. Der neue Tarif gilt für alle Lektionen, die ab
+                  dann aus dem Kalender kommen. Keine bestehenden Beträge ändern sich.
+                </p>
+              ) : (
+                <div className="mt-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
+                  <p>
+                    <b>{p.lessonCount} Lektionen</b> werden neu berechnet: {formatCHF(p.beforeCHF)} →{" "}
+                    <b>{formatCHF(p.afterCHF)}</b>{" "}
+                    <span className={diff >= 0 ? "text-emerald-700" : "text-red-700"}>
+                      ({diff >= 0 ? "+" : ""}
+                      {formatCHF(diff)})
+                    </span>
+                  </p>
+                  <ul className="mt-2 space-y-0.5 text-xs text-gray-600">
+                    {p.months.map((m) => (
+                      <li key={`${m.year}-${m.month}`}>
+                        {monthLabel(m)}: {m.lessonCount} Lektionen, {formatCHF(m.beforeCHF)} →{" "}
+                        {formatCHF(m.afterCHF)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <p className="mt-3 text-xs text-gray-500">
+                Alles vor dem {formatYmd(p.effectiveFrom)} bleibt unverändert.
+              </p>
+
+              {billed && (
+                <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  Achtung: Die Rechnung für <b>{p.billedMonths.map(monthLabel).join(", ")}</b> ist schon raus.
+                  Ohne neue Rechnung stimmt sie danach nicht mehr mit den Lektionen überein.
+                </p>
+              )}
+
+              <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-800">
+                <input
+                  type="checkbox"
+                  checked={tariffConfirmed}
+                  onChange={(e) => setTariffConfirmed(e.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  Ja, ich habe die Zahlen geprüft: der neue Tarif soll ab {formatYmd(p.effectiveFrom)} gelten.
+                </span>
+              </label>
+
+              {tariffError && <p className="mt-3 text-sm text-red-600">{tariffError}</p>}
+
+              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  disabled={applyingTariff}
+                  onClick={() => {
+                    setTariffPreview(null);
+                    setTariffError("");
+                  }}
+                  className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 disabled:opacity-50"
+                >
+                  Nein, abbrechen
+                </button>
+                {billed && (
+                  <button
+                    type="button"
+                    disabled={applyingTariff || !tariffConfirmed}
+                    onClick={() => void applyTariffChange(false)}
+                    className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 disabled:opacity-50"
+                  >
+                    Ändern ohne neue Rechnung
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={applyingTariff || !tariffConfirmed}
+                  onClick={() => void applyTariffChange(billed)}
+                  className="rounded-xl bg-[#4A7FC1] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {applyingTariff ? "Wird angewendet…" : billed ? "Ändern + neue Rechnung" : "Ja, Tarif ändern"}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </DashboardShell>
   );
 }
