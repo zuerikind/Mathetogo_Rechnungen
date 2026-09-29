@@ -43,6 +43,11 @@ import {
   DELETION_CANDIDATE_WHERE,
 } from "@/lib/pending-deletion-lifecycle";
 import { DELIVERED_INVOICE_WHERE } from "@/lib/invoice-delivery";
+import {
+  decideFrozenWrite,
+  describeFrozenChange,
+  DELIVERED_FROZEN_REASON,
+} from "@/lib/delivered-freeze";
 import { pruneStaleInvoicesInScope } from "@/lib/invoice-stale";
 import { zurichYearMonth } from "@/lib/month-math";
 import { Prisma } from "@prisma/client";
@@ -204,6 +209,10 @@ export async function POST(req: NextRequest) {
     const rateHistoryRows = await prisma.studentRateHistory.findMany({
       where: { studentId: { in: students.map((s) => s.id) } },
       select: { studentId: true, ratePerMin: true, effectiveFrom: true },
+      // Gleicher Stichtag zweimal (Altbestand, z. B. Thilo): der zuletzt erfasste
+      // gilt, nicht die zufaellige Zeilenreihenfolge der Datenbank. rateAtDate
+      // nimmt bei Gleichstand den spaeteren Listeneintrag.
+      orderBy: [{ effectiveFrom: "asc" }, { createdAt: "asc" }],
     });
     const rateHistoryByStudent = new Map<string, RateHistoryEntry[]>();
     for (const row of rateHistoryRows) {
@@ -267,6 +276,7 @@ export async function POST(req: NextRequest) {
             id: true,
             calEventId: true,
             studentId: true,
+            date: true,
             durationMin: true,
             amountCHF: true,
             // Soft-stornierte gehoeren ausdruecklich dazu: taucht ihr Termin
@@ -282,6 +292,7 @@ export async function POST(req: NextRequest) {
             id: string;
             calEventId: string;
             studentId: string;
+            date: Date;
             durationMin: number;
             amountCHF: number;
             cancelledAt: Date | null;
@@ -545,6 +556,53 @@ export async function POST(req: NextRequest) {
     // bevor die Transaktion laeuft — im ausgelieferten Monat wird nur die
     // technische Verknuepfung repariert, die Finanzwerte bleiben stehen.
     const protectedStudentIdSet = new Set(protectedStudentIds);
+
+    // ── Vorletzter Monat und aelter sind gesperrt (lib/delivered-freeze) ─────
+    //
+    // Geprueft wird beides: wohin der Termin heute zeigt UND wo die bestehende
+    // Lektion steht — sonst zoege ein verschobener Termin eine alte Lektion aus
+    // dem gesperrten Monat heraus.
+    const sperrStichtag = new Date();
+    /** Termine, deren Lektion der Sync weder anlegen noch finanziell aendern darf. */
+    const frozenEventIds = new Set<string>();
+    const frozenFindings: {
+      key: string;
+      title: string;
+      startAt: Date;
+      studentId: string;
+      studentName: string;
+      sessionIds: string[];
+      changes: string[];
+      externalUpdatedAt: Date | null;
+    }[] = [];
+    for (const t of tasks) {
+      // Identitaetsersetzungen haben ihren eigenen Schutz (identityReplacementPlan).
+      if (t.replaceSessionId) continue;
+      const bestehend = existingByEventId.get(t.calEventId) ?? null;
+      const entscheid = decideFrozenWrite({
+        existing: bestehend,
+        incoming: {
+          studentId: t.studentId,
+          date: t.date,
+          durationMin: t.durationMin,
+          amountCHF: t.amountCHF,
+        },
+        now: sperrStichtag,
+      });
+      if (entscheid.kind === "write") continue;
+      frozenEventIds.add(t.calEventId);
+      if (entscheid.changes.length === 0) continue;
+      frozenFindings.push({
+        key: `${DELIVERED_FROZEN_REASON}:${t.calEventId}`,
+        title: describeFrozenChange(t.studentName, t.date, entscheid),
+        startAt: t.date,
+        studentId: t.studentId,
+        studentName: t.studentName,
+        sessionIds: bestehend ? [bestehend.id] : [],
+        changes: entscheid.changes,
+        externalUpdatedAt: t.calUpdatedAt,
+      });
+    }
     const identityPlans = new Map<string, ReturnType<typeof identityReplacementPlan>>();
     /** Ausgelieferte Monate, in denen der Termin inzwischen anders aussieht. */
     const identityConflicts: {
@@ -592,7 +650,7 @@ export async function POST(req: NextRequest) {
       if (!t.reactivates) continue;
       const entscheid = decideReactivation({
         session: { cancelledAt: reaktivierungsZeitpunkt, date: t.date },
-        billed: protectedStudentIdSet.has(t.studentId),
+        billed: protectedStudentIdSet.has(t.studentId) || frozenEventIds.has(t.calEventId),
         now: reaktivierungsZeitpunkt,
       });
       if (entscheid.kind === "reactivate") {
@@ -662,6 +720,25 @@ export async function POST(req: NextRequest) {
                 // Loeschvormerkung ist damit gegenstandslos.
                 ...CALENDAR_EVENT_SEEN_RESET,
                 ...(reactivateBlocked.has(t.calEventId) ? {} : CALENDAR_EVENT_ACTIVE_RESET),
+              },
+            });
+            continue;
+          }
+
+          if (frozenEventIds.has(t.calEventId)) {
+            // Ausgeliefert: keine neue Lektion, keine Finanzfelder, kein
+            // Storno-Wechsel. Nur Googles Identitaetsmerkmale und die Vormerkung —
+            // beides ohne Einfluss auf einen Betrag.
+            if (!existingByEventId.has(t.calEventId)) continue;
+            await tx.session.update({
+              where: { calEventId: t.calEventId },
+              data: {
+                iCalUID: t.iCalUID,
+                recurringEventId: t.recurringEventId,
+                originalStartAt: t.originalStartAt,
+                calStatus: t.calStatus,
+                calUpdatedAt: t.calUpdatedAt,
+                ...CALENDAR_EVENT_SEEN_RESET,
               },
             });
             continue;
@@ -1027,6 +1104,26 @@ export async function POST(req: NextRequest) {
         },
       });
     }
+    for (const f of frozenFindings) {
+      issueObservations.push({
+        externalEventId: f.key,
+        // Googles Versionsmarke: "Erledigt" haelt, bis der Termin sich erneut aendert.
+        externalUpdatedAt: f.externalUpdatedAt,
+        reason: DELIVERED_FROZEN_REASON,
+        title: f.title,
+        startAt: f.startAt,
+        endAt: null,
+        calendarId,
+        details: {
+          studentId: f.studentId,
+          studentName: f.studentName,
+          sessionIds: f.sessionIds,
+          changes: f.changes,
+          year,
+          month,
+        },
+      });
+    }
     for (const c of identityConflicts) {
       issueObservations.push({
         externalEventId: c.key,
@@ -1146,7 +1243,9 @@ export async function POST(req: NextRequest) {
             // Nur Zustandsbefunde. identity_conflict bleibt aussen vor: er wird
             // nach der Reparatur nie wieder beobachtet und wuerde sich sonst im
             // naechsten Lauf selbst erledigen, obwohl die Abweichung besteht.
-            reason: { in: [...INTEGRITY_REASONS, "identity_ambiguous"] },
+            // delivered_frozen ebenfalls: passt der Kalender wieder zur
+            // fakturierten Lektion, ist die Abweichung weg.
+            reason: { in: [...INTEGRITY_REASONS, "identity_ambiguous", DELIVERED_FROZEN_REASON] },
             startAt: { gte: monthStart, lt: monthEnd },
           },
           select: { externalEventId: true },
@@ -1156,6 +1255,7 @@ export async function POST(req: NextRequest) {
           new Set([
             ...integrityFindings.map((f) => f.key),
             ...ambiguousIdentities.map((a) => a.key),
+            ...frozenFindings.map((f) => f.key),
           ])
         );
         if (behoben.length > 0) {
@@ -1226,7 +1326,9 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      synced: tasks.length,
+      synced: tasks.filter(
+        (t) => !frozenEventIds.has(t.calEventId) || existingByEventId.has(t.calEventId)
+      ).length,
       /** Zur Loeschung vorgemerkt in diesem Lauf (frueher: sofort geloescht). */
       pendingDeletions: pendingMarked,
       /** Offene Vormerkungen im Monat insgesamt — die warten auf eine Entscheidung. */
@@ -1251,7 +1353,12 @@ export async function POST(req: NextRequest) {
         cancelled: autoCancelled,
         reactivated: autoReactivated,
         needsReview:
-          ambiguousIdentities.length + identityConflicts.length + reviewFindings.length,
+          ambiguousIdentities.length +
+          identityConflicts.length +
+          reviewFindings.length +
+          frozenFindings.length,
+        /** Kalenderaenderungen in gesperrten Monaten — nicht uebernommen, gemeldet. */
+        frozen: frozenFindings.length,
       },
       /** Kandidaten, die diesmal nicht mehr bei Google nachgefragt wurden (Limit). */
       cancelUnverified,

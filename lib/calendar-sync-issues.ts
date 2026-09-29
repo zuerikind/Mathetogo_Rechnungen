@@ -38,7 +38,8 @@ export type CalendarIssueReason =
   | SyncUnmatchedReason
   | IntegrityFindingType
   | IdentityIssueType
-  | CancellationIssueType;
+  | CancellationIssueType
+  | "delivered_frozen";
 
 /** Ein in diesem Lauf beobachteter, nicht zuordenbarer Termin. */
 export type ObservedCalendarIssue = {

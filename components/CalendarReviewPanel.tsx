@@ -50,8 +50,10 @@ type IntegrityReason =
   | "identity_ambiguous"
   | "identity_conflict"
   | "cancel_needs_review"
-  | "reactivate_needs_review";
+  | "reactivate_needs_review"
+  | "delivered_frozen";
 const INTEGRITY_REASONS: IntegrityReason[] = [
+  "delivered_frozen",
   "session_orphan",
   "duplicate_slot",
   "identity_ambiguous",
@@ -73,6 +75,7 @@ const ISSUE_REASON_LABEL: Record<CalendarIssueRow["reason"], string> = {
   identity_conflict: "Rechnung bleibt wie ausgeliefert",
   cancel_needs_review: "Absage nicht übernommen",
   reactivate_needs_review: "Termin zurück, Rechnung schon raus",
+  delivered_frozen: "Monat abgeschlossen — nicht übernommen",
 };
 
 /** Was der Nutzer bei einem Integritaetsbefund tun kann — ohne Fachjargon. */
@@ -100,6 +103,11 @@ const INTEGRITY_HINT: Record<IntegrityReason, string> = {
     "Der Termin ist wieder im Kalender, der Storno wurde aber NICHT automatisch " +
     "aufgehoben: die Rechnung dieses Monats ist bereits ausgeliefert. Eine Reaktivierung " +
     "würde den Betrag gegen den ausgelieferten Stand verändern.",
+  delivered_frozen:
+    "Im Kalender hat sich ein Termin im vorletzten Monat oder früher geändert. Diese Monate " +
+    "sind abgeschlossen — die App übernimmt das bewusst nicht: Lektionen, Stunden und " +
+    "Einkommen bleiben wie verbucht. Meist ist das eine nachträglich bearbeitete Serie — dann einfach mit " +
+    "«So ist es richtig» ausblenden.",
 };
 
 const zurichDayTime = new Intl.DateTimeFormat("de-CH", {

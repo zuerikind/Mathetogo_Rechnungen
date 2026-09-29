@@ -16,7 +16,9 @@ export function rateAtDate(
   let best: RateHistoryEntry | null = null;
   for (const entry of history) {
     if (entry.effectiveFrom.getTime() > date.getTime()) continue;
-    if (!best || entry.effectiveFrom.getTime() > best.effectiveFrom.getTime()) {
+    // >= : bei gleichem Stichtag gewinnt der spaetere Listeneintrag. Der Sync
+    // liefert die Liste nach Erfassungszeit sortiert — der zuletzt erfasste gilt.
+    if (!best || entry.effectiveFrom.getTime() >= best.effectiveFrom.getTime()) {
       best = entry;
     }
   }

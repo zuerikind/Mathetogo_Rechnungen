@@ -36,6 +36,14 @@ describe("rateAtDate", () => {
     expect(rateAtDate(corrected, 1.3, d("2026-08-01"))).toBe(1.3);
   });
 
+  it("same effective date twice: the later entry wins", () => {
+    const history = [
+      { ratePerMin: 1.2, effectiveFrom: d("2026-07-01") },
+      { ratePerMin: 1.1, effectiveFrom: d("2026-07-01") },
+    ];
+    expect(rateAtDate(history, 1.5, d("2026-07-15"))).toBe(1.1);
+  });
+
   it("ignores entries that start after the lesson date", () => {
     const history = [{ ratePerMin: 2, effectiveFrom: d("2026-08-01") }];
     expect(rateAtDate(history, 1.2, d("2026-07-15"))).toBe(1.2);

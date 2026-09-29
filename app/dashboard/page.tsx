@@ -250,6 +250,10 @@ export default function DashboardPage() {
     month,
   ]);
   const prevStats = useMemo(() => {
+    // Geladen ist nur das gewaehlte Jahr: der Vormonat des Januars (Dezember des
+    // Vorjahres) fehlt. Ohne diesen Ausstieg verglich der Trend mit dem Dezember
+    // desselben Jahres. Kein Vergleich ist besser als ein falscher.
+    if (month === 1) return { ...calcStats([]), income: 0 };
     const base = calcStats(prevMonthSessions);
     const income = computeMonthIncome(
       prevMonthSessions,
@@ -268,6 +272,7 @@ export default function DashboardPage() {
     danceEarnings,
     additionalEarnings,
     year,
+    month,
     prevMonth,
   ]);
   const ytdIncome = useMemo(
