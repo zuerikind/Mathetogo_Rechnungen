@@ -18,9 +18,10 @@ type StudentTableProps = {
   students: StudentWithStats[];
   onEdit: (student: StudentWithStats) => void;
   onDeactivate: (studentId: string) => void;
+  onReactivate: (studentId: string) => void;
 };
 
-export function StudentTable({ students, onEdit, onDeactivate }: StudentTableProps) {
+export function StudentTable({ students, onEdit, onDeactivate, onReactivate }: StudentTableProps) {
   return (
     <div className="overflow-x-auto rounded-2xl border border-blue-100 bg-white shadow-sm">
       <table className="min-w-full divide-y divide-gray-100 text-sm">
@@ -37,7 +38,7 @@ export function StudentTable({ students, onEdit, onDeactivate }: StudentTablePro
         </thead>
         <tbody className="divide-y divide-gray-50">
           {students.map((s) => (
-            <tr key={s.id} className="transition-colors hover:bg-[#F8FBFF]">
+            <tr key={s.id} className={`transition-colors hover:bg-[#F8FBFF] ${s.active === false ? "opacity-50" : ""}`}>
               <td className="px-5 py-3 font-semibold">
                 <Link href={`/students/${s.id}`} className="text-[#4A7FC1] hover:underline">
                   {s.name}
@@ -74,6 +75,14 @@ export function StudentTable({ students, onEdit, onDeactivate }: StudentTablePro
               <td className="px-5 py-3 text-gray-600">{s.sessions}</td>
               <td className="px-5 py-3">
                 <div className="flex min-w-0 max-w-[16rem] flex-wrap gap-2 sm:max-w-none">
+                  {s.active === false ? (
+                    <button
+                      onClick={() => onReactivate(s.id)}
+                      className="rounded-lg border border-emerald-200 px-2.5 py-1 text-xs font-medium text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-50"
+                    >
+                      Reaktivieren
+                    </button>
+                  ) : (<>
                   <button
                     onClick={() => onEdit(s)}
                     className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#4A7FC1] hover:text-[#4A7FC1]"
@@ -86,6 +95,7 @@ export function StudentTable({ students, onEdit, onDeactivate }: StudentTablePro
                   >
                     Deaktivieren
                   </button>
+                  </>)}
                   <Link
                     href={`/students/${s.id}`}
                     className="rounded-lg border border-blue-100 px-2.5 py-1 text-xs font-medium text-[#4A7FC1] transition hover:border-[#4A7FC1] hover:bg-blue-50"

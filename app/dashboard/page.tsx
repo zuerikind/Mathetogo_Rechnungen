@@ -6,6 +6,7 @@ import { invalidateGlobalIncomeSummary, useGlobalIncomeSummary } from "@/hooks/u
 import { DashboardAnalytics } from "@/components/DashboardAnalytics";
 import { MonthlyChart } from "@/components/MonthlyChart";
 import { CalendarReviewPanel } from "@/components/CalendarReviewPanel";
+import { LevelsReviewBanner } from "@/components/StudentLevels";
 import { SavingsChart, type SavingsPoint } from "@/components/SavingsChart";
 import { SessionTable, type SubscriptionAnalysisTableRow } from "@/components/SessionTable";
 import { StatCard } from "@/components/StatCard";
@@ -475,6 +476,8 @@ export default function DashboardPage() {
       incomeLoading={globalIncomeLoading || loading || refreshing}
     >
       <div className="min-w-0 space-y-5">
+
+        <LevelsReviewBanner />
 
         <CalendarReviewPanel
           refreshKey={pendingRefresh}

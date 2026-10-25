@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { StudentTable } from "@/components/StudentTable";
+import { StudentLevels } from "@/components/StudentLevels";
 import { STANDARD_RATE_PER_MIN, typicalLessonMinutes } from "@/lib/pricing";
 import { formatCHF, monthOptions } from "@/lib/ui-format";
 import { earliestTariffDate } from "@/lib/delivered-freeze";
@@ -27,6 +28,11 @@ export default function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [sessions, setSessions] = useState<SessionWithStudent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"overview" | "levels">("overview");
+  const [showInactive, setShowInactive] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "stufen") setTab("levels");
+  }, []);
   const [error, setError] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);
   const [editing, setEditing] = useState<EditableStudent | null>(null);
@@ -62,7 +68,7 @@ export default function StudentsPage() {
     try {
       setLoading(true);
       setError("");
-      const studentsRes = await fetch("/api/students");
+      const studentsRes = await fetch(showInactive ? "/api/students?inactive=1" : "/api/students");
       if (!studentsRes.ok) throw new Error("Fehler");
       setStudents((await studentsRes.json()) as Student[]);
       setLoading(false);
@@ -75,13 +81,13 @@ export default function StudentsPage() {
       setError("Fehler beim Laden.");
       setLoading(false);
     }
-  }, []);
+  }, [showInactive]);
 
   useEffect(() => { void load(); }, [load]);
 
   const rows = useMemo(() =>
     students
-      .filter((s) => s.active !== false)
+      .filter((s) => showInactive || s.active !== false)
       .map((student) => {
         const own = sessions.filter((ses) => ses.studentId === student.id);
         return {
@@ -94,8 +100,18 @@ export default function StudentsPage() {
           lessonMinVaries: new Set(own.map((s) => s.durationMin)).size > 1,
         };
       }),
-    [students, sessions]
+    [students, sessions, showInactive]
   );
+
+  /** Sofort in der Liste umschalten, ohne Neuladen; schlaegt der Server fehl, zurueck. */
+  const setActive = async (id: string, active: boolean, request: () => Promise<Response>) => {
+    setStudents((prev) => prev.map((s) => (s.id === id ? { ...s, active } : s)));
+    const res = await request().catch(() => null);
+    if (!res?.ok) {
+      setStudents((prev) => prev.map((s) => (s.id === id ? { ...s, active: !active } : s)));
+      alert("Speichern fehlgeschlagen — keine Änderung vorgenommen.");
+    }
+  };
 
   const resetForm = () => setForm({ name: "", subject: "", ratePerMin: "", email: "", billedToId: "" });
 
@@ -213,6 +229,24 @@ export default function StudentsPage() {
           </button>
         </div>
 
+        <div className="flex gap-1 border-b border-gray-200">
+          {([["overview", "Übersicht"], ["levels", "Stufen"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold transition ${tab === key ? "border-[#4A7FC1] text-[#4A7FC1]" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+            >
+              {label}
+            </button>
+          ))}
+          {tab === "overview" && (
+            <label className="ml-auto flex cursor-pointer items-center gap-2 self-center text-xs text-gray-500">
+              <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
+              Deaktivierte anzeigen
+            </label>
+          )}
+        </div>
+
         {/* Table card */}
         {loading ? (
           <div className="h-64 animate-pulse rounded-2xl border border-blue-100 bg-white" />
@@ -221,6 +255,18 @@ export default function StudentsPage() {
             <span>{error}</span>
             <button className="underline font-medium" onClick={() => void load()}>Erneut versuchen</button>
           </div>
+        ) : tab === "levels" ? (
+          <StudentLevels
+            students={students.filter((s) => s.active !== false)}
+            onChanged={(updates) =>
+              setStudents((prev) =>
+                prev.map((s) => {
+                  const u = updates.find((x) => x.id === s.id);
+                  return u ? { ...s, level: u.level } : s;
+                })
+              )
+            }
+          />
         ) : (
           <StudentTable
             students={rows}
@@ -231,9 +277,19 @@ export default function StudentsPage() {
               setPanelOpen(true);
             }}
             onDeactivate={async (studentId) => {
-              await fetch(`/api/students/${studentId}`, { method: "DELETE" });
-              void load();
+              const name = students.find((s) => s.id === studentId)?.name ?? "Diesen Schüler";
+              if (!window.confirm(`${name} deaktivieren? Neue Kalendertermine werden dann nicht mehr importiert. Du kannst ihn über „Deaktivierte anzeigen“ jederzeit reaktivieren.`)) return;
+              await setActive(studentId, false, () => fetch(`/api/students/${studentId}`, { method: "DELETE" }));
             }}
+            onReactivate={(studentId) =>
+              void setActive(studentId, true, () =>
+                fetch(`/api/students/${studentId}`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ active: true }),
+                })
+              )
+            }
           />
         )}
       </div>

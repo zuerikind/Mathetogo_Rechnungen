@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invalidateGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { formatAmount, formatDate } from "@/lib/invoice-format";
 import { formatUnmatchedHeadline, unmatchedActionHint, type SyncUnmatchedEvent } from "@/lib/sync-unmatched";
+import { isLockedMonth, reactivateAndSync, reactivateQuestion } from "@/lib/reactivate-student";
 
 /** Offene Löschvormerkung aus /api/sessions/pending-deletion. */
 type PendingDeletionRow = {
@@ -299,6 +300,28 @@ export function CalendarReviewPanel({
         : `Storno aufheben${betrag}?\n\nDie Lektion zählt danach wieder zum Betrag.${ausgeliefert}`;
     if (!window.confirm(frage)) return;
     await decideIssue(reason === "cancel_needs_review" ? "cancel" : "reactivate", [issue.id]);
+  };
+
+  /** Deaktivierter Schueler hat wieder Termine: reaktivieren und den Monat gleich nachholen. */
+  const reactivateFromIssue = async (issue: CalendarIssueRow) => {
+    const names = issue.detailsJson?.inactiveStudents ?? [];
+    const start = issue.startAt ?? new Date().toISOString();
+    if (!window.confirm(reactivateQuestion(names, start))) return;
+    setBusy(true);
+    try {
+      const error = await reactivateAndSync(names, start);
+      if (error) {
+        alert(error);
+        return;
+      }
+      // Abgeschlossener Monat: kein Sync, also schliesst sich der Befund nicht von selbst.
+      if (isLockedMonth(start)) await decideIssue("resolve", [issue.id]);
+      await load();
+      invalidateGlobalIncomeSummary();
+      onResolved?.();
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (rows.length === 0 && issues.length === 0) return null;
@@ -597,6 +620,17 @@ export function CalendarReviewPanel({
                   </span>
                 </span>
                 <span className="flex shrink-0 gap-2">
+                  {issue.reason === "inactive_match" && (issue.detailsJson?.inactiveStudents?.length ?? 0) > 0 && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void reactivateFromIssue(issue)}
+                      title="Schüler wieder aktivieren und den Monat gleich synchronisieren."
+                      className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
+                    >
+                      Reaktivieren & importieren
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={busy}

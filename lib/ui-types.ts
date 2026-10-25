@@ -12,6 +12,8 @@ export type Student = {
   active?: boolean;
   /** Familienrechnung: id des Schülers, über dessen Rechnung abgerechnet wird. */
   billedToId?: string | null;
+  /** Schulstufe, siehe lib/school-levels.ts. */
+  level?: string | null;
 };
 
 export type SessionWithStudent = {

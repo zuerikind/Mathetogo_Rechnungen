@@ -11,6 +11,7 @@ import {
   type SyncUnmatchedEvent,
 } from "@/lib/sync-unmatched";
 import type { SessionWithStudent, SyncResponse } from "@/lib/ui-types";
+import { reactivateAndSync, reactivateQuestion } from "@/lib/reactivate-student";
 
 const REASON_META: Record<
   SyncUnmatchedEvent["reason"],
@@ -49,6 +50,7 @@ export default function SyncPage() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [syncError, setSyncError] = useState("");
+  const [reactivating, setReactivating] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -309,6 +311,26 @@ export default function SyncPage() {
                           >
                             <p className="font-medium leading-snug">{formatUnmatchedHeadline(item)}</p>
                             <p className="mt-1 text-xs opacity-80">{unmatchedActionHint(item)}</p>
+                            {reason === "inactive_match" && (item.inactiveStudents?.length ?? 0) > 0 && (
+                              <button
+                                type="button"
+                                disabled={reactivating}
+                                onClick={async () => {
+                                  const names = item.inactiveStudents ?? [];
+                                  if (!window.confirm(reactivateQuestion(names, item.start))) return;
+                                  setReactivating(true);
+                                  const error = await reactivateAndSync(names, item.start);
+                                  setReactivating(false);
+                                  if (error) return alert(error);
+                                  // Das alte Ergebnis ist ueberholt; die neuen Lektionen zeigt loadData.
+                                  setResult(null);
+                                  void loadData();
+                                }}
+                                className="mt-2 rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
+                              >
+                                {reactivating ? "Wird reaktiviert…" : "Reaktivieren & importieren"}
+                              </button>
+                            )}
                           </li>
                         ))}
                       </ul>

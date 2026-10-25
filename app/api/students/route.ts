@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const students = await prisma.student.findMany({
-    where: { active: true },
+    // ?inactive=1: auch deaktivierte, damit man sie reaktivieren kann.
+    where: req.nextUrl.searchParams.get("inactive") === "1" ? {} : { active: true },
     orderBy: { name: "asc" },
   });
   return NextResponse.json(students);

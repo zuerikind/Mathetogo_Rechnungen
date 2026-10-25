@@ -29,6 +29,8 @@ model Student {
   active     Boolean   @default(true)
   /// Familienrechnung: Lektionen dieses Schülers landen auf der Rechnung des verlinkten Schülers.
   billedToId String?
+  /// Schulstufe als Text, z.B. "2. Sek" oder eine eigene Stufe (lib/school-levels.ts).
+  level      String?
   billedTo   Student?  @relation("BillingGroup", fields: [billedToId], references: [id])
   billingChildren Student[] @relation("BillingGroup")
   sessions       Session[]
@@ -222,6 +224,8 @@ model TutorProfile {
   manualQ1M1Chf  Decimal? @db.Decimal(10, 2)
   manualQ1M2Chf  Decimal? @db.Decimal(10, 2)
   manualQ1M3Chf  Decimal? @db.Decimal(10, 2)
+  /// Schuljahr (Startjahr), dessen Stufen zuletzt bestaetigt wurden.
+  levelsReviewedYear Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
