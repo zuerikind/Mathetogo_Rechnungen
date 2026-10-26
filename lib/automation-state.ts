@@ -20,7 +20,7 @@ export const academigoJobState: {
 export const followupJobState: {
   running: boolean;
   shouldStop: boolean;
-  mode: "preview" | "send" | "replies" | null;
+  mode: "preview" | "send" | "replies" | "compare" | null;
   startedAt: Date | null;
   finishedAt: Date | null;
   /** z.B. "Lea (33216546), 12 von 150" */

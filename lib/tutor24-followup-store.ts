@@ -19,6 +19,7 @@ import {
   type Anrede,
   type Course,
   type FollowupSettings,
+  type ListCache,
   type LogRow,
   type PreviewRow,
 } from "./tutor24-followup";
@@ -34,11 +35,19 @@ export const STATUS_PATH = join(FOLLOWUP_DIR, "status.json");
 export const STOP_PATH = join(FOLLOWUP_DIR, "stop.request");
 /** Ausgabe des aus der App gestarteten Prozesses (fuer Abstuerze vor dem ersten Status). */
 export const RUN_LOG_PATH = join(FOLLOWUP_DIR, "run.log");
+/** Zwischenspeicher der Konversationslisten (pro Tab), damit nicht jeder Lauf alles nachlaedt. */
+export const CONVERSATIONS_PATH = join(FOLLOWUP_DIR, "conversations.json");
+/** Zeitmessung: pro Lauf eine Zeile je Phase. */
+export const TIMING_PATH = join(FOLLOWUP_DIR, "timing.csv");
+/** Vergleichsmodus: Unterschiede "nur Konversation" vs. "Konversation + Inserat". */
+export const COMPARE_PATH = join(FOLLOWUP_DIR, "compare.csv");
+export const TIMING_COLS = ["lauf", "modus", "phase", "dauer_s", "seitenaufrufe", "konversationen"] as const;
+export const COMPARE_COLS = ["conversation_id", "name", "inserat_noetig", "feld", "nur_konversation", "mit_inserat"] as const;
 
 export type RunStatus = {
   running: boolean;
   pid: number;
-  mode: "preview" | "send" | "replies" | null;
+  mode: "preview" | "send" | "replies" | "compare" | null;
   startedAt: string | null;
   finishedAt: string | null;
   progress: string;
@@ -82,6 +91,31 @@ function writeChecked(path: string, content: string): void {
 }
 
 const readJson = (path: string): unknown => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null);
+
+export function loadListCache(tab: string): ListCache {
+  try {
+    return ((readJson(CONVERSATIONS_PATH) as Record<string, ListCache> | null) ?? {})[tab] ?? {};
+  } catch {
+    // Kaputter Zwischenspeicher = keiner: die Liste wird dann einfach ganz geladen.
+    return {};
+  }
+}
+
+export function saveListCache(tab: string, cache: ListCache): void {
+  let all: Record<string, ListCache> = {};
+  try {
+    all = (readJson(CONVERSATIONS_PATH) as Record<string, ListCache> | null) ?? {};
+  } catch {
+    /* neu anlegen */
+  }
+  writeChecked(CONVERSATIONS_PATH, JSON.stringify({ ...all, [tab]: cache }));
+}
+
+/** CSV um Zeilen ergaenzen (ganze Datei neu, wie beim Protokoll). */
+export function appendCsv(path: string, cols: readonly string[], rows: Record<string, string>[]): void {
+  const old = existsSync(path) ? parseCsv(readFileSync(path, "utf8")) : [];
+  writeChecked(path, toCsv([...old, ...rows], cols));
+}
 
 export function loadSettings(): FollowupSettings {
   return mergeSettings(readJson(SETTINGS_PATH) as Partial<FollowupSettings> | null);

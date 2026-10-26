@@ -3,11 +3,13 @@ import {
   analyzeListing,
   assignCourse,
   classifyListing,
+  compareAnalyses,
   containsForbiddenContact,
   courseStats,
   demandOverview,
   detectAnrede,
   effectiveStatus,
+  entryChanged,
   extractAnlass,
   extractGrade,
   extractOrt,
@@ -15,15 +17,23 @@ import {
   extractZeitwunsch,
   findReply,
   formatSaturdays,
+  hasNewActivity,
+  listSender,
+  listSkipReason,
+  listingFromConversation,
   mergeSettings,
+  needsListing,
   newCourse,
   parseCsv,
   parseTutor24Date,
   renderMessage,
+  scrollStop,
+  snippetSig,
   toCsv,
   toDuForm,
   validateCourses,
   type Course,
+  type ListEntry,
   type ListingInfo,
   type LogRow,
   type PreviewRow,
@@ -301,7 +311,7 @@ describe("Kurse und Nachricht", () => {
 const row = (p: Partial<PreviewRow>): PreviewRow => ({
   status: "send", conversation_id: "1", link: "", name: "Lea", kategorie: "gymi", begruendung: "", stufe: "", fach: "",
   faecher: "Mathe", klasse: "", gymi_jahr: "", kursgruppe: "gymi_unter", sicherheit: "hoch", ort: "unbekannt", ortsname: "",
-  zeitwunsch: "", anlass: "unbekannt", letzte_nachricht: "", anrede: "Sie", grund: "", kurs: "", nachricht: "",
+  zeitwunsch: "", anlass: "unbekannt", letzte_nachricht: "", anrede: "Sie", grund: "", quelle: "", kurs: "", nachricht: "",
   ...p,
 });
 
@@ -388,9 +398,9 @@ describe("Antworten", () => {
 
 describe("Einstellungen", () => {
   it("Standard: Mathe und Physik, N = 20; altes Format wird ersetzt", () => {
-    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20 });
-    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20 });
-    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5 });
+    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false });
+    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false });
+    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5, listingOnDemand: false });
   });
 });
 
@@ -398,4 +408,88 @@ it("CSV Rundreise mit Zeilenumbruechen und Semikolons", () => {
   const rows = [{ a: "x;y", b: 'er sagte "Ja"\nneue Zeile' }, { a: "", b: "z" }];
   expect(parseCsv(toCsv(rows, ["a", "b"]))).toEqual(rows);
   expect(parseCsv("")).toEqual([]);
+});
+
+describe("Inserat nur bei Bedarf", () => {
+  const info = (p: Partial<ListingInfo>): ListingInfo => ({ title: "", fach: "", schulstufe: "", description: "", ...p });
+  const need = (i: ListingInfo) => needsListing(analyzeListing(i), i);
+
+  it("Konversationsseite mit Fach, Stufe und Jahr reicht", () => {
+    expect(need(info({ fach: "Mathematik", schulstufe: "Gymnasium", description: "Nachhilfe Mathematik 3. Gymi" }))).toBeNull();
+  });
+  it("Stufe unklar, kein Fach oder Sicherheit nicht hoch → Inserat öffnen", () => {
+    expect(need(info({ description: "Prüfungsvorbereitung, Hausaufgaben\n8057 Zürich" }))).toBe("Stufe unklar");
+    expect(need(info({ schulstufe: "Gymnasium", description: "2. Gymi" }))).toBe("kein Fach");
+    expect(need(info({ fach: "Mathematik", schulstufe: "Sekundarschule" }))).toBe("Sicherheit tief");
+    expect(need(info({ fach: "Mathematik", schulstufe: "Gymnasium", description: "Probezeit" }))).toBe("Sicherheit mittel");
+  });
+  it("Widerspruch zwischen Schulstufen-Feld und Text → Inserat öffnen", () => {
+    expect(need(info({ fach: "Mathematik", schulstufe: "Berufsmaturität", description: "2. Sek" }))).toBe("Widerspruch bm/sek");
+  });
+  it("listingFromConversation liest beschriftete Felder und PLZ-Ort, Rest ist Freitext", () => {
+    const l = listingFromConversation("Nachhilfe Mathe\nFach\nMathematik\nSchulstufe\nGymnasium\n8057 Zürich");
+    expect(l).toMatchObject({ fach: "Mathematik", schulstufe: "Gymnasium", ort: "8057 Zürich" });
+    expect(listingFromConversation("Prüfungsvorbereitung, Hausaufgaben\n8057 Zürich")).toMatchObject({ fach: "", schulstufe: "" });
+  });
+  it("compareAnalyses listet nur abweichende Felder", () => {
+    const a = analyzeListing(info({ fach: "Mathematik", schulstufe: "Gymnasium", description: "2. Gymi" }));
+    const b = analyzeListing(info({ fach: "Mathematik", schulstufe: "Gymnasium", description: "4. Gymi, ich suche Hilfe" }));
+    expect(compareAnalyses(a, a)).toEqual([]);
+    expect(compareAnalyses(a, b).map((d) => d.feld)).toEqual(["klasse", "gymi_jahr", "kursgruppe", "anrede"]);
+  });
+});
+
+describe("Konversationsliste", () => {
+  const now = new Date("2026-10-26T12:00:00Z");
+  const e = (id: string, p: Partial<ListEntry> = {}): ListEntry => ({
+    id, name: id, date: "2026-10-20T00:00:00.000Z", lastSender: "ich", unread: 0, sig: "s", link: "", ...p,
+  });
+
+  it("listSender: nur mit positivem Beleg", () => {
+    expect(listSender("Leider ist Mia nicht an Ihrer Bewerbung interessiert. Wir wünschen …", 1)).toBe("system");
+    expect(listSender("Hallo Omid, gerne eine Probelektion", 1)).toBe("gegenseite");
+    expect(listSender("Hallo zusammen, gerne unterstütze ich dich in Mathematik …", 0)).toBe("ich");
+    expect(listSender("Hallo Lea, Ich hatte mich vor einiger Zeit bei Ihnen gemeldet …", 0)).toBe("ich");
+    // Bereits gelesene Antwort ohne meinen Wortlaut: nicht sicher → unbekannt (wird geoeffnet)
+    expect(listSender("Hallo Omid, danke, wir haben schon jemanden", 0)).toBe("unbekannt");
+  });
+
+  it("entryChanged: Datum, letzter Absender oder Ausschnitt", () => {
+    expect(entryChanged(undefined, e("1"))).toBe(true);
+    expect(entryChanged(e("1"), e("1"))).toBe(false);
+    expect(entryChanged(e("1"), e("1", { date: "2026-10-25T00:00:00.000Z" }))).toBe(true);
+    expect(entryChanged(e("1"), e("1", { lastSender: "unbekannt" }))).toBe(true);
+    expect(entryChanged(e("1"), e("1", { sig: snippetSig("neu") }))).toBe(true);
+    // Ungelesen-Zaehler allein (z.B. nach dem Oeffnen) ist keine neue Aktivitaet
+    expect(entryChanged(e("1"), e("1", { unread: 2 }))).toBe(false);
+  });
+
+  it("scrollStop: Ende, Alter, unveränderter Block", () => {
+    const cache = { a: e("a"), b: e("b") };
+    expect(scrollStop([], cache, now)).toBe("Ende der Liste");
+    expect(scrollStop([e("x", { date: "2026-08-01T00:00:00.000Z" })], {}, now, 57)).toBe("älter als 57 Tage");
+    expect(scrollStop([e("a"), e("b")], cache, now)).toBe("Rest unverändert im Zwischenspeicher");
+    // ein neuer oder geaenderter Eintrag im Block: weiterscrollen
+    expect(scrollStop([e("a"), e("c")], cache, now)).toBeNull();
+    expect(scrollStop([e("a", { sig: "neu" }), e("b")], cache, now)).toBeNull();
+    // leerer Zwischenspeicher (erster Lauf): ganz laden
+    expect(scrollStop([e("a"), e("b")], {}, now, 57)).toBeNull();
+  });
+
+  it("Antwort-Erkennung aus der Liste", () => {
+    expect(hasNewActivity(e("1"))).toBe(false);
+    expect(hasNewActivity(e("1", { unread: 1 }))).toBe(true);
+    expect(hasNewActivity(e("1", { lastSender: "gegenseite" }))).toBe(true);
+    expect(hasNewActivity(e("1", { lastSender: "unbekannt" }))).toBe(true);
+    expect(hasNewActivity(e("1", { lastSender: "system" }))).toBe(true);
+    // nicht in der Liste gefunden: lieber oeffnen
+    expect(hasNewActivity(undefined)).toBe(true);
+  });
+
+  it("listSkipReason im Probelauf: nur Absage und Ungelesenes", () => {
+    expect(listSkipReason(e("1", { lastSender: "system" }))).toBe("abgelehnt");
+    expect(listSkipReason(e("1", { lastSender: "gegenseite" }))).toBe("ungelesene_nachricht");
+    expect(listSkipReason(e("1"))).toBeNull();
+    expect(listSkipReason(e("1", { lastSender: "unbekannt" }))).toBeNull();
+  });
 });

@@ -364,13 +364,126 @@ export type FollowupSettings = {
   mySubjects: string[];
   /** "Kurs empfohlen" ab so vielen Kandidaten mit Sicherheit "hoch" */
   recommendMin: number;
+  /** Probelauf: Inseratseite nur oeffnen, wenn die Konversationsseite nicht reicht (needsListing). Standard aus. */
+  listingOnDemand: boolean;
 };
 
 export function mergeSettings(saved: Partial<FollowupSettings> | null | undefined): FollowupSettings {
   return {
     mySubjects: Array.isArray(saved?.mySubjects) ? saved.mySubjects.map(String) : ["Mathe", "Physik"],
     recommendMin: Number(saved?.recommendMin) >= 1 ? Math.floor(Number(saved?.recommendMin)) : 20,
+    listingOnDemand: saved?.listingOnDemand === true,
   };
+}
+
+// ── Inserat nur bei Bedarf ────────────────────────────────────────────────────
+
+const labelled = (text: string, label: string) => text.match(new RegExp(`(?:^|\\n)${label}\\n([^\\n]+)`))?.[1]?.trim() ?? "";
+
+/**
+ * Was die Konversationsseite selbst ueber das Inserat zeigt (Kopfbereich ohne Nachrichten),
+ * in derselben Form wie die Inseratseite. Fach/Schulstufe nur, wenn die Seite sie beschriftet.
+ */
+export function listingFromConversation(header: string): ListingInfo {
+  return {
+    title: "",
+    fach: labelled(header, "Fach"),
+    schulstufe: labelled(header, "Schulstufe"),
+    description: header,
+    ort: header.match(/\b[1-9]\d{3} [A-ZÄÖÜ][^\n]*/)?.[0]?.trim() ?? "",
+  };
+}
+
+/**
+ * Grund, warum die Inseratseite trotzdem geoeffnet werden muss; null = Konversationsseite reicht.
+ * Widerspruch: Schulstufen-Feld und Freitext ergeben verschiedene Stufen.
+ */
+export function needsListing(a: ReturnType<typeof analyzeListing>, info: ListingInfo): string | null {
+  if (a.kategorie === "unklar") return "Stufe unklar";
+  if (!a.faecher) return "kein Fach";
+  if (a.sicherheit !== "hoch") return `Sicherheit ${a.sicherheit}`;
+  const byField = classifyListing({ ...info, title: "", description: "" }).category;
+  const byText = classifyListing({ ...info, schulstufe: "" }).category;
+  if (byField !== "unklar" && byText !== "unklar" && byField !== byText) return `Widerspruch ${byField}/${byText}`;
+  return null;
+}
+
+/** Felder, die der Vergleichsmodus (--compare) zwischen beiden Varianten gegenueberstellt. */
+export const COMPARE_FIELDS = ["kategorie", "faecher", "klasse", "gymi_jahr", "kursgruppe", "sicherheit", "anrede", "anlass", "ort"] as const;
+
+export function compareAnalyses(
+  convo: ReturnType<typeof analyzeListing>,
+  full: ReturnType<typeof analyzeListing>
+): Array<{ feld: string; nur_konversation: string; mit_inserat: string }> {
+  return COMPARE_FIELDS.filter((f) => convo[f] !== full[f]).map((f) => ({ feld: f, nur_konversation: convo[f], mit_inserat: full[f] }));
+}
+
+// ── Konversationsliste (Zwischenspeicher, Aktivitaet) ─────────────────────────
+
+export type ListSender = "ich" | "gegenseite" | "system" | "unbekannt";
+export type ListEntry = {
+  id: string;
+  name: string;
+  /** ISO-Datum der letzten Aktivitaet laut Liste, "" = nicht lesbar */
+  date: string;
+  lastSender: ListSender;
+  unread: number;
+  /** Pruefsumme des Nachrichten-Ausschnitts: aendert sich mit jeder neuen Nachricht (auch am selben Tag) */
+  sig: string;
+  link: string;
+};
+export type ListCache = Record<string, ListEntry>;
+
+// Eigene Texte: die Erst-Nachricht ("… unterstütze ich dich in …") und das Nachfassen (FOLLOWUP_MARKER).
+const MINE_RE = /unterst[üu]tze ich dich|ich unterrichte seit|ich hatte mich vor einiger zeit/i;
+const REJECTED_RE = /nicht an ihrer bewerbung interessiert/i;
+
+/**
+ * Letzter Absender aus dem Listen-Ausschnitt. Nur positive Belege: Ungelesen kommt nie von mir,
+ * die Absage ist ein fester Systemtext, "ich" nur mit meinem eigenen Wortlaut. Sonst "unbekannt".
+ */
+export function listSender(snippet: string, unread: number): ListSender {
+  if (REJECTED_RE.test(snippet)) return "system";
+  if (unread > 0) return "gegenseite";
+  if (MINE_RE.test(snippet)) return "ich";
+  return "unbekannt";
+}
+
+export function snippetSig(s: string): string {
+  let h = 0;
+  for (const ch of s.replace(/\s+/g, " ").trim()) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+/** Neue Aktivitaet seit dem letzten Lauf: Datum, letzter Absender oder Ausschnitt anders. */
+export function entryChanged(prev: ListEntry | undefined, cur: ListEntry): boolean {
+  return !prev || prev.date !== cur.date || prev.lastSender !== cur.lastSender || prev.sig !== cur.sig;
+}
+
+/**
+ * Weiterscrollen noetig? null = ja, sonst der Grund zum Aufhoeren.
+ * Die Liste ist nach letzter Aktivitaet sortiert: steht ein ganzer nachgeladener Block
+ * unveraendert im Zwischenspeicher, ist auch alles darunter unveraendert.
+ */
+export function scrollStop(batch: ListEntry[], cache: ListCache, now: Date, maxAgeDays?: number): string | null {
+  if (batch.length === 0) return "Ende der Liste";
+  const oldest = batch[batch.length - 1].date;
+  if (maxAgeDays !== undefined && oldest && ageDays(new Date(oldest), now) > maxAgeDays) return `älter als ${maxAgeDays} Tage`;
+  if (batch.every((e) => !entryChanged(cache[e.id], e))) return "Rest unverändert im Zwischenspeicher";
+  return null;
+}
+
+/** "Antworten pruefen": nur oeffnen, wenn die Liste Aktivitaet der Gegenseite zeigt oder nichts Sicheres. */
+export function hasNewActivity(e: ListEntry | undefined): boolean {
+  return !e || e.lastSender !== "ich" || e.unread > 0;
+}
+
+/** Probelauf: aus der Liste sicher uebersprungen, ohne die Konversation zu oeffnen. */
+export function listSkipReason(e: ListEntry): string | null {
+  if (e.lastSender === "system") return "abgelehnt";
+  // Ungelesen ist nie von mir: Gegenseite oder Systemmeldung — beides wird nicht angeschrieben.
+  if (e.lastSender === "gegenseite") return "ungelesene_nachricht";
+  return null;
 }
 
 // ── Kurse und Nachrichtentext ─────────────────────────────────────────────────
@@ -536,7 +649,7 @@ export function validateCourses(courses: Course[]): string[] {
 export const PREVIEW_COLS = [
   "status", "conversation_id", "link", "name", "kategorie", "begruendung", "stufe", "fach",
   "faecher", "klasse", "gymi_jahr", "kursgruppe", "sicherheit", "ort", "ortsname", "zeitwunsch", "anlass",
-  "letzte_nachricht", "anrede", "grund", "kurs", "nachricht",
+  "letzte_nachricht", "anrede", "grund", "quelle", "kurs", "nachricht",
 ] as const;
 export const LOG_COLS = [
   "conversation_id", "name", "zeitstempel", "kurs", "variante", "status",

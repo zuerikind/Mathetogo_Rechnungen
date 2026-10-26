@@ -31,7 +31,8 @@ type Mode = "preview" | "send" | "replies";
 type StatusResponse = {
   state: {
     running: boolean;
-    mode: Mode | null;
+    /** "compare" nur von der Kommandozeile (--compare N) */
+    mode: Mode | "compare" | null;
     startedAt: string | null;
     finishedAt: string | null;
     progress: string;
@@ -345,7 +346,7 @@ export function Tutor24Followup() {
   const notAnalysed = status.rows.filter((r) => r.fach && !r.faecher).length;
   const courseName = (id: string) => status.courses.find((c) => c.id === id)?.name ?? id;
   const lastLine = state.log.at(-1) ?? "";
-  const runningLabel = { preview: "Probelauf läuft", send: "Senden läuft", replies: "Antworten werden geprüft" };
+  const runningLabel = { preview: "Probelauf läuft", send: "Senden läuft", replies: "Antworten werden geprüft", compare: "Vergleich läuft" };
 
   return (
     <div className="space-y-4">
@@ -428,9 +429,26 @@ export function Tutor24Followup() {
         <h2 className="mb-1 font-semibold text-gray-900">Probelauf</h2>
         <p className="mb-3 text-sm text-gray-500">
           Liest die Konversationen und analysiert jedes Inserat: Stufe, Fächer, Klasse, Ort, Zeitwunsch, Anlass. Sendet nichts. Ein neuer
-          Lauf setzt dort fort, wo der letzte aufgehört hat. Pro Konversation etwa 25 Sekunden. Jeder Lauf ist ein eigener Prozess:
-          Neuladen oder Neustarten der App unterbricht ihn nicht.
+          Lauf setzt dort fort, wo der letzte aufgehört hat. Pro geöffneter Seite 8–15 Sekunden Pause. Jeder Lauf ist ein eigener Prozess:
+          Neuladen oder Neustarten der App unterbricht ihn nicht. Zeitmessung pro Lauf in tutor24-followup/timing.csv.
         </p>
+        <label className="mb-3 flex items-start gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={draft.settings.listingOnDemand}
+            disabled={running}
+            onChange={(e) => setSettings({ listingOnDemand: e.target.checked })}
+            className="mt-0.5"
+          />
+          <span>
+            Inserat nur bei Bedarf öffnen
+            <span className="block text-xs text-gray-500">
+              Wertet zuerst nur die Konversationsseite aus und öffnet das Inserat nur bei unklarer Stufe, fehlendem Fach, Sicherheit
+              unter „hoch“ oder Widerspruch. Vorher den Vergleich prüfen: <code>npx tsx scripts/followup_group_offer.mts --compare 20</code>{" "}
+              → tutor24-followup/compare.csv. Speichern mit „Fächer &amp; Kurse speichern“.
+            </span>
+          </span>
+        </label>
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-sm text-gray-600">
             max. Konversationen
@@ -601,7 +619,7 @@ export function Tutor24Followup() {
               <tbody className="divide-y divide-gray-50">
                 {shown.map(({ r, eff }) => {
                   const msg = eff.course ? renderMessage(eff.course, r.name, r.anrede === "du" ? "du" : "Sie") : null;
-                  const details = [r.klasse && `Klasse ${r.klasse}`, r.gymi_jahr && `Gymi-Jahr ${r.gymi_jahr}`, r.anlass, r.ort !== "unbekannt" && r.ort, r.ortsname, r.zeitwunsch]
+                  const details = [r.klasse && `Klasse ${r.klasse}`, r.gymi_jahr && `Gymi-Jahr ${r.gymi_jahr}`, r.anlass, r.ort !== "unbekannt" && r.ort, r.ortsname, r.zeitwunsch, r.quelle && `Quelle: ${r.quelle}`]
                     .filter(Boolean)
                     .join(" · ");
                   return (

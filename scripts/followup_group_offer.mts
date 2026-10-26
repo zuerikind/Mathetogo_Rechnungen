@@ -15,6 +15,11 @@
  * Antworten pruefen (nur lesend, nur Konversationen aus followup_log.csv):
  *   npx tsx scripts/followup_group_offer.mts --replies
  *
+ * Vergleich fuer "Inserat nur bei Bedarf" (nur lesend, aendert die Vorschau nicht):
+ *   npx tsx scripts/followup_group_offer.mts --compare 20
+ *   → tutor24-followup/compare.csv: Unterschiede nur Konversation vs. Konversation + Inserat
+ *
+ * Jeder Lauf schreibt seine Zeitmessung nach tutor24-followup/timing.csv.
  * Option --headed zeigt den Browser. Logik: lib/tutor24-followup-runner.ts.
  */
 import { config } from "dotenv";
@@ -24,16 +29,17 @@ import { runFollowup } from "../lib/tutor24-followup-runner";
 config({ path: ".env.local" });
 
 const SEND = process.argv.includes("--send");
-const maxArg = process.argv.indexOf("--max");
+const compareArg = process.argv.indexOf("--compare");
+const maxArg = compareArg > -1 ? compareArg : process.argv.indexOf("--max");
 const maxChecks = maxArg > -1 ? Number(process.argv[maxArg + 1]) : 150;
 if (!Number.isInteger(maxChecks) || maxChecks < 1) {
-  console.error("--max braucht eine ganze Zahl ≥ 1, z.B. --max 150");
+  console.error("--max/--compare brauchen eine ganze Zahl ≥ 1, z.B. --max 150 oder --compare 20");
   process.exit(1);
 }
 
 try {
   await runFollowup({
-    mode: SEND ? "send" : process.argv.includes("--replies") ? "replies" : "preview",
+    mode: SEND ? "send" : process.argv.includes("--replies") ? "replies" : compareArg > -1 ? "compare" : "preview",
     maxChecks,
     headless: !process.argv.includes("--headed"),
     onLog: (line) => console.log(line),
