@@ -3,7 +3,7 @@
  * Alles unter tutor24-followup/ im Projektordner — dort, wo Kommandozeile und
  * App-Server gleichermassen hinschauen. Der Ordner ist gitignored (Namen).
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   LOG_COLS,
@@ -28,6 +28,46 @@ export const PREVIEW_PATH = join(FOLLOWUP_DIR, "followup_preview.csv");
 export const LOG_PATH = join(FOLLOWUP_DIR, "followup_log.csv");
 export const SETTINGS_PATH = join(FOLLOWUP_DIR, "settings.json");
 export const COURSES_PATH = join(FOLLOWUP_DIR, "courses.json");
+/** Laufstatus des Lauf-Prozesses; der Tab liest ihn, statt Speicher im Dev-Server. */
+export const STATUS_PATH = join(FOLLOWUP_DIR, "status.json");
+/** Existiert die Datei, haelt der Lauf beim naechsten Schritt an. */
+export const STOP_PATH = join(FOLLOWUP_DIR, "stop.request");
+/** Ausgabe des aus der App gestarteten Prozesses (fuer Abstuerze vor dem ersten Status). */
+export const RUN_LOG_PATH = join(FOLLOWUP_DIR, "run.log");
+
+export type RunStatus = {
+  running: boolean;
+  pid: number;
+  mode: "preview" | "send" | "replies" | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  progress: string;
+  done: number;
+  total: number;
+  log: string[];
+  error: string | null;
+};
+
+export function writeStatus(s: RunStatus): void {
+  try {
+    mkdirSync(FOLLOWUP_DIR, { recursive: true });
+    writeFileSync(STATUS_PATH, JSON.stringify(s));
+  } catch {
+    // Status ist Anzeige — ein Schreibfehler darf den Lauf nicht abbrechen.
+  }
+}
+
+export function readStatus(): RunStatus | null {
+  try {
+    return JSON.parse(readFileSync(STATUS_PATH, "utf8")) as RunStatus;
+  } catch {
+    return null;
+  }
+}
+
+export const requestStop = () => writeChecked(STOP_PATH, new Date().toISOString());
+export const stopRequested = () => existsSync(STOP_PATH);
+export const clearStop = () => rmSync(STOP_PATH, { force: true });
 
 /** Excel sperrt geoeffnete Dateien — dann eine verstaendliche Meldung statt EBUSY. */
 function writeChecked(path: string, content: string): void {

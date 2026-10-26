@@ -1,32 +1,73 @@
+import { spawn } from "node:child_process";
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { academigoJobState, followupJobState as state, tutor24JobState } from "@/lib/automation-state";
+import { academigoJobState, tutor24JobState } from "@/lib/automation-state";
 import { MAX_SENDS_PER_DAY } from "@/lib/tutor24-followup";
 import {
+  FOLLOWUP_DIR,
+  RUN_LOG_PATH,
   loadCourses,
   loadSettings,
   readLog,
   readPreview,
+  readStatus,
+  requestStop,
   saveConfig,
   sendQueue,
   sentToday,
   setMark,
   setRowStatus,
+  writeStatus,
+  type RunStatus,
 } from "@/lib/tutor24-followup-store";
-import { runFollowup } from "@/lib/tutor24-followup-runner";
-import { readTutor24Lock } from "@/lib/tutor24-lock";
+import { pidAlive, readTutor24Lock } from "@/lib/tutor24-lock";
 
 export const runtime = "nodejs";
-// Long timeout — browser automation takes time
-export const maxDuration = 300;
 
-/** Wer tutor24 gerade blockiert, ausser unserem eigenen Lauf in diesem Server. */
-function blocker(): string | null {
+const IDLE: RunStatus = {
+  running: false, pid: 0, mode: null, startedAt: null, finishedAt: null, progress: "", done: 0, total: 0, log: [], error: null,
+};
+
+/**
+ * Laufstatus aus der Statusdatei. Laeufe sind eigene Prozesse (aus der App oder der
+ * Kommandozeile gestartet) — sie ueberleben das Neuladen und Neustarten des Dev-Servers.
+ */
+function runStatus(): RunStatus {
+  const s = readStatus() ?? IDLE;
+  if (s.running && !pidAlive(s.pid))
+    return { ...s, running: false, error: s.error ?? `Lauf-Prozess unerwartet beendet — Stand: ${s.progress || "Start"}. Startfehler ggf. in ${RUN_LOG_PATH}` };
+  return s;
+}
+
+/** Wer tutor24 gerade blockiert, ausser einem Nachfass-Lauf (der wird als Lauf angezeigt). */
+function blocker(status: RunStatus): string | null {
   if (tutor24JobState.running) return "Erst-Nachrichten-Automation";
   if (academigoJobState.running) return "Academigo-Automation";
   const lock = readTutor24Lock();
-  if (lock && !state.running) return `${lock.owner} (seit ${new Date(lock.startedAt).toLocaleTimeString("de-CH")})`;
+  if (lock && !(status.running && lock.pid === status.pid))
+    return `${lock.owner} (seit ${new Date(lock.startedAt).toLocaleTimeString("de-CH")})`;
   return null;
+}
+
+/** Startet scripts/followup_group_offer.mts als eigenen, abgekoppelten Prozess. */
+function startRun(mode: "preview" | "send" | "replies", max?: number): void {
+  const flag = mode === "send" ? "--send" : mode === "replies" ? "--replies" : `--max ${Math.floor(Number(max))}`;
+  mkdirSync(FOLLOWUP_DIR, { recursive: true });
+  // Faengt Startfehler von npx ab; die Lauf-Meldungen selbst stehen in status.json.
+  const out = openSync(RUN_LOG_PATH, "w");
+  // Shell fuer npx.cmd unter Windows; der Befehl besteht nur aus festen Teilen und einer geprueften Zahl.
+  const child = spawn(`npx tsx scripts/followup_group_offer.mts ${flag}`, {
+    cwd: process.cwd(),
+    detached: true,
+    windowsHide: true,
+    stdio: ["ignore", out, out],
+    shell: true,
+  });
+  child.unref();
+  closeSync(out);
+  // Bis der Prozess selbst schreibt: als laufend anzeigen (pid der Shell, lebt so lange wie der Lauf).
+  writeStatus({ ...IDLE, running: true, pid: child.pid ?? 0, mode, startedAt: new Date().toISOString(), progress: "Prozess startet …" });
 }
 
 /** GET — Laufstatus, Sperre, Faecher, Kurse, Vorschau, Protokoll, Sende-Kontingent */
@@ -37,9 +78,10 @@ export async function GET() {
   const settings = loadSettings();
   const courses = loadCourses();
   const { pending, queue, budget } = sendQueue(courses, settings);
+  const status = runStatus();
   return NextResponse.json({
-    state: { ...state, log: state.log.slice(-40) },
-    blockedBy: blocker(),
+    state: { ...status, log: status.log.slice(-40) },
+    blockedBy: blocker(status),
     settings,
     courses,
     // Ohne Nachrichtentext: den rendert der Tab live aus den Kursen.
@@ -71,7 +113,8 @@ export async function POST(req: NextRequest) {
 
   const body = (await req.json().catch(() => ({}))) as PostBody;
   // Waehrend eines Laufs schreibt dieser CSV und Protokoll — keine parallelen Aenderungen.
-  if (state.running) return NextResponse.json({ error: "Ein Nachfass-Lauf ist aktiv." }, { status: 409 });
+  const status = runStatus();
+  if (status.running) return NextResponse.json({ error: "Ein Nachfass-Lauf ist aktiv." }, { status: 409 });
 
   try {
     if (body.action === "config") {
@@ -87,7 +130,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
     if (body.action === "preview" || body.action === "send" || body.action === "replies") {
-      const blocked = blocker();
+      const blocked = blocker(status);
       if (blocked) return NextResponse.json({ error: `tutor24 ist belegt: ${blocked}` }, { status: 409 });
       const max = body.action === "preview" ? Math.floor(Number(body.max ?? 150)) : undefined;
       if (max !== undefined && !(max >= 1)) throw new Error("max. Konversationen muss ≥ 1 sein.");
@@ -95,10 +138,7 @@ export async function POST(req: NextRequest) {
         throw new Error("Nichts zu senden: keine Zeile mit aktivem passendem Kurs und status=send, oder Tageslimit erreicht.");
       if (body.action === "replies" && readLog().length === 0) throw new Error("Noch nichts nachgefasst — das Protokoll ist leer.");
 
-      // Fire-and-forget wie die Erst-Nachrichten-Automation — Status landet in followupJobState.
-      runFollowup({ mode: body.action, maxChecks: max }).catch((err) => {
-        console.error("[tutor24-followup]", err instanceof Error ? err.message : err);
-      });
+      startRun(body.action, max);
       return NextResponse.json({ started: true });
     }
     return NextResponse.json({ error: "Unbekannte Aktion." }, { status: 400 });
@@ -111,6 +151,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  state.shouldStop = true;
+  // Der Lauf ist ein anderer Prozess: er prueft die Stopp-Datei bei jedem Schritt.
+  if (runStatus().running) requestStop();
   return NextResponse.json({ stopping: true });
 }

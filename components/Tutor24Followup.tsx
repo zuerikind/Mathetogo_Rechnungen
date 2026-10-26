@@ -342,6 +342,7 @@ export function Tutor24Followup() {
     return { ...acc, [g]: (acc[g] ?? 0) + 1 };
   }, {});
   const answers = status.log.filter((r) => r.geantwortet === "ja");
+  const notAnalysed = status.rows.filter((r) => r.fach && !r.faecher).length;
   const courseName = (id: string) => status.courses.find((c) => c.id === id)?.name ?? id;
   const lastLine = state.log.at(-1) ?? "";
   const runningLabel = { preview: "Probelauf läuft", send: "Senden läuft", replies: "Antworten werden geprüft" };
@@ -427,7 +428,8 @@ export function Tutor24Followup() {
         <h2 className="mb-1 font-semibold text-gray-900">Probelauf</h2>
         <p className="mb-3 text-sm text-gray-500">
           Liest die Konversationen und analysiert jedes Inserat: Stufe, Fächer, Klasse, Ort, Zeitwunsch, Anlass. Sendet nichts. Ein neuer
-          Lauf setzt dort fort, wo der letzte aufgehört hat. Pro Konversation etwa 25 Sekunden.
+          Lauf setzt dort fort, wo der letzte aufgehört hat. Pro Konversation etwa 25 Sekunden. Jeder Lauf ist ein eigener Prozess:
+          Neuladen oder Neustarten der App unterbricht ihn nicht.
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-sm text-gray-600">
@@ -518,6 +520,11 @@ export function Tutor24Followup() {
               </tbody>
             </table>
           </div>
+        )}
+        {notAnalysed > 0 && (
+          <p className="mt-3 text-xs text-amber-700">
+            {notAnalysed} Konversationen noch nicht analysiert (aus der Zeit vor der Nachfrage-Analyse) — der nächste Probelauf holt sie nach.
+          </p>
         )}
         <p className="mt-3 text-xs text-gray-500">Faustregel: Für 3 Anmeldungen braucht ein Kurs etwa 25–30 angeschriebene Kandidaten.</p>
       </div>

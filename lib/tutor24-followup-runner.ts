@@ -34,6 +34,7 @@ import {
   PREVIEW_PATH,
   LOG_PATH,
   appendLog,
+  clearStop,
   loadCourses,
   loadSettings,
   loggedIds,
@@ -41,10 +42,12 @@ import {
   readPreview,
   sendQueue,
   sentToday,
+  stopRequested,
   updateLog,
   writePreview,
+  writeStatus,
 } from "./tutor24-followup-store";
-import { acquireTutor24Lock } from "./tutor24-lock";
+import { acquireTutor24Lock, readTutor24Lock } from "./tutor24-lock";
 import { TUTOR24_BASE_URL, acceptTutor24Cookies, gotoTutor24, loginToTutor24, sleep } from "./tutor24-messaging";
 
 /** Abbruch ohne Umgehungsversuch: Captcha, Login-Problem, Fehlerseite, unerwarteter Aufbau, Stopp. */
@@ -62,8 +65,19 @@ async function visit(page: Page, url: string): Promise<void> {
   await sleep(jitter(8_000, 15_000));
 }
 
+/** Status fuer den Tab in die Datei: der Lauf ist ein eigener Prozess, nicht Teil des Dev-Servers. */
+const persist = () =>
+  writeStatus({
+    ...state,
+    pid: process.pid,
+    startedAt: state.startedAt?.toISOString() ?? null,
+    finishedAt: state.finishedAt?.toISOString() ?? null,
+    log: state.log.slice(-200),
+  });
+
 function checkStop() {
-  if (state.shouldStop) throw new StopRun("Vom Benutzer gestoppt.");
+  persist();
+  if (state.shouldStop || stopRequested()) throw new StopRun("Vom Benutzer gestoppt.");
 }
 
 async function assertPageOk(page: Page, what: string): Promise<void> {
@@ -449,15 +463,20 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
   } catch (err) {
     // Sichtbar machen, auch wenn der Lauf gar nicht erst beginnt.
     Object.assign(state, { mode: opts.mode, error: err instanceof Error ? err.message : String(err), finishedAt: new Date(), log: [] });
+    // Den Status eines anderen, laufenden Laufs nicht ueberschreiben.
+    if (!readTutor24Lock()) persist();
     throw err;
   }
+  clearStop();
   Object.assign(state, {
     running: true, shouldStop: false, mode: opts.mode, startedAt: new Date(), finishedAt: null,
     progress: "Anmelden …", done: 0, total: 0, log: [], error: null,
   });
+  persist();
   const log: Log = (line) => {
     state.log.push(line);
     if (state.log.length > 500) state.log.splice(0, state.log.length - 500);
+    persist();
     opts.onLog?.(line);
   };
 
@@ -487,7 +506,9 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
   } finally {
     await browser?.close().catch(() => {});
     releaseLock();
+    clearStop();
     state.running = false;
     state.finishedAt = new Date();
+    persist();
   }
 }

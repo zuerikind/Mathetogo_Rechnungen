@@ -9,7 +9,7 @@ import { join } from "node:path";
  */
 export const TUTOR24_LOCK_PATH = join(process.cwd(), ".tutor24.lock");
 
-function pidAlive(pid: number): boolean {
+export function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
