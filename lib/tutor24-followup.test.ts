@@ -1,19 +1,32 @@
 import { describe, expect, it } from "vitest";
 import {
+  analyzeListing,
+  assignCourse,
   classifyListing,
   containsForbiddenContact,
-  defaultSettings,
+  courseStats,
+  demandOverview,
   detectAnrede,
+  effectiveStatus,
+  extractAnlass,
+  extractGrade,
+  extractOrt,
+  extractSubjects,
+  extractZeitwunsch,
+  findReply,
   formatSaturdays,
   mergeSettings,
-  OFFER_LEVELS,
+  newCourse,
   parseCsv,
   parseTutor24Date,
   renderMessage,
   toCsv,
   toDuForm,
-  validateSettings,
+  validateCourses,
+  type Course,
   type ListingInfo,
+  type LogRow,
+  type PreviewRow,
 } from "./tutor24-followup";
 
 const listing = (p: Partial<ListingInfo>): ListingInfo => ({
@@ -42,6 +55,11 @@ describe("classifyListing", () => {
       "gymivorbereitung",
     ],
     [
+      "Sek mit Kantonsschule als Ziel",
+      { schulstufe: "Sekundarstufe", description: "Er möchte sein Englisch verbessern und später die Kantonsschule besuchen können." },
+      "gymivorbereitung",
+    ],
+    [
       "Probezeit am Gymi",
       { schulstufe: "Gymnasium", description: "Meine Tochter ist neu im Langzeitgymnasium und in der Probezeit. Mathe fällt ihr schwer." },
       "gymi",
@@ -53,7 +71,7 @@ describe("classifyListing", () => {
     ],
     [
       "Berufsmatura in der Lehre",
-      { schulstufe: "Berufsschule", description: "Ich mache eine Lehre als Informatiker mit BM und brauche Hilfe für die BMS-Mathe." },
+      { schulstufe: "Berufslehre", description: "Ich bin gerade im 1. Lehrjahr mit der BMS und brauche Unterstützung im Fach Mathematik." },
       "bm",
     ],
     [
@@ -63,7 +81,7 @@ describe("classifyListing", () => {
     ],
     [
       "Sek ohne Gymi-Ziel",
-      { schulstufe: "Sekundarstufe", description: "Unser Kind in Zürich könnte ein bisschen Nachhilfe gut gebrauchen. Es geht um Mathematik auf Sekundarstufe." },
+      { schulstufe: "Sekundarstufe", description: "Unser Kind besucht die 7. Klasse (Sek A) und braucht Unterstützung in Mathematik." },
       "sek",
     ],
     [
@@ -71,17 +89,10 @@ describe("classifyListing", () => {
       { schulstufe: "Primarschule", description: "Nachhilfe für zwei 11-jährige Zwillingsjungen gesucht! Schulstufe: 4. Klasse Primarschule" },
       "ausgeschlossen",
     ],
-    [
-      "Universität",
-      { schulstufe: "Universität", description: "Ich brauche Hilfe in Analysis I nach meiner Matura." },
-      "ausgeschlossen",
-    ],
-    [
-      "Erwachsenenbildung",
-      { schulstufe: "Erwachsenenbildung", description: "Ich möchte meine Mathe-Kenntnisse auffrischen." },
-      "ausgeschlossen",
-    ],
-    ["Kein Mathe", { fach: "Physik", schulstufe: "Gymnasium" }, "ausgeschlossen"],
+    ["Universität", { schulstufe: "Universität", description: "Ich brauche Hilfe in Analysis I nach meiner Matura." }, "ausgeschlossen"],
+    ["Erwachsenenbildung", { schulstufe: "Erwachsenenbildung", description: "Ich möchte meine Mathe-Kenntnisse auffrischen." }, "ausgeschlossen"],
+    // Das Fach entscheidet nicht mehr die Stufe — das prueft die Kurszuordnung.
+    ["Physik am Gymi", { fach: "Physik", schulstufe: "Gymnasium" }, "gymi"],
     ["Nichts erkennbar", { schulstufe: "", description: "Suche Nachhilfe, gerne online." }, "unklar"],
   ];
   for (const [name, p, expected] of cases) {
@@ -96,6 +107,118 @@ describe("classifyListing", () => {
     const c = classifyListing(listing({ description: "Mein Sohn schreibt im März die ZAP, er braucht Mathe." }));
     expect(c.begruendung).toContain("ZAP");
   });
+});
+
+describe("extractSubjects", () => {
+  // Fach-Felder wie sie in echten Inseraten stehen, inkl. Tippfehler und Englisch/Franzoesisch.
+  const cases: Array<[string, string[]]> = [
+    ["Mathematik", ["Mathe"]],
+    ["Mathemaik, Physik und Chemie", ["Mathe", "Physik", "Chemie"]],
+    ["Deutsch, Mathematik", ["Deutsch", "Mathe"]],
+    ["Math et allemand", ["Mathe", "Deutsch"]],
+    ["Mathematics and German", ["Mathe", "Deutsch"]],
+    ["Englisch, Mathe und Französisch", ["Englisch", "Mathe", "Französisch"]],
+    ["Hausaufgaben allg. Deutsch Math Französisch NMG", ["Deutsch", "Mathe", "Französisch"]],
+    ["Klavier", ["Klavier"]],
+  ];
+  for (const [fach, expected] of cases)
+    it(fach, () => expect(extractSubjects(listing({ fach, title: "Nachhilfe", description: "" }))).toEqual(expected));
+
+  it("Unterrichtssprache ist kein Fach, Freitext ergaenzt", () => {
+    expect(
+      extractSubjects(listing({ fach: "Physik", title: "Nachhilfe", description: "Unterricht gerne auf Deutsch, eventuell auch Chemie." }))
+    ).toEqual(["Physik", "Chemie"]);
+  });
+});
+
+describe("extractGrade", () => {
+  const g = (schulstufe: string, description: string) => extractGrade(listing({ schulstufe, description }));
+  it("Sek: Sek 2 → Klasse 8", () => {
+    expect(g("Sekundarstufe", "Mein Sohn ist in der 2. Sek.").klasse).toBe(8);
+    expect(g("Sekundarstufe", "Sek 3, Niveau A").klasse).toBe(9);
+    expect(g("Sekundarstufe", "Unser Kind besucht die 7. Klasse (Sek A).").klasse).toBe(7);
+  });
+  it("Gymi-Jahr inkl. Kurzgymi, Ordnungswoerter und Englisch", () => {
+    expect(g("Gymnasium", "Meine Tochter ist im 2. Gymi.").gymiJahr).toBe(2);
+    expect(g("Gymnasium", "Schülerin im zweiten Jahr des Kurzzeitgymnasiums").gymiJahr).toBe(4);
+    expect(g("Gymnasium", "Tutor needed in maths for Y3 Gymi student").gymiJahr).toBe(3);
+    expect(g("Gymnasium", "Er ist in der 9. Klasse am Gymnasium.")).toEqual({ klasse: 9, gymiJahr: 3, kurz: null });
+    expect(g("Gymnasium", "Ich besuche das Gymnasium und bin im letzten Jahr.").gymiJahr).toBe(6);
+  });
+  it("Gymi-Pruefung ist kein Gymi-Jahr", () => {
+    expect(g("Primarschule", "Sie ist in der 6. Klasse Gymiprüfung im März").gymiJahr).toBeNull();
+    expect(g("Primarschule", "Sie ist in der 6. Klasse und macht die ZAP.").klasse).toBe(6);
+  });
+  it("nichts genannt", () => {
+    expect(g("Gymnasium", "Unser Kind besucht das Gymnasium.")).toEqual({ klasse: null, gymiJahr: null, kurz: null });
+  });
+});
+
+describe("analyzeListing: Kursgruppe und Sicherheit", () => {
+  const a = (schulstufe: string, description: string) => analyzeListing(listing({ schulstufe, description }));
+  it.each([
+    ["Sekundarstufe", "Mein Sohn ist in der 2. Sek und hat Mühe in Mathe.", "sek2", "hoch"],
+    ["Primarschule", "Unsere Tochter (6. Klasse) bereitet sich auf die Aufnahmeprüfung ans Gymi vor.", "zap_lang", "hoch"],
+    ["Sekundarstufe", "Vorbereitung auf die Kurzgymiprüfung.", "zap_kurz", "hoch"],
+    ["Sekundarstufe", "Er möchte ins Gymnasium.", "zap_kurz", "mittel"],
+    ["Gymnasium", "Meine Tochter ist neu im Langzeitgymnasium und in der Probezeit.", "gymi_unter", "mittel"],
+    ["Gymnasium", "Mein Sohn ist im 1. Gymi und in der Probezeit.", "gymi_unter", "hoch"],
+    ["Gymnasium", "Schülerin im zweiten Jahr des Kurzzeitgymnasiums", "gymi_mittel", "hoch"],
+    ["Gymnasium", "Ich schreibe im Juni die Matura.", "matura", "hoch"],
+    ["Berufslehre", "Lehre mit BM, Mathe ist schwierig.", "bm", "hoch"],
+    ["Gymnasium", "Unser Kind besucht das Gymnasium.", "", "tief"],
+    ["Sekundarstufe", "Nachhilfe für Sekundarstufe.", "", "tief"],
+  ])("%s / %s → %s", (schulstufe, description, gruppe, sicherheit) => {
+    const r = a(schulstufe, description);
+    expect(r.kursgruppe).toBe(gruppe);
+    expect(r.sicherheit).toBe(sicherheit);
+  });
+
+  it("schreibt nur kurze Werte, nie den ganzen Inseratstext", () => {
+    const long = "Unsere Tochter ist im 2. Gymi in Meilen. ".repeat(20);
+    const r = analyzeListing(listing({ schulstufe: "Gymnasium", description: long }));
+    for (const v of Object.values(r)) expect(String(v).length).toBeLessThan(200);
+  });
+});
+
+describe("extractOrt", () => {
+  const o = (description: string, ort?: string) => extractOrt(listing({ description, ort }));
+  it("Modus", () => {
+    expect(o("Der Unterricht soll online über Zoom stattfinden.").ort).toBe("online");
+    expect(o("Der Unterricht findet bei uns zuhause statt.").ort).toBe("vor Ort");
+    expect(o("Gerne online oder vor Ort, beides möglich.").ort).toBe("beides");
+    expect(o("Mathe für die 2. Sek.").ort).toBe("unbekannt");
+  });
+  it("Ortsname aus Feld, PLZ oder Staedteliste", () => {
+    expect(o("", "8050 Zürich").ortsname).toBe("8050 Zürich");
+    expect(o("Wir wohnen in 8706 Meilen am See.").ortsname).toBe("Meilen");
+    expect(o("Er besucht die 5. Klasse in Dübendorf.").ortsname).toBe("Dübendorf");
+    expect(o("Keine Angabe.").ortsname).toBe("");
+  });
+});
+
+describe("extractZeitwunsch", () => {
+  it("Wochentage, Tageszeiten, ab-Uhrzeit", () => {
+    expect(extractZeitwunsch(listing({ description: "Am liebsten mittwochs oder am Samstagvormittag." }))).toEqual(["Mittwoch", "Vormittag"]);
+    expect(extractZeitwunsch(listing({ description: "Dienstag und Donnerstag ab 17 Uhr, nach der Schule." }))).toEqual([
+      "Dienstag", "Donnerstag", "nach der Schule", "ab 17 Uhr",
+    ]);
+    expect(extractZeitwunsch(listing({ description: "Gerne am Wochenende." }))).toEqual(["Wochenende"]);
+    expect(extractZeitwunsch(listing({ description: "Die Zeiten sind flexibel." }))).toEqual([]);
+  });
+});
+
+describe("extractAnlass", () => {
+  const an = (description: string) => extractAnlass(listing({ description }));
+  it.each([
+    ["Sie möchte im März die ZAP schreiben.", "Aufnahmeprüfung"],
+    ["Er ist neu am Gymi und in der Probezeit.", "Probezeit"],
+    ["Ich schreibe im Juni die Matura in Mathematik.", "Abschlussprüfung"],
+    ["Nächste Woche hat sie eine Prüfung über Brüche.", "Prüfung"],
+    ["Die Promotion ist gefährdet.", "Noten verbessern"],
+    ["Er hat Lücken bei den Grundlagen.", "Lücken allgemein"],
+    ["Wir suchen eine Lehrperson.", "unbekannt"],
+  ])("%s → %s", (d, expected) => expect(an(d)).toBe(expected));
 });
 
 describe("parseTutor24Date", () => {
@@ -115,82 +238,159 @@ describe("detectAnrede", () => {
   });
 });
 
-describe("renderMessage", () => {
-  const s = defaultSettings();
+const NOW = new Date(2026, 9, 26);
+const course = (p: Partial<Course> = {}): Course => ({ ...newCourse("Mathe", "gymi_unter", NOW), id: "k1", ...p });
+const settings = mergeSettings(null);
 
-  it("fuellt Platzhalter aus den Einstellungen", () => {
-    const r = renderMessage(s.gymi, "Michael", "Sie");
-    expect(r.text.startsWith("Hallo Michael\n\nIch hatte mich vor einiger Zeit auf Ihre Anfrage")).toBe(true);
-    expect(r.text).toContain("an 4 Samstagen (28.11., 5.12., 12.12. und 19.12.), jeweils 9:30–11:10 Uhr, online.");
+describe("Kurse und Nachricht", () => {
+  it("neuer Kurs: Namensvorschlag, inaktiv, 4 Samstage, Anmeldeschluss davor, gueltig", () => {
+    const c = newCourse("Mathe", "sek2", NOW);
+    expect(c.name).toBe("Mathe-Repetitionskurs 2. Sek");
+    expect(newCourse("Physik", "matura", NOW).name).toBe("Physik-Vorbereitungskurs Matura");
+    expect(c.active).toBe(false);
+    expect(c.saturdays.every((d) => new Date(d).getDay() === 6)).toBe(true);
+    expect(c.saturdays[0] > "2026-11-15").toBe(true);
+    expect(c.deadline < c.saturdays[0]).toBe(true);
+    expect(c.minParticipants).toBe(3);
+    expect(validateCourses([c])).toEqual([]);
+  });
+
+  it("fuellt alle Platzhalter", () => {
+    const c = course({ name: "Mathe-Repetitionskurs 2. Gymi", saturdays: ["2026-11-28", "2026-12-05", "2026-12-12", "2026-12-19"] });
+    const r = renderMessage(c, "Michael", "Sie");
+    expect(r.text.startsWith("Hallo Michael\n\nIch hatte mich vor einiger Zeit auf Ihre Anfrage für Mathe-Nachhilfe gemeldet.")).toBe(true);
+    expect(r.text).toContain("Ich starte einen Mathe-Repetitionskurs 2. Gymi in einer kleinen Gruppe (maximal 6 Teilnehmende), an 4 Samstagen (28.11., 5.12., 12.12. und 19.12.), jeweils 9:30–11:10 Uhr, online.");
     expect(r.text).toContain("CHF 45 pro Lektion statt CHF 89");
+    expect(r.text).toContain("Der Kurs findet ab 3 Anmeldungen statt");
     expect(r.text.endsWith("Liebe Grüsse\nOmid")).toBe(true);
+    const t = renderMessage(course({ template: "{fach} {total} {anmeldeschluss} {ort}", deadline: "2026-11-21", mode: "vor Ort", place: "Zürich" }), "", "Sie").text;
+    expect(t).toBe("Mathe 360 21.11. vor Ort (Zürich)");
   });
 
-  it("Text- und Datumsaenderungen wirken sofort", () => {
-    const changed = { ...s.matura, pricePerLesson: 50, saturdays: ["2027-01-09", "2027-01-16", "2027-01-23", "2027-01-30"] as [string, string, string, string] };
-    const r = renderMessage(changed, "Lea", "Sie");
-    expect(r.text).toContain("(9.1., 16.1., 23.1. und 30.1.)");
-    expect(r.text).toContain("CHF 50 pro Lektion");
-    expect(renderMessage({ ...s.sek, template: "Hallo {vorname}, total CHF {total}" }, "Lea", "Sie").text).toBe("Hallo Lea, total CHF 360");
+  it("du-Form fuer den Standardtext, Fallback bei eigenem Text", () => {
+    const r = renderMessage(course(), "Lea", "du");
+    expect(r.anrede).toBe("du");
+    expect(r.text).not.toMatch(/\b(Sie|Ihr|Ihre)\b/);
+    expect(r.text).toContain("deine Anfrage");
+    expect(r.text).toContain("Du lernst");
+    expect(toDuForm("Haben Sie Zeit?").ok).toBe(false);
+    expect(renderMessage(course({ template: "Hallo {vorname}, haben Sie Zeit?" }), "Lea", "du").warning).toBeTruthy();
   });
 
-  it("Stufen-Texte: Matura ohne BM, BM mit Kuerzel, Gymi-Vorbereitung mit Pruefungsaufgaben", () => {
-    expect(renderMessage(s.matura, "", "Sie").text).toContain("Vorbereitung auf die Matura. Maximal");
-    expect(renderMessage(s.bm, "", "Sie").text).toContain("Vorbereitung auf die Berufsmatura (BM).");
-    expect(renderMessage(s.gymivorbereitung, "", "Sie").text).toContain("typische Prüfungsaufgaben");
-  });
-
-  it("ohne Vorname nur Hallo", () => {
-    expect(renderMessage(s.sek, "", "Sie").text.startsWith("Hallo\n\n")).toBe(true);
-  });
-
-  it("leitet die du-Form fuer alle Standardtexte ab", () => {
-    for (const l of OFFER_LEVELS) {
-      const r = renderMessage(s[l], "Lea", "du");
-      expect(r.anrede).toBe("du");
-      expect(r.text).not.toMatch(/\b(Sie|Ihr|Ihre)\b/);
-      expect(r.text).toContain("deine Anfrage");
+  it("Standardtext ohne Kontaktangaben und ohne ß", () => {
+    for (const a of ["Sie", "du"] as const) {
+      const t = renderMessage(course(), "Lea", a).text;
+      expect(containsForbiddenContact(t)).toBe(false);
+      expect(t).not.toContain("ß");
     }
   });
 
-  it("faellt bei eigenem Text ohne Ableitung auf Sie zurueck", () => {
-    expect(toDuForm("Haben Sie Zeit?").ok).toBe(false);
-    const r = renderMessage({ ...s.sek, template: "Hallo {vorname}, haben Sie Zeit?" }, "Lea", "du");
-    expect(r.anrede).toBe("Sie");
-    expect(r.warning).toBeTruthy();
+  it("lehnt Links, Telefonnummern, unbekannte Platzhalter und fehlende Daten ab", () => {
+    expect(validateCourses([course({ template: "Hallo\nwww.mathetogo.xyz" })])).toHaveLength(1);
+    expect(validateCourses([course({ template: "Hallo\n079 123 45 67" })])).toHaveLength(1);
+    expect(validateCourses([course({ template: "Hallo {name}" })])).toHaveLength(1);
+    expect(validateCourses([course({ deadline: "" })])).toHaveLength(1);
+    expect(validateCourses([course(), course()])).toHaveLength(1);
   });
 
-  it("Standardtexte enthalten nie Kontaktangaben und kein ß", () => {
-    for (const l of OFFER_LEVELS)
-      for (const a of ["Sie", "du"] as const) {
-        const t = renderMessage(s[l], "Lea", a).text;
-        expect(containsForbiddenContact(t)).toBe(false);
-        expect(t).not.toContain("ß");
-      }
+  it("formatSaturdays", () => {
+    expect(formatSaturdays(["2026-11-28", "2026-12-05"])).toBe("28.11. und 5.12.");
+  });
+});
+
+const row = (p: Partial<PreviewRow>): PreviewRow => ({
+  status: "send", conversation_id: "1", link: "", name: "Lea", kategorie: "gymi", begruendung: "", stufe: "", fach: "",
+  faecher: "Mathe", klasse: "", gymi_jahr: "", kursgruppe: "gymi_unter", sicherheit: "hoch", ort: "unbekannt", ortsname: "",
+  zeitwunsch: "", anlass: "unbekannt", letzte_nachricht: "", anrede: "Sie", grund: "", kurs: "", nachricht: "",
+  ...p,
+});
+
+describe("Zuordnung und effektiver Status", () => {
+  const mathe = course({ id: "m", active: true });
+  const physik = course({ id: "p", fach: "Physik", active: true });
+
+  it("zuerst genanntes Fach gewinnt, sonst das naechste mit Kurs", () => {
+    expect(assignCourse(row({ faecher: "Physik, Mathe" }), [mathe, physik], settings)?.id).toBe("p");
+    expect(assignCourse(row({ faecher: "Mathe, Physik" }), [mathe, physik], settings)?.id).toBe("m");
+    expect(assignCourse(row({ faecher: "Deutsch, Physik" }), [mathe, physik], settings)?.id).toBe("p");
+    expect(assignCourse(row({ faecher: "Physik, Mathe" }), [mathe], settings)?.id).toBe("m");
+  });
+
+  it("nur aktive Kurse, nur meine Faecher, passende Kursgruppe", () => {
+    expect(assignCourse(row({}), [{ ...mathe, active: false }], settings)).toBeNull();
+    expect(assignCourse(row({ kursgruppe: "sek2" }), [mathe], settings)).toBeNull();
+    expect(assignCourse(row({}), [mathe], { ...settings, mySubjects: ["Physik"] })).toBeNull();
+  });
+
+  it("Status-Labels", () => {
+    const eff = (p: Partial<PreviewRow>, courses = [mathe], logged = new Set<string>()) => effectiveStatus(row(p), courses, settings, logged).label;
+    expect(eff({})).toBe("wird gesendet");
+    expect(eff({ status: "skip" })).toBe("skip");
+    expect(eff({}, [])).toBe("kein Kurs");
+    expect(eff({ faecher: "Deutsch" })).toBe("ausgeschlossen: Fach");
+    expect(eff({ kursgruppe: "" })).toBe("keine Kursgruppe");
+    expect(eff({ kategorie: "unklar", status: "skip", grund: "" })).toBe("ausgeschlossen: Stufe (unklar)");
+    expect(eff({ grund: "abgelehnt" })).toBe("abgelehnt");
+    expect(eff({}, [mathe], new Set(["1"]))).toBe("bereits nachgefasst");
+  });
+});
+
+describe("demandOverview", () => {
+  const rows = [
+    ...Array.from({ length: 21 }, (_, i) => row({ conversation_id: `a${i}`, ort: i % 2 ? "online" : "vor Ort", anlass: "Probezeit", zeitwunsch: "Mittwoch" })),
+    row({ conversation_id: "b1", faecher: "Mathe, Physik", kursgruppe: "matura", sicherheit: "mittel", ort: "beides", zeitwunsch: "Samstag, Vormittag" }),
+    row({ conversation_id: "x1", faecher: "Deutsch" }),
+    row({ conversation_id: "x2", grund: "abgelehnt" }),
+    row({ conversation_id: "x3", status: "skip" }),
+  ];
+  const d = demandOverview(rows, settings);
+
+  it("gruppiert nach Fach × Kursgruppe, sortiert nach Anzahl", () => {
+    expect(d.map((x) => `${x.fach}|${x.gruppe}|${x.count}`)).toEqual(["Mathe|gymi_unter|21", "Mathe|matura|1", "Physik|matura|1"]);
+  });
+  it("online, Anlass, Zeit, Empfehlung ab N mit Sicherheit hoch", () => {
+    expect(d[0]).toMatchObject({ online: 10, hoch: 21, anlass: "Probezeit", zeit: "Mittwoch", recommended: true });
+    expect(d[1]).toMatchObject({ online: 1, hoch: 0, recommended: false, zeit: "Samstag, Vormittag" });
+    expect(demandOverview(rows, { ...settings, recommendMin: 22 })[0].recommended).toBe(false);
+  });
+});
+
+describe("Antworten", () => {
+  const sentAt = new Date(2026, 9, 20, 10, 0);
+  it("erste Antwort nach meinem Nachfassen, ohne Zeitstempel, max. 200 Zeichen", () => {
+    const r = findReply(
+      [
+        { kind: "mine", text: "Hallo, ich biete Nachhilfe an 1 Oct 26, 09:00" },
+        { kind: "mine", text: "Hallo Lea\nIch hatte mich vor einiger Zeit gemeldet 20 Oct 26, 10:00" },
+        { kind: "theirs", text: `Ja gerne! ${"x".repeat(300)} 21 Oct 26, 18:12` },
+      ],
+      sentAt
+    );
+    expect(r?.date).toEqual(new Date(2026, 9, 21, 18, 12));
+    expect(r?.text.startsWith("Ja gerne!")).toBe(true);
+    expect(r?.text.length).toBe(200);
+  });
+  it("keine Antwort, und alte Antworten vor dem Nachfassen zaehlen nicht", () => {
+    expect(findReply([{ kind: "mine", text: "Ich hatte mich vor einiger Zeit … 20 Oct 26, 10:00" }], sentAt)).toBeNull();
+    expect(findReply([{ kind: "theirs", text: "Danke 2 Oct 26, 10:00" }, { kind: "mine", text: "Eigener Text 20 Oct 26, 10:00" }], sentAt)).toBeNull();
+    expect(findReply([{ kind: "mine", text: "Eigener Text 20 Oct 26, 10:00" }, { kind: "theirs", text: "Ja 20 Oct 26, 11:00" }], sentAt)?.text).toBe("Ja");
+  });
+
+  it("Kurs-Uebersicht mit Ampel", () => {
+    const c = course({ id: "k", deadline: "2026-11-05", minParticipants: 3 });
+    const log = (markierung: string, geantwortet = "ja"): Partial<LogRow> => ({ kurs: "k", geantwortet, markierung });
+    const s = courseStats(c, [log("Zusage"), log("Absage"), log("", "nein"), log("", "nein"), { kurs: "anderer", markierung: "Zusage" }], NOW);
+    expect(s).toEqual({ angeschrieben: 4, geantwortet: 2, zusagen: 1, quote: 0.5, tageBisSchluss: 10, ampel: "gelb" });
+    expect(courseStats(c, [], NOW).ampel).toBe("rot");
+    expect(courseStats(c, [log("Zusage"), log("Zusage"), log("Zusage")], NOW).ampel).toBe("gruen");
   });
 });
 
 describe("Einstellungen", () => {
-  it("Standard: alle Stufen aus und gueltig", () => {
-    const s = defaultSettings();
-    expect(OFFER_LEVELS.every((l) => !s[l].enabled)).toBe(true);
-    expect(validateSettings(s)).toEqual([]);
-  });
-  it("lehnt Links, Telefonnummern und unbekannte Platzhalter ab", () => {
-    const s = defaultSettings();
-    s.gymi.template += "\nwww.mathetogo.xyz";
-    s.sek.template += "\n079 123 45 67";
-    s.bm.template += "\n{name}";
-    expect(validateSettings(s)).toHaveLength(3);
-  });
-  it("mergeSettings ergaenzt fehlende Felder", () => {
-    const m = mergeSettings({ gymi: { enabled: true, pricePerLesson: 40 } });
-    expect(m.gymi.enabled).toBe(true);
-    expect(m.gymi.lessons).toBe(8);
-    expect(m.matura.enabled).toBe(false);
-  });
-  it("formatSaturdays", () => {
-    expect(formatSaturdays(["2026-11-28", "2026-12-05"])).toBe("28.11. und 5.12.");
+  it("Standard: Mathe und Physik, N = 20; altes Format wird ersetzt", () => {
+    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20 });
+    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20 });
+    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5 });
   });
 });
 

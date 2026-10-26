@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { academigoJobState, followupJobState as state, tutor24JobState } from "@/lib/automation-state";
-import { LEVEL_LABEL, MAX_SENDS_PER_DAY } from "@/lib/tutor24-followup";
-import { readPreview, saveSettings, loadSettings, sendQueue, sentToday, setRowStatus } from "@/lib/tutor24-followup-store";
+import { MAX_SENDS_PER_DAY } from "@/lib/tutor24-followup";
+import {
+  loadCourses,
+  loadSettings,
+  readLog,
+  readPreview,
+  saveConfig,
+  sendQueue,
+  sentToday,
+  setMark,
+  setRowStatus,
+} from "@/lib/tutor24-followup-store";
 import { runFollowup } from "@/lib/tutor24-followup-runner";
 import { readTutor24Lock } from "@/lib/tutor24-lock";
 
@@ -19,26 +29,29 @@ function blocker(): string | null {
   return null;
 }
 
-/** GET — Laufstatus, Sperre, Einstellungen, Vorschau, Sende-Kontingent */
+/** GET — Laufstatus, Sperre, Faecher, Kurse, Vorschau, Protokoll, Sende-Kontingent */
 export async function GET() {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const settings = loadSettings();
-  const { pending, queue, budget } = sendQueue(settings);
+  const courses = loadCourses();
+  const { pending, queue, budget } = sendQueue(courses, settings);
   return NextResponse.json({
     state: { ...state, log: state.log.slice(-40) },
     blockedBy: blocker(),
     settings,
-    // Ohne Nachrichtentext: den rendert der Tab live aus den Einstellungen.
+    courses,
+    // Ohne Nachrichtentext: den rendert der Tab live aus den Kursen.
     rows: readPreview().map(({ nachricht: _omit, ...r }) => r),
+    log: readLog(),
     send: {
       limit: MAX_SENDS_PER_DAY,
       sentToday: sentToday(),
       budget,
       pending: pending.length,
       queue: queue.length,
-      levels: Array.from(new Set(queue.map((r) => LEVEL_LABEL[r.kategorie as keyof typeof LEVEL_LABEL]))),
+      recipients: queue.map((r) => ({ name: r.name, kurs: r.course.name })),
     },
   });
 }
@@ -46,34 +59,41 @@ export async function GET() {
 type PostBody =
   | { action: "preview"; max?: number }
   | { action: "send" }
-  | { action: "settings"; settings: unknown }
-  | { action: "status"; id: string; status: "send" | "skip" };
+  | { action: "replies" }
+  | { action: "config"; settings: unknown; courses: unknown }
+  | { action: "status"; id: string; status: "send" | "skip" }
+  | { action: "mark"; id: string; markierung: string };
 
-/** POST — Lauf starten, Einstellungen speichern oder eine Zeile umschalten */
+/** POST — Lauf starten, Faecher/Kurse speichern, Zeile umschalten oder Antwort markieren */
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = (await req.json().catch(() => ({}))) as PostBody;
-  // Waehrend eines Laufs schreibt dieser die CSV — keine parallelen Aenderungen.
+  // Waehrend eines Laufs schreibt dieser CSV und Protokoll — keine parallelen Aenderungen.
   if (state.running) return NextResponse.json({ error: "Ein Nachfass-Lauf ist aktiv." }, { status: 409 });
 
   try {
-    if (body.action === "settings") {
-      return NextResponse.json({ settings: saveSettings(body.settings) });
+    if (body.action === "config") {
+      return NextResponse.json(saveConfig({ settings: body.settings, courses: body.courses }));
     }
     if (body.action === "status") {
       if (body.status !== "send" && body.status !== "skip") throw new Error("Status muss send oder skip sein.");
       setRowStatus(String(body.id), body.status);
       return NextResponse.json({ ok: true });
     }
-    if (body.action === "preview" || body.action === "send") {
+    if (body.action === "mark") {
+      setMark(String(body.id), String(body.markierung));
+      return NextResponse.json({ ok: true });
+    }
+    if (body.action === "preview" || body.action === "send" || body.action === "replies") {
       const blocked = blocker();
       if (blocked) return NextResponse.json({ error: `tutor24 ist belegt: ${blocked}` }, { status: 409 });
       const max = body.action === "preview" ? Math.floor(Number(body.max ?? 150)) : undefined;
       if (max !== undefined && !(max >= 1)) throw new Error("max. Konversationen muss ≥ 1 sein.");
       if (body.action === "send" && sendQueue().queue.length === 0)
-        throw new Error("Nichts zu senden: keine Zeile mit status=send in einer angehakten Stufe, oder Tageslimit erreicht.");
+        throw new Error("Nichts zu senden: keine Zeile mit aktivem passendem Kurs und status=send, oder Tageslimit erreicht.");
+      if (body.action === "replies" && readLog().length === 0) throw new Error("Noch nichts nachgefasst — das Protokoll ist leer.");
 
       // Fire-and-forget wie die Erst-Nachrichten-Automation — Status landet in followupJobState.
       runFollowup({ mode: body.action, maxChecks: max }).catch((err) => {

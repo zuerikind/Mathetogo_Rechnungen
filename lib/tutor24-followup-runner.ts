@@ -2,9 +2,12 @@
  * Der eigentliche Nachfass-Lauf auf tutor24.ch. Aufgerufen von
  * scripts/followup_group_offer.mts (Kommandozeile) und /api/tutor24/followup (App).
  *
- * Probelauf: liest, klassifiziert ALLE Konversationen und schreibt die Vorschau-CSV
- * nach jeder Konversation; ein neuer Lauf setzt dort fort. Sendet nie.
- * Senden: nur status=send, Stufe angehakt, hoechstens 25 pro Tag, 60–180 s Pause.
+ * Probelauf: liest, analysiert ALLE Konversationen (Stufe, Faecher, Klasse, Ort,
+ * Zeitwunsch, Anlass) und schreibt die Vorschau-CSV nach jeder Konversation;
+ * ein neuer Lauf setzt dort fort. Sendet nie.
+ * Senden: nur effektiver Status "wird gesendet" (aktiver passender Kurs, status=send),
+ * hoechstens 25 pro Tag, 60–180 s Pause.
+ * Antworten pruefen: liest nur Konversationen aus dem Protokoll, sendet nie.
  *
  * Abbruch ohne Umgehungsversuch bei Captcha, 429/Fehlerseite, Login-Problem oder
  * unerwartetem Seitenaufbau. Mit der Erst-Nachrichten-Automation geteilt werden
@@ -15,12 +18,15 @@ import { followupJobState as state } from "./automation-state";
 import {
   MAX_AGE_DAYS,
   MIN_AGE_DAYS,
+  FOLLOWUP_MARKER,
   ageDays,
-  classifyListing,
+  analyzeListing,
   containsForbiddenContact,
-  detectAnrede,
+  findReply,
   isOfferLevel,
   parseTutor24Date,
+  renderMessage,
+  type Bubble,
   type ListingInfo,
   type PreviewRow,
 } from "./tutor24-followup";
@@ -28,12 +34,14 @@ import {
   PREVIEW_PATH,
   LOG_PATH,
   appendLog,
+  loadCourses,
   loadSettings,
   loggedIds,
-  messageFor,
+  readLog,
   readPreview,
   sendQueue,
   sentToday,
+  updateLog,
   writePreview,
 } from "./tutor24-followup-store";
 import { acquireTutor24Lock } from "./tutor24-lock";
@@ -123,6 +131,10 @@ type Conversation = {
   lastMineDate: Date | null;
   jobId: string | null;
   canWrite: boolean;
+  /** alle Blasen in Reihenfolge, fuer "Antworten pruefen" */
+  bubbles: Bubble[];
+  /** eine eigene Nachricht enthaelt schon unser Nachfassen */
+  followedUp: boolean;
 };
 
 async function readConversation(page: Page, id: string): Promise<Conversation> {
@@ -160,7 +172,7 @@ async function readConversation(page: Page, id: string): Promise<Conversation> {
 
   if (raw.entries.some((e) => e.kind === "unknown"))
     throw new StopRun(`Unerwarteter Seitenaufbau: Absender einer Nachricht in Konversation ${id} nicht erkennbar.`);
-  const bubbles = raw.entries.filter((e) => e.kind === "mine" || e.kind === "theirs");
+  const bubbles = raw.entries.filter((e): e is Bubble => e.kind === "mine" || e.kind === "theirs");
   if (bubbles.length === 0) throw new StopRun(`Unerwarteter Seitenaufbau: keine Nachrichten-Blasen in Konversation ${id}.`);
   const mineList = bubbles.filter((b) => b.kind === "mine");
   const lastMine = mineList[mineList.length - 1];
@@ -172,12 +184,15 @@ async function readConversation(page: Page, id: string): Promise<Conversation> {
     lastMineDate: lastMine ? parseTutor24Date(lastMine.text) : null,
     jobId: raw.jobLink?.match(/\/jobs\/(\d+)/)?.[1] ?? null,
     canWrite: raw.canWrite,
+    bubbles,
+    followedUp: mineList.some((b) => b.text.includes(FOLLOWUP_MARKER)),
   };
 }
 
 /** Grund, warum eine Konversation (jetzt) nicht angeschrieben wird; null = Regeln 1, 2, 5 erfuellt. */
 function conversationSkipReason(c: Conversation, now: Date): string | null {
   if (c.service.some((t) => /nicht an ihrer bewerbung interessiert/i.test(t))) return "abgelehnt";
+  if (c.followedUp) return "bereits_nachgefasst";
   if (c.service.length > 0) return `systemmeldung: ${c.service[0].replace(/\s+/g, " ").slice(0, 60)}`;
   if (c.theirs > 0) return "gegenseite_hat_geschrieben";
   if (!c.lastIsMine) return "letzte_nachricht_nicht_von_mir";
@@ -203,6 +218,8 @@ async function readJob(page: Page, jobId: string): Promise<ListingInfo & { activ
     fach: field("Fach"),
     schulstufe: field("Schulstufe"),
     description: desc.trim(),
+    // ponytail: Feldname auf tutor24 nicht geprueft; fehlt er, sucht extractOrt im Freitext.
+    ort: field("Ort") || field("Unterrichtsort"),
   };
 }
 
@@ -214,7 +231,8 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
   const logged = loggedIds();
   // Fortsetzen: was schon in der CSV steht, wird nicht nochmals geoeffnet.
   const rows = readPreview();
-  const done = new Set(rows.filter((r) => !RECHECK.has(r.grund)).map((r) => r.conversation_id));
+  // Zeilen aus der Zeit vor der Nachfrage-Analyse (Inserat gelesen, aber keine Faecher) nochmals oeffnen.
+  const done = new Set(rows.filter((r) => !RECHECK.has(r.grund) && !(r.fach && !r.faecher)).map((r) => r.conversation_id));
   if (rows.length) log(`Setze fort: ${done.size} Konversationen schon in der Vorschau.`);
   const save = () => writePreview(rows);
 
@@ -233,7 +251,8 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
     const row: PreviewRow = {
       status: "skip", conversation_id: item.id, link: convoUrl(item.id), name: item.name,
       kategorie: "", begruendung: "", stufe: "", fach: "",
-      letzte_nachricht: item.date ? fmtDate(item.date) : "", anrede: "", grund: "", nachricht: "",
+      faecher: "", klasse: "", gymi_jahr: "", kursgruppe: "", sicherheit: "", ort: "", ortsname: "", zeitwunsch: "", anlass: "",
+      letzte_nachricht: item.date ? fmtDate(item.date) : "", anrede: "", grund: "", kurs: "", nachricht: "",
     };
     const existing = rows.findIndex((r) => r.conversation_id === item.id);
     if (existing > -1) rows[existing] = row;
@@ -267,16 +286,14 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
     row.stufe = job.schulstufe;
     if (!job.active) { skip("inserat_nicht_aktiv"); log(`${tag}: inserat_nicht_aktiv`); continue; }
 
-    // Klassifiziert wird immer, unabhaengig von den Haken — die Stufen lassen sich spaeter ohne neuen Lauf umschalten.
-    const { category, begruendung } = classifyListing(job);
-    row.kategorie = category;
-    row.begruendung = begruendung;
-    row.anrede = detectAnrede(job.description);
-    if (!isOfferLevel(category)) { skip(`stufe_${category}`); log(`${tag}: ${category} (${begruendung})`); continue; }
-    // "unklar"/"ausgeschlossen" bleiben skip; alles andere ist bereit, gesendet wird nur bei angehakter Stufe.
+    // Analysiert wird immer, unabhaengig von Kursen und Faechern — beides laesst sich spaeter ohne neuen Lauf aendern.
+    const a = analyzeListing(job);
+    Object.assign(row, a);
+    if (!isOfferLevel(a.kategorie)) { skip(`stufe_${a.kategorie}`); log(`${tag}: ${a.kategorie} (${a.begruendung})`); continue; }
+    // "unklar"/"ausgeschlossen" bleiben skip; alles andere ist bereit, gesendet wird nur mit passendem aktivem Kurs.
     row.status = "send";
     save();
-    log(`${tag}: → ${category}, ${row.anrede} (${begruendung})`);
+    log(`${tag}: → ${a.kategorie}${a.kursgruppe ? `/${a.kursgruppe}` : ""}, ${a.faecher}, ${row.anrede} (${a.begruendung})`);
   }
   state.done = checked;
   save();
@@ -302,10 +319,9 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
 }
 
 async function send(page: Page, log: Log): Promise<void> {
-  const settings = loadSettings();
-  const { pending, queue } = sendQueue(settings);
+  const { pending, queue } = sendQueue(loadCourses(), loadSettings());
   log(
-    `Heute schon gesendet: ${sentToday()}/25. Jetzt: ${queue.length} von ${pending.length} offenen (nur angehakte Stufen).` +
+    `Heute schon gesendet: ${sentToday()}/25. Jetzt: ${queue.length} von ${pending.length} offenen (nur aktive Kurse).` +
       (pending.length > queue.length ? " Der Rest folgt an einem späteren Tag." : "")
   );
   state.total = queue.length;
@@ -316,8 +332,8 @@ async function send(page: Page, log: Log): Promise<void> {
     checkStop();
     state.done = sentCount;
     state.progress = `${row.name} (${row.conversation_id}), Nr. ${i + 1} von ${queue.length}, ${sentCount} gesendet`;
-    const rendered = messageFor(row, settings);
-    const text = rendered?.text.trim() ?? "";
+    const rendered = renderMessage(row.course, row.name, row.anrede === "du" ? "du" : "Sie");
+    const text = rendered.text.trim();
     if (!text.startsWith("Hallo") || containsForbiddenContact(text))
       throw new StopRun(`Nachricht für ${row.conversation_id} sieht nicht wie die Vorlage aus — abgebrochen.`);
 
@@ -356,8 +372,10 @@ async function send(page: Page, log: Log): Promise<void> {
     // Auch unbestaetigt protokollieren: lieber einmal zu wenig als doppelt nachfassen.
     appendLog({
       conversation_id: row.conversation_id,
+      name: row.name,
       zeitstempel: new Date().toISOString(),
-      variante: `${row.kategorie}/${rendered?.anrede ?? row.anrede}`,
+      kurs: row.course.id,
+      variante: `${row.course.name}/${rendered.anrede}`,
       status: confirmed ? "gesendet" : "unbestaetigt",
     });
     if (!confirmed) {
@@ -366,7 +384,7 @@ async function send(page: Page, log: Log): Promise<void> {
     }
     sentCount++;
     state.done = sentCount;
-    log(`[${i + 1}/${queue.length}] ✓ ${row.name} (${row.kategorie}, ${rendered?.anrede})`);
+    log(`[${i + 1}/${queue.length}] ✓ ${row.name} (${row.course.name}, ${rendered.anrede})`);
 
     if (i < queue.length - 1) {
       const wait = jitter(60_000, 180_000);
@@ -381,8 +399,34 @@ async function send(page: Page, log: Log): Promise<void> {
   log(`══ Fertig: ${sentCount} gesendet. Protokoll: ${LOG_PATH} ══`);
 }
 
+/** Nur lesend: kam nach meinem Nachfassen eine Antwort? Gewertet wird sie nicht — das markiere ich im Tab. */
+async function replies(page: Page, log: Log): Promise<void> {
+  const open = readLog().filter((r) => r.geantwortet !== "ja");
+  log(`${open.length} nachgefasste Konversationen ohne bekannte Antwort.`);
+  state.total = open.length;
+  let answered = 0;
+  for (let i = 0; i < open.length; i++) {
+    const r = open[i];
+    checkStop();
+    state.done = i;
+    state.progress = `${r.name || r.conversation_id} (${r.conversation_id}), Nr. ${i + 1} von ${open.length}`;
+    const convo = await readConversation(page, r.conversation_id);
+    const reply = findReply(convo.bubbles, new Date(r.zeitstempel));
+    updateLog(
+      r.conversation_id,
+      reply
+        ? { geantwortet: "ja", antwort_datum: reply.date ? fmtDate(reply.date) : "", antwort: reply.text, markierung: r.markierung || "offen" }
+        : { geantwortet: "nein" }
+    );
+    if (reply) answered++;
+    log(`[${i + 1}/${open.length}] ${r.name || r.conversation_id}: ${reply ? "Antwort" : "keine Antwort"}`);
+  }
+  state.done = open.length;
+  log(`══ Antworten geprüft: ${answered} neue Antworten — bitte im Tab markieren. Es wurde NICHTS gesendet. ══`);
+}
+
 export type FollowupRunOptions = {
-  mode: "preview" | "send";
+  mode: "preview" | "send" | "replies";
   /** Probelauf: hoechstens so viele Konversationen oeffnen */
   maxChecks?: number;
   headless?: boolean;
@@ -399,7 +443,9 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
   try {
     if (!email || !password) throw new Error("TUTOR24_EMAIL / TUTOR24_PASSWORD fehlen in .env.local");
     // Vor allem anderen: haelt die Erst-Nachrichten-Automation die Sperre, wirft das hier.
-    releaseLock = acquireTutor24Lock(opts.mode === "send" ? "Nachfassen (Senden)" : "Nachfassen (Probelauf)");
+    releaseLock = acquireTutor24Lock(
+      opts.mode === "send" ? "Nachfassen (Senden)" : opts.mode === "replies" ? "Nachfassen (Antworten prüfen)" : "Nachfassen (Probelauf)"
+    );
   } catch (err) {
     // Sichtbar machen, auch wenn der Lauf gar nicht erst beginnt.
     Object.assign(state, { mode: opts.mode, error: err instanceof Error ? err.message : String(err), finishedAt: new Date(), log: [] });
@@ -429,6 +475,7 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
     await assertPageOk(page, "nach dem Login");
     log("Angemeldet.");
     if (opts.mode === "send") await send(page, log);
+    else if (opts.mode === "replies") await replies(page, log);
     else await preview(page, opts.maxChecks ?? 150, log);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

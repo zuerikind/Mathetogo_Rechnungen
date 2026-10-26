@@ -7,10 +7,13 @@
  *   → tutor24-followup/followup_preview.csv. Klassifiziert ALLE Konversationen,
  *     speichert nach jeder; ein neuer Lauf setzt dort fort.
  *
- * Schritt 2 (nach Pruefung der CSV und Haken bei den Stufen im Tab):
+ * Schritt 2 (nach Pruefung der CSV und mit aktiven Kursen im Tab):
  *   npx tsx scripts/followup_group_offer.mts --send
- *   → nur status=send UND Stufe angehakt (tutor24-followup/settings.json),
+ *   → nur status=send MIT passendem aktivem Kurs (tutor24-followup/courses.json),
  *     hoechstens 25 pro Tag, 60–180 s Pause, Protokoll in followup_log.csv
+ *
+ * Antworten pruefen (nur lesend, nur Konversationen aus followup_log.csv):
+ *   npx tsx scripts/followup_group_offer.mts --replies
  *
  * Option --headed zeigt den Browser. Logik: lib/tutor24-followup-runner.ts.
  */
@@ -30,7 +33,7 @@ if (!Number.isInteger(maxChecks) || maxChecks < 1) {
 
 try {
   await runFollowup({
-    mode: SEND ? "send" : "preview",
+    mode: SEND ? "send" : process.argv.includes("--replies") ? "replies" : "preview",
     maxChecks,
     headless: !process.argv.includes("--headed"),
     onLog: (line) => console.log(line),

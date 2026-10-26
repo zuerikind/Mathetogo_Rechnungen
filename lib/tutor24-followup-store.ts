@@ -1,22 +1,25 @@
 /**
- * Dateiablage fuers Nachfassen: Einstellungen (JSON), Vorschau (CSV), Protokoll (CSV).
+ * Dateiablage fuers Nachfassen: Einstellungen und Kurse (JSON), Vorschau und Protokoll (CSV).
  * Alles unter tutor24-followup/ im Projektordner — dort, wo Kommandozeile und
  * App-Server gleichermassen hinschauen. Der Ordner ist gitignored (Namen).
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   LOG_COLS,
+  MARKS,
   MAX_SENDS_PER_DAY,
   PREVIEW_COLS,
-  isOfferLevel,
+  effectiveStatus,
   mergeSettings,
   parseCsv,
   renderMessage,
   toCsv,
-  validateSettings,
+  validateCourses,
   type Anrede,
+  type Course,
   type FollowupSettings,
+  type LogRow,
   type PreviewRow,
 } from "./tutor24-followup";
 
@@ -24,15 +27,12 @@ export const FOLLOWUP_DIR = join(process.cwd(), "tutor24-followup");
 export const PREVIEW_PATH = join(FOLLOWUP_DIR, "followup_preview.csv");
 export const LOG_PATH = join(FOLLOWUP_DIR, "followup_log.csv");
 export const SETTINGS_PATH = join(FOLLOWUP_DIR, "settings.json");
-
-function ensureDir() {
-  mkdirSync(FOLLOWUP_DIR, { recursive: true });
-}
+export const COURSES_PATH = join(FOLLOWUP_DIR, "courses.json");
 
 /** Excel sperrt geoeffnete Dateien — dann eine verstaendliche Meldung statt EBUSY. */
 function writeChecked(path: string, content: string): void {
   try {
-    ensureDir();
+    mkdirSync(FOLLOWUP_DIR, { recursive: true });
     writeFileSync(path, content);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "EBUSY")
@@ -41,35 +41,50 @@ function writeChecked(path: string, content: string): void {
   }
 }
 
+const readJson = (path: string): unknown => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null);
+
 export function loadSettings(): FollowupSettings {
-  if (!existsSync(SETTINGS_PATH)) return mergeSettings(null);
-  return mergeSettings(JSON.parse(readFileSync(SETTINGS_PATH, "utf8")));
+  return mergeSettings(readJson(SETTINGS_PATH) as Partial<FollowupSettings> | null);
 }
 
-/** Speichert nach Pruefung und frischt die Nachrichten in der Vorschau-CSV auf. */
-export function saveSettings(input: unknown): FollowupSettings {
-  const settings = mergeSettings(input as Parameters<typeof mergeSettings>[0]);
-  const errors = validateSettings(settings);
+export function loadCourses(): Course[] {
+  const raw = readJson(COURSES_PATH);
+  return Array.isArray(raw) ? (raw as Course[]) : [];
+}
+
+/** Speichert Faecher + Kurse nach Pruefung und frischt Kurs und Nachricht in der Vorschau-CSV auf. */
+export function saveConfig(input: { settings?: unknown; courses?: unknown }): { settings: FollowupSettings; courses: Course[] } {
+  const settings = mergeSettings(input.settings as Partial<FollowupSettings> | null);
+  const courses = Array.isArray(input.courses) ? (input.courses as Course[]) : [];
+  const errors = validateCourses(courses);
   if (errors.length) throw new Error(errors.join(" "));
   writeChecked(SETTINGS_PATH, JSON.stringify(settings, null, 2));
-  if (existsSync(PREVIEW_PATH)) writePreview(readPreview(), settings);
-  return settings;
+  writeChecked(COURSES_PATH, JSON.stringify(courses, null, 2));
+  if (existsSync(PREVIEW_PATH)) writePreview(readPreview(), courses, settings);
+  return { settings, courses };
 }
 
 export function readPreview(): PreviewRow[] {
   if (!existsSync(PREVIEW_PATH)) return [];
-  return parseCsv(readFileSync(PREVIEW_PATH, "utf8")) as PreviewRow[];
+  // Vorschau aus der Zeit vor der Nachfrage-Analyse: neue Spalten leer ergaenzen.
+  return parseCsv(readFileSync(PREVIEW_PATH, "utf8")).map(
+    (r) => Object.fromEntries(PREVIEW_COLS.map((c) => [c, r[c] ?? ""])) as PreviewRow
+  );
 }
 
-/** Text einer Zeile aus den AKTUELLEN Einstellungen; leer bei Stufen ohne Angebot. */
-export function messageFor(row: PreviewRow, settings: FollowupSettings) {
-  if (!isOfferLevel(row.kategorie)) return null;
-  return renderMessage(settings[row.kategorie], row.name, (row.anrede === "du" ? "du" : "Sie") as Anrede);
+/** Zugeordneter Kurs und Text einer Zeile aus den AKTUELLEN Kursen; null = wird nicht gesendet. */
+export function messageFor(row: PreviewRow, courses: Course[], settings: FollowupSettings, logged?: Set<string>) {
+  const eff = effectiveStatus(row, courses, settings, logged);
+  if (!eff.course) return null;
+  return { course: eff.course, send: eff.send, ...renderMessage(eff.course, row.name, (row.anrede === "du" ? "du" : "Sie") as Anrede) };
 }
 
-/** Schreibt die Vorschau; die Spalte "nachricht" folgt immer den aktuellen Einstellungen. */
-export function writePreview(rows: PreviewRow[], settings = loadSettings()): void {
-  const withText = rows.map((r) => ({ ...r, nachricht: messageFor(r, settings)?.text ?? "" }));
+/** Schreibt die Vorschau; "kurs" und "nachricht" folgen immer den aktuellen Kursen. */
+export function writePreview(rows: PreviewRow[], courses = loadCourses(), settings = loadSettings()): void {
+  const withText = rows.map((r) => {
+    const m = messageFor(r, courses, settings);
+    return { ...r, kurs: m?.course.name ?? "", nachricht: m?.text ?? "" };
+  });
   writeChecked(PREVIEW_PATH, toCsv(withText, PREVIEW_COLS));
 }
 
@@ -81,20 +96,39 @@ export function setRowStatus(conversationId: string, status: "send" | "skip"): v
   writePreview(rows);
 }
 
-export function readLog(): Record<string, string>[] {
+export function readLog(): LogRow[] {
   if (!existsSync(LOG_PATH)) return [];
-  return parseCsv(readFileSync(LOG_PATH, "utf8"));
+  // Aeltere Protokolle haben weniger Spalten: fehlende als leer ergaenzen.
+  return parseCsv(readFileSync(LOG_PATH, "utf8")).map(
+    (r) => Object.fromEntries(LOG_COLS.map((c) => [c, r[c] ?? ""])) as LogRow
+  );
+}
+
+export function writeLog(rows: LogRow[]): void {
+  writeChecked(LOG_PATH, toCsv(rows, LOG_COLS));
 }
 
 export function loggedIds(): Set<string> {
   return new Set(readLog().map((r) => r.conversation_id));
 }
 
-export function appendLog(row: Record<(typeof LOG_COLS)[number], string>): void {
-  ensureDir();
-  if (!existsSync(LOG_PATH)) writeFileSync(LOG_PATH, toCsv([], LOG_COLS));
-  // toCsv liefert BOM + Kopfzeile; nur die Datenzeile anhaengen.
-  appendFileSync(LOG_PATH, toCsv([row], LOG_COLS).split("\r\n").slice(1).join("\r\n"));
+/** Ganze Datei neu schreiben: so bekommen auch alte Protokolle die neuen Spalten. */
+export function appendLog(row: Partial<LogRow> & Pick<LogRow, "conversation_id" | "zeitstempel" | "status">): void {
+  const full = Object.fromEntries(LOG_COLS.map((c) => [c, row[c] ?? ""])) as LogRow;
+  writeLog([...readLog(), full]);
+}
+
+export function updateLog(conversationId: string, patch: Partial<LogRow>): void {
+  const rows = readLog();
+  const row = rows.find((r) => r.conversation_id === conversationId);
+  if (!row) throw new Error(`Konversation ${conversationId} steht nicht im Protokoll.`);
+  Object.assign(row, patch);
+  writeLog(rows);
+}
+
+export function setMark(conversationId: string, markierung: string): void {
+  if (!(MARKS as readonly string[]).includes(markierung)) throw new Error(`Markierung muss eine von ${MARKS.join(", ")} sein.`);
+  updateLog(conversationId, { markierung });
 }
 
 /** Heute schon versuchte Sendungen (auch "unbestaetigt" zaehlt mit). */
@@ -103,16 +137,13 @@ export function sentToday(now = new Date()): number {
   return readLog().filter((r) => new Date(r.zeitstempel).toDateString() === today).length;
 }
 
-/** Was jetzt gesendet wuerde: status=send, Stufe angehakt, nie zuvor nachgefasst, im Tageslimit. */
-export function sendQueue(settings = loadSettings(), now = new Date()) {
+/** Was jetzt gesendet wuerde: effektiver Status "wird gesendet", im Tageslimit. */
+export function sendQueue(courses = loadCourses(), settings = loadSettings(), now = new Date()) {
   const logged = loggedIds();
-  const pending = readPreview().filter(
-    (r) =>
-      r.status.trim().toLowerCase() === "send" &&
-      isOfferLevel(r.kategorie) &&
-      settings[r.kategorie].enabled &&
-      !logged.has(r.conversation_id)
-  );
+  const pending = readPreview()
+    .map((row) => ({ row, eff: effectiveStatus(row, courses, settings, logged) }))
+    .filter((x) => x.eff.send)
+    .map((x) => ({ ...x.row, course: x.eff.course as Course }));
   const budget = Math.max(0, MAX_SENDS_PER_DAY - sentToday(now));
   return { pending, queue: pending.slice(0, budget), budget };
 }

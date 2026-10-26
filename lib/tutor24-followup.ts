@@ -1,12 +1,13 @@
 /**
- * Regeln und Texte fuer das Nachfassen mit dem Gruppenkurs-Angebot.
+ * Regeln und Texte fuer das Nachfassen mit Gruppenkursen.
  * Bewusst ohne Node- und Playwright-Abhaengigkeiten: die Live-Vorschau im
  * Browser (components/Tutor24Followup.tsx) benutzt dieselben Funktionen.
+ * Alles regelbasiert und lokal — Inseratstexte gehen an keinen externen Dienst.
  */
 
 export type Anrede = "Sie" | "du";
 
-/** Stufen, fuer die es ein Angebot gibt. */
+/** Stufen, fuer die es Kurse geben kann. */
 export const OFFER_LEVELS = ["gymivorbereitung", "gymi", "matura", "bm", "sek"] as const;
 export type OfferLevel = (typeof OFFER_LEVELS)[number];
 export type LevelCategory = OfferLevel | "ausgeschlossen" | "unklar";
@@ -27,17 +28,19 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const MIN_AGE_DAYS = 3;
 export const MAX_AGE_DAYS = 8 * 7;
 export const MAX_SENDS_PER_DAY = 25;
+/** Mehr gleichzeitig aktive Kurse verteilen die Anmeldungen zu duenn. */
+export const MAX_ACTIVE_COURSES = 3;
 
 const MONTHS: Record<string, number> = {
   jan: 0, feb: 1, mar: 2, mär: 2, apr: 3, may: 4, mai: 4, jun: 5,
   jul: 6, aug: 7, sep: 8, oct: 9, okt: 9, nov: 10, dec: 11, dez: 11,
 };
+const DATE_RE = /(\d{1,2})\.? ([A-Za-zä]{3})[a-z]*\.? (\d{2,4})(?:,? (\d{1,2}):(\d{2}))?/g;
 
 /** tutor24 schreibt "25 Oct 26, 09:37" bzw. "Do 22 Okt 26"; Uhrzeit optional. Letztes Vorkommen gewinnt. */
 export function parseTutor24Date(text: string): Date | null {
-  const re = /(\d{1,2})\.? ([A-Za-zä]{3})[a-z]*\.? (\d{2,4})(?:,? (\d{1,2}):(\d{2}))?/g;
   let last: Date | null = null;
-  for (const m of Array.from(text.matchAll(re))) {
+  for (const m of Array.from(text.matchAll(DATE_RE))) {
     const month = MONTHS[m[2].toLowerCase()];
     if (month === undefined) continue;
     const year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
@@ -50,11 +53,7 @@ export function ageDays(date: Date, now: Date): number {
   return (now.getTime() - date.getTime()) / DAY_MS;
 }
 
-export function isMathSubject(subjects: string): boolean {
-  return /mathe/i.test(subjects);
-}
-
-// ── Stufen-Klassifizierung ────────────────────────────────────────────────────
+// ── Inserat ───────────────────────────────────────────────────────────────────
 
 export type ListingInfo = {
   /** Titel des Inserats */
@@ -65,9 +64,9 @@ export type ListingInfo = {
   schulstufe: string;
   /** Freitext "Zusaetzliche Informationen" */
   description: string;
+  /** Feld "Ort", falls die Seite eines hat */
+  ort?: string;
 };
-
-export type Classification = { category: LevelCategory; begruendung: string };
 
 /** Fundstelle mit etwas Kontext, damit die Begruendung in der Vorschau lesbar ist. */
 function snippet(source: string, re: RegExp): string | null {
@@ -78,23 +77,77 @@ function snippet(source: string, re: RegExp): string | null {
   return `${from > 0 ? "…" : ""}${source.slice(from, to).replace(/\s+/g, " ").trim()}${to < source.length ? "…" : ""}`;
 }
 
+/** "zweiten Jahr" → "2. Jahr", damit die Zahl-Regeln greifen. */
+function normalize(text: string): string {
+  const words: Record<string, string> = { erst: "1", zweit: "2", dritt: "3", viert: "4", "fünft": "5", sechst: "6" };
+  return text
+    .toLowerCase()
+    .replace(/\b(erst|zweit|dritt|viert|fünft|sechst)(e|en|er|es)\b/g, (_m, w: string) => `${words[w]}.`);
+}
+
+// ── Faecher ───────────────────────────────────────────────────────────────────
+
+export const SUBJECTS = [
+  "Mathe", "Physik", "Chemie", "Biologie", "Deutsch", "Französisch", "Englisch",
+  "Italienisch", "Spanisch", "Latein", "Informatik", "Wirtschaft",
+] as const;
+export type Subject = (typeof SUBJECTS)[number];
+
+// Deutsch, Englisch, Franzoesisch auch auf Englisch/Franzoesisch: die Inserate sind oft mehrsprachig.
+const SUBJECT_RE: Record<Subject, RegExp> = {
+  Mathe: /\bmath|algebra|geometrie|analysis|stochastik/,
+  Physik: /physi[kc]/,
+  Chemie: /chemi/,
+  Biologie: /biologi|\bbio\b/,
+  Deutsch: /deutsch|\bgerman\b|allemand/,
+  Französisch: /franz|french|fran[çc]ais/,
+  Englisch: /englisch|english|anglais/,
+  Italienisch: /italienisch|italian/,
+  Spanisch: /spanisch|spanish/,
+  Latein: /latein|latin/,
+  Informatik: /informatik|programmier|computer science/,
+  Wirtschaft: /wirtschaft|rechnungswesen|buchhaltung|\bw&r\b/,
+};
+
+/** Alle genannten Faecher, in der Reihenfolge ihrer ersten Nennung (Fach-Feld zuerst). */
+export function extractSubjects(info: ListingInfo): string[] {
+  // "auf Deutsch" / "Schweizerdeutsch" ist die Unterrichtssprache, kein Fach.
+  const text = `${info.fach}\n${info.title}\n${info.description}`
+    .toLowerCase()
+    .replace(/(auf|in) (hoch|schweizer)?deutsch|(schweizer|hoch)deutsch|deutschsprachig|in english|auf englisch/g, " ");
+  const found = SUBJECTS.map((s) => ({ s, i: text.search(SUBJECT_RE[s]) }))
+    .filter((x) => x.i > -1)
+    .sort((a, b) => a.i - b.i)
+    .map((x) => x.s as string);
+  // Unbekanntes Fach: Feld uebernehmen, damit die Zeile nicht leer bleibt.
+  return found.length ? found : info.fach.trim() ? [info.fach.trim()] : [];
+}
+
+export const joinList = (xs: string[]) => xs.join(", ");
+export const splitList = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
+
+// ── Stufen-Klassifizierung ────────────────────────────────────────────────────
+
+export type Classification = { category: LevelCategory; begruendung: string };
+
 /**
- * Genau eine Kategorie pro Inserat. Die Reihenfolge der Regeln ist die Logik:
- * die spezifischere gewinnt (BM vor Matura, Gymi-Ziel vor Primar/Sek, Matura vor Gymi).
+ * Genau eine Kategorie pro Inserat, unabhaengig vom Fach (das prueft die Kurszuordnung).
+ * Die Reihenfolge der Regeln ist die Logik: die spezifischere gewinnt
+ * (BM vor Matura, Gymi-Ziel vor Primar/Sek, Matura vor Gymi).
  */
 export function classifyListing(info: ListingInfo): Classification {
-  if (!isMathSubject(info.fach)) return { category: "ausgeschlossen", begruendung: `Fach: ${info.fach || "—"}` };
-
   const stufe = info.schulstufe.toLowerCase();
   const text = `${info.title}\n${info.description}`;
   const field = `Schulstufe: ${info.schulstufe}`;
-  const rules: Array<{ category: LevelCategory; re: RegExp; onField?: boolean }> = [
+  const rules: Array<{ category: LevelCategory; re: RegExp; onField?: boolean; when?: RegExp }> = [
     { category: "ausgeschlossen", re: /erwachsen/i },
     { category: "bm", re: /berufsmatur|\bbms\b|\bbm\b|\bbm-|lehre mit (der )?bm|bm[- ]?aufnahme/i },
     {
       category: "gymivorbereitung",
       re: /aufnahmepr[üu]fung|\bzap\b|gymi-?pr[üu]fung|(ins|ans|aufs) (gymi|gymnasium|kanti|langgymi|kurzgymi)|vorbereitung (auf|f[üu]r) (das |die |den )?(gymi|gymnasium|kanti|lang|kurz)|(lang|kurz)zeit-?gymi(nasium)?[- ]?(pr[üu]fung|vorbereitung)/i,
     },
+    // Primar-/Sek-Schueler mit Gymi im Text wollen dorthin ("spaeter die Kantonsschule besuchen").
+    { category: "gymivorbereitung", re: /gymi|gymnasium|\bkanti\b|kantonsschule/i, when: /primar|sekundar/ },
     { category: "ausgeschlossen", re: /universit|hochschule|\beth\b|\buzh\b|studium|studiere/i, onField: true },
     { category: "ausgeschlossen", re: /studentin an der|student an der|ich studiere/i },
     { category: "matura", re: /matura|maturit[äa]t|matur\b|maturpr[üu]fung|maturjahr|letzte[sn]? (gymi|gymnasium)[- ]?jahr/i },
@@ -104,12 +157,172 @@ export function classifyListing(info: ListingInfo): Classification {
   ];
 
   for (const rule of rules) {
+    if (rule.when && !rule.when.test(stufe)) continue;
     // Hochschul-Regel nur auf das Stufen-Feld: im Freitext ist "Studium" oft nur ein Ziel.
-    const inField = rule.re.test(stufe) ? field : null;
+    const inField = !rule.when && rule.re.test(stufe) ? field : null;
     const hit = rule.onField ? inField : (snippet(text, rule.re) ?? inField);
     if (hit) return { category: rule.category, begruendung: hit };
   }
   return { category: "unklar", begruendung: info.schulstufe ? field : "keine Stufe erkennbar" };
+}
+
+// ── Klasse, Kursgruppe ────────────────────────────────────────────────────────
+
+export type Grade = {
+  /** Schuljahr ab der 1. Primar: Sek 2 → 8 */
+  klasse: number | null;
+  /** Jahr im Gymnasium, Langzeit-Zaehlung: 1. Kurzgymi = 3 */
+  gymiJahr: number | null;
+  /** true = Kurzgymi, false = Langgymi, null = nicht genannt */
+  kurz: boolean | null;
+};
+
+// "6. Klasse Gymiprüfung" ist kein Gymi-Jahr: Pruefung/Vorbereitung direkt dahinter ausschliessen.
+const GYMI = "(?:lang|kurz)?(?:zeit)?-?(?:gymi|gymnasium|gymnasiums|kanti|kantonsschule)(?![- ]?(?:pr[üu]fung|vorbereitung))";
+
+export function extractGrade(info: ListingInfo): Grade {
+  const t = normalize(`${info.schulstufe}\n${info.title}\n${info.description}`);
+  const kurz = /kurzgymi|kurzzeit/.test(t) ? true : /langgymi|langzeit|untergymi/.test(t) ? false : null;
+  const num = (re: RegExp) => {
+    const m = t.match(re);
+    return m ? Number(m[1]) : null;
+  };
+
+  // "2. Gymi", "2. Klasse am Gymi", "2. Jahr des Kurzzeitgymnasiums", "Gymi 2", "Y3 Gymi"
+  let gymi =
+    num(new RegExp(`\\b(\\d{1,2})\\.\\s?(?:klasse|jahr|gymi-?jahr)?\\s?(?:des|im|am|an der|in der|vom)?\\s?${GYMI}`)) ??
+    num(new RegExp(`\\b(?:gymi|gymnasium|kanti)\\s?(\\d)\\b`)) ??
+    num(new RegExp(`\\b(?:y|year )(\\d)\\s?${GYMI}`));
+  let klasse: number | null = null;
+  if (gymi !== null && gymi >= 7) {
+    // "9. Klasse am Gymi" zaehlt Schuljahre.
+    klasse = gymi;
+    gymi = gymi - 6;
+  } else if (gymi !== null && kurz) gymi += 2;
+  if (gymi === null && /letzte[nsm]? (gymi-?)?jahr|maturajahr|maturaklasse/.test(t) && /gymi|gymnasium|kanti|matur/.test(t)) gymi = 6;
+  if (gymi !== null && !(gymi >= 1 && gymi <= 6)) gymi = null;
+
+  const sek = num(/\b([1-3])\.\s?(?:klasse\s)?(?:der\s)?(?:sek|sekundar|oberstufe)/) ?? num(/\bsek\s?([1-3])\b/);
+  if (klasse === null && sek !== null) klasse = 6 + sek;
+  if (klasse === null) {
+    const k = num(/\b(\d{1,2})\.\s?klasse/);
+    if (k !== null && k >= 1 && k <= 12) klasse = k;
+  }
+  if (klasse === null && gymi !== null) klasse = 6 + gymi;
+  return { klasse, gymiJahr: gymi, kurz };
+}
+
+export const COURSE_GROUPS = [
+  "sek1", "sek2", "sek3", "zap_lang", "zap_kurz", "gymi_unter", "gymi_mittel", "matura", "bm",
+] as const;
+export type CourseGroup = (typeof COURSE_GROUPS)[number];
+
+export const GROUP_LABEL: Record<CourseGroup, string> = {
+  sek1: "Sek 1. Jahr",
+  sek2: "Sek 2. Jahr",
+  sek3: "Sek 3. Jahr",
+  zap_lang: "Gymi-Vorbereitung Langgymi (ZAP)",
+  zap_kurz: "Gymi-Vorbereitung Kurzgymi (ZAP)",
+  gymi_unter: "Gymi Unterstufe (1.–2. Jahr)",
+  gymi_mittel: "Gymi Mittelstufe (3.–4. Jahr)",
+  matura: "Matura",
+  bm: "Berufsmatura",
+};
+
+/** Kurzform fuer Kursnamen: "Mathe-Repetitionskurs 2. Sek". */
+const GROUP_SHORT: Record<CourseGroup, string> = {
+  sek1: "1. Sek", sek2: "2. Sek", sek3: "3. Sek",
+  zap_lang: "Langgymi-Prüfung", zap_kurz: "Kurzgymi-Prüfung",
+  gymi_unter: "Gymi Unterstufe", gymi_mittel: "Gymi Mittelstufe",
+  matura: "Matura", bm: "Berufsmatura",
+};
+
+export const isCourseGroup = (g: string): g is CourseGroup => (COURSE_GROUPS as readonly string[]).includes(g);
+
+/** hoch = Stufe und Jahr stehen im Inserat; mittel = abgeleitet; tief = keine Kursgruppe. */
+export type Sicherheit = "hoch" | "mittel" | "tief";
+
+export function courseGroup(category: LevelCategory, g: Grade, info: ListingInfo): { gruppe: CourseGroup | null; sicherheit: Sicherheit } {
+  const t = normalize(`${info.schulstufe}\n${info.title}\n${info.description}`);
+  const hit = (gruppe: CourseGroup, sicherheit: Sicherheit = "hoch") => ({ gruppe, sicherheit });
+  const none = { gruppe: null, sicherheit: "tief" as const };
+  switch (category) {
+    case "bm": return hit("bm");
+    case "matura": return hit("matura");
+    case "sek":
+      return g.klasse === 7 ? hit("sek1") : g.klasse === 8 ? hit("sek2") : g.klasse === 9 ? hit("sek3") : none;
+    case "gymivorbereitung":
+      if (g.kurz !== null) return hit(g.kurz ? "zap_kurz" : "zap_lang");
+      if (g.klasse !== null) return g.klasse <= 6 ? hit("zap_lang") : hit("zap_kurz");
+      if (/primar/.test(t)) return hit("zap_lang", "mittel");
+      if (/sekundar|\bsek\b/.test(t)) return hit("zap_kurz", "mittel");
+      return none;
+    case "gymi":
+      if (g.gymiJahr !== null)
+        return g.gymiJahr <= 2 ? hit("gymi_unter") : g.gymiJahr <= 4 ? hit("gymi_mittel") : hit("matura", g.gymiJahr === 6 ? "hoch" : "mittel");
+      if (/untergymi|unterstufe/.test(t)) return hit("gymi_unter");
+      // Probezeit ohne Jahr: im Langgymi das 1., im Kurzgymi das 3. Jahr.
+      if (/probezeit/.test(t)) return hit(g.kurz ? "gymi_mittel" : "gymi_unter", "mittel");
+      return none;
+    default:
+      return none;
+  }
+}
+
+// ── Ort, Zeitwunsch, Anlass ───────────────────────────────────────────────────
+
+export type OrtMode = "online" | "vor Ort" | "beides" | "unbekannt";
+
+// ponytail: kurze Staedteliste; reicht fuer die Region Zuerich, sonst greift die PLZ-Regel.
+const CITIES = [
+  "Zürich", "Winterthur", "Uster", "Dübendorf", "Wädenswil", "Horgen", "Thalwil", "Kloten", "Dietikon",
+  "Schlieren", "Wetzikon", "Bülach", "Meilen", "Küsnacht", "Adliswil", "Baden", "Aarau", "Zug", "Luzern",
+  "Basel", "Bern", "St. Gallen", "Rapperswil", "Opfikon", "Wallisellen", "Regensdorf", "Volketswil", "Stäfa",
+];
+
+export function extractOrt(info: ListingInfo): { ort: OrtMode; ortsname: string } {
+  const t = info.description.toLowerCase();
+  const online = /online|zoom|\bteams\b|skype|per video|videocall|video-call|fernunterricht|remote/.test(t);
+  const vorOrt = /vor ort|bei uns|zu hause|zuhause|daheim|pers[öo]nlich|präsenz|in person|in der n[äa]he|at our home|at home/.test(t);
+  const both = /beides|egal ob|sowohl .{0,20}als auch|online oder (vor ort|pers|bei)|(vor ort|pers[öo]nlich|zuhause) oder online/.test(t);
+  const ort: OrtMode = both || (online && vorOrt) ? "beides" : online ? "online" : vorOrt ? "vor Ort" : "unbekannt";
+  const plz = info.description.match(/\b[1-9]\d{3} ([A-ZÄÖÜ][a-zäöüé]+(?:[ -][A-ZÄÖÜ][a-zäöüé]+)?)/);
+  const city = CITIES.find((c) => new RegExp(`\\b${c.replace(".", "\\.")}\\b`).test(`${info.title} ${info.description}`));
+  return { ort, ortsname: (info.ort ?? "").trim() || plz?.[1] || city || "" };
+}
+
+const DAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
+const DAYTIMES: Array<[RegExp, string]> = [
+  [/wochenende|weekend/, "Wochenende"],
+  [/\bmorgens|am morgen|vormittag/, "Vormittag"],
+  [/\bmittags|über mittag|mittagspause/, "Mittag"],
+  [/nachmittag/, "Nachmittag"],
+  [/\babends?\b|am abend|feierabend/, "Abend"],
+  [/nach der schule/, "nach der Schule"],
+];
+
+/** Wochentage und Tageszeiten, falls genannt; leer = keine Angabe. */
+export function extractZeitwunsch(info: ListingInfo): string[] {
+  const t = info.description.toLowerCase();
+  const out = DAYS.filter((d) => new RegExp(`\\b${d.toLowerCase()}s?\\b`).test(t));
+  for (const [re, label] of DAYTIMES) if (re.test(t)) out.push(label);
+  const from = t.match(/\bab (\d{1,2})(?:[:.](\d{2}))? ?uhr/);
+  if (from) out.push(`ab ${from[1]}${from[2] ? `:${from[2]}` : ""} Uhr`);
+  return out;
+}
+
+const ANLASS: Array<[RegExp, string]> = [
+  [/aufnahmepr[üu]fung|\bzap\b|gymi-?pr[üu]fung|bm-?aufnahme/, "Aufnahmeprüfung"],
+  [/probezeit|provisorisch/, "Probezeit"],
+  [/matur(a|it[äa]t)?-?pr[üu]fung|abschlusspr[üu]fung|schlusspr[üu]fung|\blap\b|bm-?pr[üu]fung|(die )?matura (schreiben|ablegen|bestehen)|schreibe .{0,30}matura/, "Abschlussprüfung"],
+  [/pr[üu]fung|\btests?\b|klausur|\bexam/, "Prüfung"],
+  [/promotion|ungen[üu]gend|schlechte note|note[n]? (verbessern|aufbessern)|zeugnis/, "Noten verbessern"],
+  [/l[üu]cken|grundlagen|repetier|aufholen|nachholen|verst[äa]ndnis|m[üu]he|schwierigkeit|f[äa]llt .{0,20}schwer|unterst[üu]tzung|struggl/, "Lücken allgemein"],
+];
+
+export function extractAnlass(info: ListingInfo): string {
+  const t = `${info.title}\n${info.description}`.toLowerCase();
+  return ANLASS.find(([re]) => re.test(t))?.[1] ?? "unbekannt";
 }
 
 /** "du" nur, wenn das Inserat klar vom Schueler selbst stammt; sonst immer "Sie". */
@@ -124,12 +337,51 @@ export function detectAnrede(description: string): Anrede {
   return self.test(d) ? "du" : "Sie";
 }
 
-// ── Einstellungen und Nachrichtentext ─────────────────────────────────────────
+/** Alles, was der Probelauf pro Inserat in die CSV schreibt (nur kurze Werte, kein Inseratstext). */
+export function analyzeListing(info: ListingInfo) {
+  const c = classifyListing(info);
+  const grade = extractGrade(info);
+  const group = isOfferLevel(c.category) ? courseGroup(c.category, grade, info) : { gruppe: null, sicherheit: "tief" as const };
+  return {
+    kategorie: c.category,
+    begruendung: c.begruendung,
+    faecher: joinList(extractSubjects(info)),
+    klasse: grade.klasse === null ? "" : String(grade.klasse),
+    gymi_jahr: grade.gymiJahr === null ? "" : String(grade.gymiJahr),
+    kursgruppe: group.gruppe ?? "",
+    sicherheit: group.sicherheit,
+    ...extractOrt(info),
+    zeitwunsch: joinList(extractZeitwunsch(info)),
+    anlass: extractAnlass(info),
+    anrede: detectAnrede(info.description),
+  };
+}
 
-export type LevelSettings = {
-  enabled: boolean;
-  /** ISO-Datum "YYYY-MM-DD" */
-  startDate: string;
+// ── Einstellungen ─────────────────────────────────────────────────────────────
+
+export type FollowupSettings = {
+  /** Nur diese Faecher zaehlen fuer Kurse und Vorschlaege. */
+  mySubjects: string[];
+  /** "Kurs empfohlen" ab so vielen Kandidaten mit Sicherheit "hoch" */
+  recommendMin: number;
+};
+
+export function mergeSettings(saved: Partial<FollowupSettings> | null | undefined): FollowupSettings {
+  return {
+    mySubjects: Array.isArray(saved?.mySubjects) ? saved.mySubjects.map(String) : ["Mathe", "Physik"],
+    recommendMin: Number(saved?.recommendMin) >= 1 ? Math.floor(Number(saved?.recommendMin)) : 20,
+  };
+}
+
+// ── Kurse und Nachrichtentext ─────────────────────────────────────────────────
+
+export type Course = {
+  id: string;
+  name: string;
+  fach: string;
+  gruppe: CourseGroup;
+  /** Nur aktive Kurse werden zugeordnet und gesendet. */
+  active: boolean;
   /** vier Samstage, ISO */
   saturdays: [string, string, string, string];
   /** z.B. "9:30–11:10 Uhr" */
@@ -137,71 +389,59 @@ export type LevelSettings = {
   pricePerLesson: number;
   lessons: number;
   mode: "online" | "vor Ort";
-  /** Sie-Form mit {vorname} {daten} {uhrzeit} {preis} {total} {ort} {start} */
+  /** bei "vor Ort", z.B. "Zürich Oerlikon" */
+  place: string;
+  /** ISO */
+  deadline: string;
+  minParticipants: number;
+  /** Sie-Form mit den PLACEHOLDERS */
   template: string;
 };
 
-export type FollowupSettings = Record<OfferLevel, LevelSettings>;
+export const PLACEHOLDERS = [
+  "{vorname}", "{kursname}", "{fach}", "{daten}", "{uhrzeit}", "{ort}", "{preis}", "{total}", "{anmeldeschluss}",
+] as const;
 
-export const PLACEHOLDERS = ["{vorname}", "{daten}", "{uhrzeit}", "{preis}", "{total}", "{ort}", "{start}"] as const;
-
-const INTRO =
-  "Ich hatte mich vor einiger Zeit auf Ihre Anfrage für Mathe-Nachhilfe gemeldet. Falls Sie noch suchen, habe ich ein neues, deutlich günstigeres Angebot:";
-const CLOSING =
-  'Soll ich einen Platz reservieren? Ein kurzes "Ja" hier im Chat reicht, dann schicke ich alle Details. Die Gruppe startet ab 3 Anmeldungen.\n\nLiebe Grüsse\nOmid';
-const SCHEDULE = "Maximal 6 Teilnehmende, an 4 Samstagen ({daten}), jeweils {uhrzeit}, {ort}.";
-const EXPERT = "sehr erfahrenen Mathe-Lehrer (über 12 Jahre Erfahrung, Schwerpunkt Gymi und Matura), aber zu CHF {preis} pro Lektion statt CHF 89 im Einzelunterricht.";
-
-const GYMI_SEK_TEMPLATE = [
+export const DEFAULT_TEMPLATE = [
   "Hallo {vorname}",
-  INTRO,
-  `Ende November starte ich eine kleine Mathe-Gruppe für Gymi- und Sek-Schülerinnen und -Schüler. ${SCHEDULE}`,
-  `Ihr Kind lernt bei einem ${EXPERT} Dazu kommt Zugang zu meiner Übungsplattform: Ihr Kind übt zwischen den Terminen, und ich sehe genau, wo es steht.`,
-  CLOSING,
+  "Ich hatte mich vor einiger Zeit auf Ihre Anfrage für {fach}-Nachhilfe gemeldet. Falls Sie noch suchen, habe ich ein neues, deutlich günstigeres Angebot:",
+  "Ich starte einen {kursname} in einer kleinen Gruppe (maximal 6 Teilnehmende), an 4 Samstagen ({daten}), jeweils {uhrzeit}, {ort}.",
+  "Ihr Kind lernt bei einem sehr erfahrenen Lehrer (über 12 Jahre Erfahrung, Schwerpunkt Gymi und Matura), aber zu CHF {preis} pro Lektion statt CHF 89 im Einzelunterricht. Dazu kommt Zugang zu meiner Übungsplattform: Ihr Kind übt zwischen den Terminen, und ich sehe genau, wo es steht.",
+  'Soll ich einen Platz reservieren? Ein kurzes "Ja" hier im Chat reicht, dann schicke ich alle Details. Der Kurs findet ab 3 Anmeldungen statt; bezahlt wird erst, wenn er sicher stattfindet.',
+  "Liebe Grüsse\nOmid",
 ].join("\n\n");
 
-const examTemplate = (exam: string) =>
-  [
-    "Hallo {vorname}",
-    INTRO,
-    `Ende November starte ich eine kleine Mathe-Gruppe zur Vorbereitung auf die ${exam}. ${SCHEDULE}`,
-    `Unterricht bei einem ${EXPERT} Dazu kommt Zugang zu meiner Übungsplattform: Üben zwischen den Terminen, und ich sehe genau, wo jemand steht.`,
-    CLOSING,
-  ].join("\n\n");
+/** Erkennt unsere Nachfass-Nachricht in einer Konversation (Senden-Bestaetigung, Antworten). */
+export const FOLLOWUP_MARKER = "Ich hatte mich vor einiger Zeit";
 
-const DEFAULT_TEMPLATES: Record<OfferLevel, string> = {
-  gymivorbereitung: [
-    "Hallo {vorname}",
-    INTRO,
-    `Ende November starte ich eine kleine Mathe-Gruppe zur Vorbereitung auf die Gymi-Aufnahmeprüfung. ${SCHEDULE}`,
-    "Ihr Kind lernt bei einem sehr erfahrenen Mathe-Lehrer (über 12 Jahre Erfahrung mit Gymi-Prüfung, Gymnasium und Matura), aber zu CHF {preis} pro Lektion statt CHF 89 im Einzelunterricht. Dazu kommt Zugang zu meiner Übungsplattform: Ihr Kind übt zwischen den Terminen typische Prüfungsaufgaben, und ich sehe genau, wo es steht.",
-    CLOSING,
-  ].join("\n\n"),
-  gymi: GYMI_SEK_TEMPLATE,
-  sek: GYMI_SEK_TEMPLATE,
-  matura: examTemplate("Matura"),
-  bm: examTemplate("Berufsmatura (BM)"),
-};
+const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-export function defaultSettings(): FollowupSettings {
-  const base = (level: OfferLevel): LevelSettings => ({
-    enabled: false,
-    startDate: "2026-11-28",
-    saturdays: ["2026-11-28", "2026-12-05", "2026-12-12", "2026-12-19"],
+export function suggestCourseName(fach: string, gruppe: CourseGroup): string {
+  const kind = gruppe.startsWith("zap") || gruppe === "matura" || gruppe === "bm" ? "Vorbereitungskurs" : "Repetitionskurs";
+  return `${fach}-${kind} ${GROUP_SHORT[gruppe]}`;
+}
+
+/** Neuer Kurs, inaktiv: Start am ersten Samstag in fruehestens drei Wochen, Anmeldeschluss eine Woche davor. */
+export function newCourse(fach: string, gruppe: CourseGroup, now = new Date()): Course {
+  const first = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 21);
+  first.setDate(first.getDate() + ((6 - first.getDay() + 7) % 7));
+  const sat = (w: number) => isoDate(new Date(first.getFullYear(), first.getMonth(), first.getDate() + 7 * w));
+  return {
+    id: `${fach}-${gruppe}-${now.getTime().toString(36)}`.toLowerCase().replace(/[^a-z0-9_-]/g, ""),
+    name: suggestCourseName(fach, gruppe),
+    fach,
+    gruppe,
+    active: false,
+    saturdays: [sat(0), sat(1), sat(2), sat(3)],
     time: "9:30–11:10 Uhr",
     pricePerLesson: 45,
     lessons: 8,
     mode: "online",
-    template: DEFAULT_TEMPLATES[level],
-  });
-  return Object.fromEntries(OFFER_LEVELS.map((l) => [l, base(l)])) as FollowupSettings;
-}
-
-/** Gespeicherte Einstellungen auf Vollstaendigkeit bringen (neue Felder, fehlende Stufen). */
-export function mergeSettings(saved: Partial<Record<OfferLevel, Partial<LevelSettings>>> | null | undefined): FollowupSettings {
-  const d = defaultSettings();
-  for (const l of OFFER_LEVELS) d[l] = { ...d[l], ...(saved?.[l] ?? {}) } as LevelSettings;
-  return d;
+    place: "",
+    deadline: sat(-1),
+    minParticipants: 3,
+    template: DEFAULT_TEMPLATE,
+  };
 }
 
 /** "2026-11-28" → "28.11." */
@@ -216,7 +456,7 @@ export function formatSaturdays(dates: string[]): string {
 }
 
 /**
- * Sie → du fuer die Saetze der Vorlagen. Bleibt danach noch eine Sie-Form uebrig
+ * Sie → du fuer die Saetze der Vorlage. Bleibt danach noch eine Sie-Form uebrig
  * (eigener Text), gilt die du-Form als nicht ableitbar.
  */
 const DU_REPLACEMENTS: Array<[RegExp, string]> = [
@@ -237,18 +477,20 @@ export function toDuForm(sieText: string): { text: string; ok: boolean } {
 
 export type Rendered = { text: string; anrede: Anrede; warning?: string };
 
-/** Fertige Nachricht aus den AKTUELLEN Einstellungen. */
-export function renderMessage(s: LevelSettings, firstName: string, wantAnrede: Anrede): Rendered {
+/** Fertige Nachricht aus dem AKTUELLEN Kurs. */
+export function renderMessage(c: Course, firstName: string, wantAnrede: Anrede): Rendered {
   const values: Record<string, string> = {
     "{vorname}": firstName.trim(),
-    "{daten}": formatSaturdays(s.saturdays),
-    "{uhrzeit}": s.time.trim(),
-    "{preis}": String(s.pricePerLesson),
-    "{total}": String(s.pricePerLesson * s.lessons),
-    "{ort}": s.mode,
-    "{start}": dayMonth(s.startDate),
+    "{kursname}": c.name.trim(),
+    "{fach}": c.fach,
+    "{daten}": formatSaturdays(c.saturdays),
+    "{uhrzeit}": c.time.trim(),
+    "{ort}": c.mode === "online" ? "online" : `vor Ort${c.place.trim() ? ` (${c.place.trim()})` : ""}`,
+    "{preis}": String(c.pricePerLesson),
+    "{total}": String(c.pricePerLesson * c.lessons),
+    "{anmeldeschluss}": dayMonth(c.deadline),
   };
-  let text = s.template;
+  let text = c.template;
   for (const [k, v] of Object.entries(values)) text = text.split(k).join(v);
   // Ohne Vorname: "Hallo" ohne Leerzeichen dahinter.
   text = text.replace(/[ \t]+\n/g, "\n").replace(/ß/g, "ss").trim();
@@ -264,18 +506,27 @@ export function containsForbiddenContact(text: string): boolean {
   return /https?:\/\/|www\.|@|\b\d{3}[ ./-]?\d{3}[ ./-]?\d{2}[ ./-]?\d{2}\b/.test(text);
 }
 
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
 /** Pruefung beim Speichern: was falsch ist, als Liste von Meldungen. */
-export function validateSettings(s: FollowupSettings): string[] {
+export function validateCourses(courses: Course[]): string[] {
   const errors: string[] = [];
-  for (const l of OFFER_LEVELS) {
-    const v = s[l];
-    const name = LEVEL_LABEL[l];
-    if (containsForbiddenContact(v.template)) errors.push(`${name}: Text enthält Link, E-Mail oder Telefonnummer.`);
-    if (!v.template.trim()) errors.push(`${name}: Text ist leer.`);
-    const unknown = v.template.match(/\{[a-zäöü]+\}/g)?.filter((p) => !(PLACEHOLDERS as readonly string[]).includes(p));
+  const ids = new Set<string>();
+  for (const c of courses) {
+    const name = c.name.trim() || "Kurs ohne Namen";
+    if (!c.name.trim()) errors.push(`${name}: Name fehlt.`);
+    if (ids.has(c.id)) errors.push(`${name}: doppelte Kurs-ID.`);
+    ids.add(c.id);
+    if (!isCourseGroup(c.gruppe)) errors.push(`${name}: unbekannte Kursgruppe.`);
+    if (!c.fach.trim()) errors.push(`${name}: Fach fehlt.`);
+    if (containsForbiddenContact(`${c.template}\n${c.name}\n${c.place}`)) errors.push(`${name}: Text enthält Link, E-Mail oder Telefonnummer.`);
+    if (!c.template.trim()) errors.push(`${name}: Text ist leer.`);
+    const unknown = c.template.match(/\{[a-zäöü]+\}/g)?.filter((p) => !(PLACEHOLDERS as readonly string[]).includes(p));
     if (unknown?.length) errors.push(`${name}: unbekannter Platzhalter ${unknown.join(", ")}.`);
-    if (!(v.pricePerLesson > 0) || !(v.lessons > 0)) errors.push(`${name}: Preis und Anzahl Lektionen müssen > 0 sein.`);
-    if (v.saturdays.length !== 4 || v.saturdays.some((d) => !/^\d{4}-\d{2}-\d{2}$/.test(d))) errors.push(`${name}: bitte vier Samstage angeben.`);
+    if (!(c.pricePerLesson > 0) || !(c.lessons > 0)) errors.push(`${name}: Preis und Anzahl Lektionen müssen > 0 sein.`);
+    if (!(c.minParticipants >= 1)) errors.push(`${name}: Mindestteilnehmerzahl muss ≥ 1 sein.`);
+    if (c.saturdays.length !== 4 || c.saturdays.some((d) => !ISO.test(d))) errors.push(`${name}: bitte vier Termine angeben.`);
+    if (!ISO.test(c.deadline)) errors.push(`${name}: Anmeldeschluss fehlt.`);
   }
   return errors;
 }
@@ -284,11 +535,152 @@ export function validateSettings(s: FollowupSettings): string[] {
 
 export const PREVIEW_COLS = [
   "status", "conversation_id", "link", "name", "kategorie", "begruendung", "stufe", "fach",
-  "letzte_nachricht", "anrede", "grund", "nachricht",
+  "faecher", "klasse", "gymi_jahr", "kursgruppe", "sicherheit", "ort", "ortsname", "zeitwunsch", "anlass",
+  "letzte_nachricht", "anrede", "grund", "kurs", "nachricht",
 ] as const;
-export const LOG_COLS = ["conversation_id", "zeitstempel", "variante", "status"] as const;
+export const LOG_COLS = [
+  "conversation_id", "name", "zeitstempel", "kurs", "variante", "status",
+  "geantwortet", "antwort_datum", "antwort", "markierung",
+] as const;
 
 export type PreviewRow = Record<(typeof PREVIEW_COLS)[number], string>;
+export type LogRow = Record<(typeof LOG_COLS)[number], string>;
+export const MARKS = ["offen", "Zusage", "Absage", "Frage"] as const;
+
+// ── Zuordnung und effektiver Status ───────────────────────────────────────────
+
+/** Ein Kursangebot pro Konversation: das zuerst genannte meiner Faecher, fuer das ein aktiver Kurs passt. */
+export function assignCourse(
+  row: Pick<PreviewRow, "faecher" | "kursgruppe">,
+  courses: Course[],
+  settings: FollowupSettings
+): Course | null {
+  for (const fach of splitList(row.faecher)) {
+    if (!settings.mySubjects.includes(fach)) continue;
+    const c = courses.find((x) => x.active && x.fach === fach && x.gruppe === row.kursgruppe);
+    if (c) return c;
+  }
+  return null;
+}
+
+export type Effective = { send: boolean; label: string; course: Course | null };
+
+/** Was mit einer Zeile passiert. Gesendet wird nur bei send = true. */
+export function effectiveStatus(
+  row: PreviewRow | Omit<PreviewRow, "nachricht">,
+  courses: Course[],
+  settings: FollowupSettings,
+  logged: Set<string> = new Set()
+): Effective {
+  const no = (label: string): Effective => ({ send: false, label, course: null });
+  if (logged.has(row.conversation_id)) return no("bereits nachgefasst");
+  if (row.grund) return no(row.grund);
+  if (!isOfferLevel(row.kategorie)) return no(`ausgeschlossen: Stufe (${row.kategorie || "?"})`);
+  if (!splitList(row.faecher).some((f) => settings.mySubjects.includes(f))) return no("ausgeschlossen: Fach");
+  if (!row.kursgruppe) return no("keine Kursgruppe");
+  const course = assignCourse(row, courses, settings);
+  if (!course) return no("kein Kurs");
+  if (row.status.trim().toLowerCase() !== "send") return { send: false, label: "skip", course };
+  return { send: true, label: "wird gesendet", course };
+}
+
+// ── Nachfrage-Uebersicht ──────────────────────────────────────────────────────
+
+export type DemandRow = {
+  fach: string;
+  gruppe: CourseGroup;
+  count: number;
+  online: number;
+  hoch: number;
+  anlass: string;
+  zeit: string;
+  recommended: boolean;
+};
+
+const top = (counts: Record<string, number>, n: number) =>
+  Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k]) => k);
+
+/**
+ * Kandidaten je Fach × Kursgruppe. Wer mehrere meiner Faecher nennt, zaehlt
+ * bei jedem mit: die Uebersicht misst Nachfrage, nicht Zuordnung.
+ */
+export function demandOverview(rows: Array<Omit<PreviewRow, "nachricht">>, settings: FollowupSettings): DemandRow[] {
+  const acc = new Map<string, { fach: string; gruppe: CourseGroup; count: number; online: number; hoch: number; anlass: Record<string, number>; zeit: Record<string, number> }>();
+  for (const r of rows) {
+    if (r.grund || r.status !== "send" || !isOfferLevel(r.kategorie) || !isCourseGroup(r.kursgruppe)) continue;
+    for (const fach of splitList(r.faecher).filter((f) => settings.mySubjects.includes(f))) {
+      const key = `${fach}|${r.kursgruppe}`;
+      const a = acc.get(key) ?? { fach, gruppe: r.kursgruppe, count: 0, online: 0, hoch: 0, anlass: {}, zeit: {} };
+      a.count++;
+      if (r.ort === "online" || r.ort === "beides") a.online++;
+      if (r.sicherheit === "hoch") a.hoch++;
+      if (r.anlass && r.anlass !== "unbekannt") a.anlass[r.anlass] = (a.anlass[r.anlass] ?? 0) + 1;
+      for (const z of splitList(r.zeitwunsch)) a.zeit[z] = (a.zeit[z] ?? 0) + 1;
+      acc.set(key, a);
+    }
+  }
+  return Array.from(acc.values())
+    .map((a) => ({
+      fach: a.fach,
+      gruppe: a.gruppe,
+      count: a.count,
+      online: a.online,
+      hoch: a.hoch,
+      anlass: top(a.anlass, 1)[0] ?? "—",
+      zeit: top(a.zeit, 2).join(", ") || "—",
+      recommended: a.hoch >= settings.recommendMin,
+    }))
+    .sort((a, b) => b.count - a.count || b.hoch - a.hoch);
+}
+
+// ── Antworten und Kurs-Uebersicht ─────────────────────────────────────────────
+
+export type Bubble = { kind: "mine" | "theirs"; text: string };
+
+/**
+ * Erste Antwort nach meinem Nachfassen: nach der letzten eigenen Nachricht mit
+ * FOLLOWUP_MARKER, sonst (eigener Text ohne Marker) nach dem Sendezeitpunkt.
+ */
+export function findReply(bubbles: Bubble[], sentAt: Date): { date: Date | null; text: string } | null {
+  let start = -1;
+  for (let i = 0; i < bubbles.length; i++) if (bubbles[i].kind === "mine" && bubbles[i].text.includes(FOLLOWUP_MARKER)) start = i;
+  const after = bubbles.filter((b, i) => {
+    if (b.kind !== "theirs") return false;
+    if (start > -1) return i > start;
+    const d = parseTutor24Date(b.text);
+    return !!d && d.getTime() >= sentAt.getTime() - 60_000;
+  });
+  if (!after.length) return null;
+  const first = after[0];
+  return { date: parseTutor24Date(first.text), text: first.text.replace(DATE_RE, "").replace(/\s+/g, " ").trim().slice(0, 200) };
+}
+
+export type CourseStats = {
+  angeschrieben: number;
+  geantwortet: number;
+  zusagen: number;
+  quote: number;
+  tageBisSchluss: number;
+  ampel: "gruen" | "gelb" | "rot";
+};
+
+export function courseStats(c: Course, log: Array<Partial<LogRow>>, now = new Date()): CourseStats {
+  const mine = log.filter((r) => r.kurs === c.id);
+  const geantwortet = mine.filter((r) => r.geantwortet === "ja").length;
+  const zusagen = mine.filter((r) => r.markierung === "Zusage").length;
+  const [y, m, d] = c.deadline.split("-").map(Number);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return {
+    angeschrieben: mine.length,
+    geantwortet,
+    zusagen,
+    quote: mine.length ? geantwortet / mine.length : 0,
+    tageBisSchluss: Math.round((new Date(y, m - 1, d).getTime() - today.getTime()) / DAY_MS),
+    ampel: zusagen >= c.minParticipants ? "gruen" : zusagen > 0 ? "gelb" : "rot",
+  };
+}
+
+// ── CSV-Hilfen ────────────────────────────────────────────────────────────────
 
 export function toCsv(rows: Record<string, string>[], columns: readonly string[]): string {
   const esc = (v: string) => (/[;"\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
