@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { assertNoAutomationRunning, tutor24JobState as jobState } from "./automation-state";
+import { acquireTutor24Lock } from "./tutor24-lock";
 import {
   generateTutor24Message,
   TUTOR24_MESSAGE_TEMPLATE,
@@ -49,6 +50,9 @@ export async function runTutor24Messaging(
   const password = process.env.TUTOR24_PASSWORD;
   if (!email || !password) throw new Error("TUTOR24_EMAIL and TUTOR24_PASSWORD must be set in .env.local");
 
+  // Gemeinsam mit scripts/followup_group_offer.mts: nie zwei Laeufe auf demselben Konto.
+  // ponytail: scheitert der Browserstart, bleibt die Sperre bis zum Neustart des Servers.
+  const releaseLock = acquireTutor24Lock("Erst-Nachrichten-Automation");
   jobState.running = true;
   jobState.startedAt = new Date();
 
@@ -299,6 +303,7 @@ export async function runTutor24Messaging(
     }
   } finally {
     await browser.close();
+    releaseLock();
     jobState.running = false;
     jobState.shouldStop = false;
     jobState.result = result;

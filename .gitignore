@@ -49,3 +49,7 @@ tmp-tsconfig.json
 
 # Datenexporte: enthalten Schueler- und Rechnungsdaten. Nie committen.
 exports/
+
+# tutor24-Nachfassen: Vorschau und Protokoll mit Namen von Interessenten
+tutor24-followup/
+.tutor24.lock

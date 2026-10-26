@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
+import { Tutor24Followup } from "@/components/Tutor24Followup";
 
 type Contact = {
   id: string;
@@ -41,6 +42,7 @@ Omid`;
 
 export default function Tutor24Page() {
   const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
+  const [tab, setTab] = useState<"erst" | "nachfassen">("erst");
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [starting, setStarting] = useState(false);
   const [headless, setHeadless] = useState(false);
@@ -113,6 +115,22 @@ export default function Tutor24Page() {
     <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       <div className="space-y-4">
 
+        <div className="flex gap-1 border-b border-gray-200">
+          {([["erst", "Erst-Nachrichten"], ["nachfassen", "Nachfassen Gruppenkurs"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold transition ${tab === key ? "border-[#4A7FC1] text-[#4A7FC1]" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "nachfassen" ? (
+          <Tutor24Followup />
+        ) : (
+        <>
         {/* Control panel */}
         <div className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
           <h1 className="mb-1 text-lg font-semibold text-gray-900">Tutor24 Nachrichten-Automation</h1>
@@ -368,6 +386,8 @@ export default function Tutor24Page() {
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5 text-center text-sm text-gray-400">
             Noch keine Schüler kontaktiert. Starte die Automation oben.
           </div>
+        )}
+        </>
         )}
       </div>
     </DashboardShell>
