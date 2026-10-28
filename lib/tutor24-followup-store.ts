@@ -11,6 +11,7 @@ import {
   MAX_SENDS_PER_DAY,
   PREVIEW_COLS,
   effectiveStatus,
+  isOfferLevel,
   mergeSettings,
   parseCsv,
   renderMessage,
@@ -141,9 +142,12 @@ export function saveConfig(input: { settings?: unknown; courses?: unknown }): { 
 export function readPreview(): PreviewRow[] {
   if (!existsSync(PREVIEW_PATH)) return [];
   // Vorschau aus der Zeit vor der Nachfrage-Analyse: neue Spalten leer ergaenzen.
-  return parseCsv(readFileSync(PREVIEW_PATH, "utf8")).map(
-    (r) => Object.fromEntries(PREVIEW_COLS.map((c) => [c, r[c] ?? ""])) as PreviewRow
-  );
+  // Vor "offen" blieb die Kursgruppe leer, wenn das Jahr fehlte.
+  return parseCsv(readFileSync(PREVIEW_PATH, "utf8")).map((r) => {
+    const row = Object.fromEntries(PREVIEW_COLS.map((c) => [c, r[c] ?? ""])) as PreviewRow;
+    if (!row.kursgruppe && row.faecher && isOfferLevel(row.kategorie)) row.kursgruppe = "offen";
+    return row;
+  });
 }
 
 /** Zugeordneter Kurs und Text einer Zeile aus den AKTUELLEN Kursen; null = wird nicht gesendet. */

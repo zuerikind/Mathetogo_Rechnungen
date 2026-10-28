@@ -148,6 +148,8 @@ export function classifyListing(info: ListingInfo): Classification {
     },
     // Primar-/Sek-Schueler mit Gymi im Text wollen dorthin ("spaeter die Kantonsschule besuchen").
     { category: "gymivorbereitung", re: /gymi|gymnasium|\bkanti\b|kantonsschule/i, when: /primar|sekundar/ },
+    // Primarschueler mit Sek im Text wollen dorthin ("Sekundarschul-Pruefung") — Primarstufe biete ich nicht an.
+    { category: "ausgeschlossen", re: /sekundar|\bsek\b/i, when: /primar/ },
     { category: "ausgeschlossen", re: /universit|hochschule|\beth\b|\buzh\b|studium|studiere/i, onField: true },
     { category: "ausgeschlossen", re: /studentin an der|student an der|ich studiere/i },
     { category: "matura", re: /matura|maturit[äa]t|matur\b|maturpr[üu]fung|maturjahr|letzte[sn]? (gymi|gymnasium)[- ]?jahr/i },
@@ -190,7 +192,7 @@ export function extractGrade(info: ListingInfo): Grade {
 
   // "2. Gymi", "2. Klasse am Gymi", "2. Jahr des Kurzzeitgymnasiums", "Gymi 2", "Y3 Gymi"
   let gymi =
-    num(new RegExp(`\\b(\\d{1,2})\\.\\s?(?:klasse|jahr|gymi-?jahr)?\\s?(?:des|im|am|an der|in der|vom)?\\s?${GYMI}`)) ??
+    num(new RegExp(`\\b(\\d{1,2})\\.\\s?(?:klasse|jahr|gymi-?jahr)?\\s?(?:des|der|im|am|an der|in der|vom)?\\s?${GYMI}`)) ??
     num(new RegExp(`\\b(?:gymi|gymnasium|kanti)\\s?(\\d)\\b`)) ??
     num(new RegExp(`\\b(?:y|year )(\\d)\\s?${GYMI}`));
   let klasse: number | null = null;
@@ -213,7 +215,7 @@ export function extractGrade(info: ListingInfo): Grade {
 }
 
 export const COURSE_GROUPS = [
-  "sek1", "sek2", "sek3", "zap_lang", "zap_kurz", "gymi_unter", "gymi_mittel", "matura", "bm",
+  "sek1", "sek2", "sek3", "zap_lang", "zap_kurz", "gymi_unter", "gymi_mittel", "matura", "bm", "offen",
 ] as const;
 export type CourseGroup = (typeof COURSE_GROUPS)[number];
 
@@ -227,25 +229,27 @@ export const GROUP_LABEL: Record<CourseGroup, string> = {
   gymi_mittel: "Gymi Mittelstufe (3.–4. Jahr)",
   matura: "Matura",
   bm: "Berufsmatura",
+  offen: "Stufe offen (nachfragen)",
 };
 
 /** Kurzform fuer Kursnamen: "Mathe-Repetitionskurs 2. Sek". */
 const GROUP_SHORT: Record<CourseGroup, string> = {
   sek1: "1. Sek", sek2: "2. Sek", sek3: "3. Sek",
-  zap_lang: "Langgymi-Prüfung", zap_kurz: "Kurzgymi-Prüfung",
+  zap_lang: "für die Langgymi-Prüfung", zap_kurz: "für die Kurzgymi-Prüfung",
   gymi_unter: "Gymi Unterstufe", gymi_mittel: "Gymi Mittelstufe",
-  matura: "Matura", bm: "Berufsmatura",
+  matura: "für die Matura", bm: "für die Berufsmatura", offen: "",
 };
 
 export const isCourseGroup = (g: string): g is CourseGroup => (COURSE_GROUPS as readonly string[]).includes(g);
 
-/** hoch = Stufe und Jahr stehen im Inserat; mittel = abgeleitet; tief = keine Kursgruppe. */
+/** hoch = Stufe und Jahr stehen im Inserat; mittel = abgeleitet; tief = Jahr unbekannt ("offen"). */
 export type Sicherheit = "hoch" | "mittel" | "tief";
 
 export function courseGroup(category: LevelCategory, g: Grade, info: ListingInfo): { gruppe: CourseGroup | null; sicherheit: Sicherheit } {
   const t = normalize(`${info.schulstufe}\n${info.title}\n${info.description}`);
   const hit = (gruppe: CourseGroup, sicherheit: Sicherheit = "hoch") => ({ gruppe, sicherheit });
-  const none = { gruppe: null, sicherheit: "tief" as const };
+  // Stufe passt, Jahr fehlt: "offen" — dort fragt die Nachricht nach der genauen Stufe.
+  const none = { gruppe: "offen" as const, sicherheit: "tief" as const };
   switch (category) {
     case "bm": return hit("bm");
     case "matura": return hit("matura");
@@ -511,16 +515,41 @@ export type Course = {
   template: string;
 };
 
+/** Mein Preis im Einzelunterricht, Vergleich fuer {einzeltotal}. */
+export const PRIVATE_PRICE_PER_LESSON = 89;
+
 export const PLACEHOLDERS = [
-  "{vorname}", "{kursname}", "{fach}", "{daten}", "{uhrzeit}", "{ort}", "{preis}", "{total}", "{anmeldeschluss}",
+  "{vorname}", "{kursname}", "{fach}", "{daten}", "{uhrzeit}", "{ort}", "{preis}", "{total}", "{lektionen}", "{einzeltotal}", "{anmeldeschluss}",
 ] as const;
 
 export const DEFAULT_TEMPLATE = [
   "Hallo {vorname}",
   "Ich hatte mich vor einiger Zeit auf Ihre Anfrage für {fach}-Nachhilfe gemeldet. Falls Sie noch suchen, habe ich ein neues, deutlich günstigeres Angebot:",
   "Ich starte einen {kursname} in einer kleinen Gruppe (maximal 6 Teilnehmende), an 4 Samstagen ({daten}), jeweils {uhrzeit}, {ort}.",
-  "Ihr Kind lernt bei einem sehr erfahrenen Lehrer (über 12 Jahre Erfahrung, Schwerpunkt Gymi und Matura), aber zu CHF {preis} pro Lektion statt CHF 89 im Einzelunterricht. Dazu kommt Zugang zu meiner Übungsplattform: Ihr Kind übt zwischen den Terminen, und ich sehe genau, wo es steht.",
+  "Ihr Kind lernt bei einem sehr erfahrenen Lehrer (über 12 Jahre Erfahrung, Schwerpunkt Gymi und Matura). Der ganze Kurs mit {lektionen} Lektionen kostet CHF {total}, also CHF {preis} pro Lektion. Dieselben {lektionen} Lektionen im Einzelunterricht kosten bei mir CHF {einzeltotal}. Dazu kommt Zugang zu meiner Übungsplattform: Ihr Kind übt zwischen den Terminen, und ich sehe genau, wo es steht.",
   'Soll ich einen Platz reservieren? Ein kurzes "Ja" hier im Chat reicht, dann schicke ich alle Details. Der Kurs findet ab 3 Anmeldungen statt; bezahlt wird erst, wenn er sicher stattfindet.',
+  "Liebe Grüsse\nOmid",
+].join("\n\n");
+
+/**
+ * BM: Anfragen schreiben oft die Lernenden selbst (Lehre mit BM), oft auch Eltern —
+ * darum ohne "Ihr Kind", in der Ich-Form; Pruefungsfokus statt "Gymi und Matura".
+ */
+export const BM_TEMPLATE = [
+  "Hallo {vorname}",
+  "Ich hatte mich vor einiger Zeit auf Ihre Anfrage für {fach}-Nachhilfe gemeldet. Falls Sie noch suchen, habe ich ein neues, deutlich günstigeres Angebot:",
+  "Ich starte einen {kursname} in einer kleinen Gruppe (maximal 6 Teilnehmende), an 4 Samstagen ({daten}), jeweils {uhrzeit}, {ort}. Wir arbeiten gezielt auf die BM-Prüfungen hin und lösen typische Prüfungsaufgaben.",
+  "Ich unterrichte seit über 12 Jahren. Der ganze Kurs mit {lektionen} Lektionen kostet CHF {total}, also CHF {preis} pro Lektion. Dieselben {lektionen} Lektionen im Einzelunterricht kosten bei mir CHF {einzeltotal}. Dazu kommt Zugang zu meiner Übungsplattform: Zwischen den Terminen wird online weitergeübt, und ich sehe genau, wo es noch hakt.",
+  'Soll ich einen Platz reservieren? Ein kurzes "Ja" hier im Chat reicht, dann schicke ich alle Details. Der Kurs findet ab 3 Anmeldungen statt; bezahlt wird erst, wenn er sicher stattfindet.',
+  "Liebe Grüsse\nOmid",
+].join("\n\n");
+
+/** Fuer die Kursgruppe "offen": kein Kursangebot, sondern die Frage nach der genauen Stufe. */
+export const INQUIRY_TEMPLATE = [
+  "Hallo {vorname}",
+  "Ich hatte mich vor einiger Zeit auf Ihre Anfrage für {fach}-Nachhilfe gemeldet. Falls Sie noch suchen: Ich biete neu günstige {fach}-Kurse in kleinen Gruppen an (maximal 6 Teilnehmende), für verschiedene Stufen, von der Sek über die Gymi-Vorbereitung bis zur Matura und BM.",
+  "Damit ich Ihnen den passenden Kurs schicken kann: Welche Stufe und welche Klasse ist es genau (z.B. 2. Sek oder 1. Jahr Kurzgymi)?",
+  "Eine kurze Antwort hier im Chat reicht, dann schicke ich Ihnen alle Informationen.",
   "Liebe Grüsse\nOmid",
 ].join("\n\n");
 
@@ -530,6 +559,7 @@ export const FOLLOWUP_MARKER = "Ich hatte mich vor einiger Zeit";
 const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 export function suggestCourseName(fach: string, gruppe: CourseGroup): string {
+  if (gruppe === "offen") return `${fach}: Stufe nachfragen`;
   const kind = gruppe.startsWith("zap") || gruppe === "matura" || gruppe === "bm" ? "Vorbereitungskurs" : "Repetitionskurs";
   return `${fach}-${kind} ${GROUP_SHORT[gruppe]}`;
 }
@@ -547,13 +577,13 @@ export function newCourse(fach: string, gruppe: CourseGroup, now = new Date()): 
     active: false,
     saturdays: [sat(0), sat(1), sat(2), sat(3)],
     time: "9:30–11:10 Uhr",
-    pricePerLesson: 45,
+    pricePerLesson: 55,
     lessons: 8,
     mode: "online",
     place: "",
     deadline: sat(-1),
     minParticipants: 3,
-    template: DEFAULT_TEMPLATE,
+    template: gruppe === "offen" ? INQUIRY_TEMPLATE : gruppe === "bm" ? BM_TEMPLATE : DEFAULT_TEMPLATE,
   };
 }
 
@@ -579,6 +609,7 @@ const DU_REPLACEMENTS: Array<[RegExp, string]> = [
   [/\bIhr Kind übt\b/g, "Du übst"],
   [/\bwo es steht\b/g, "wo du stehst"],
   [/\bwo jemand steht\b/g, "wo du stehst"],
+  [/\bich Ihnen\b/g, "ich dir"],
 ];
 const SIE_LEFT = /\b(Sie|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihres|Ihnen|Ihr Kind)\b/;
 
@@ -601,6 +632,8 @@ export function renderMessage(c: Course, firstName: string, wantAnrede: Anrede):
     "{ort}": c.mode === "online" ? "online" : `vor Ort${c.place.trim() ? ` (${c.place.trim()})` : ""}`,
     "{preis}": String(c.pricePerLesson),
     "{total}": String(c.pricePerLesson * c.lessons),
+    "{lektionen}": String(c.lessons),
+    "{einzeltotal}": String(PRIVATE_PRICE_PER_LESSON * c.lessons),
     "{anmeldeschluss}": dayMonth(c.deadline),
   };
   let text = c.template;
@@ -636,6 +669,10 @@ export function validateCourses(courses: Course[]): string[] {
     if (!c.template.trim()) errors.push(`${name}: Text ist leer.`);
     const unknown = c.template.match(/\{[a-zäöü]+\}/g)?.filter((p) => !(PLACEHOLDERS as readonly string[]).includes(p));
     if (unknown?.length) errors.push(`${name}: unbekannter Platzhalter ${unknown.join(", ")}.`);
+    // Ohne den Satz erkennt der naechste Lauf das Nachfassen nicht und koennte doppelt schreiben.
+    if (!c.template.includes(FOLLOWUP_MARKER)) errors.push(`${name}: Text muss „${FOLLOWUP_MARKER}“ enthalten.`);
+    // Stufe nachfragen: keine Termine, kein Preis.
+    if (c.gruppe === "offen") continue;
     if (!(c.pricePerLesson > 0) || !(c.lessons > 0)) errors.push(`${name}: Preis und Anzahl Lektionen müssen > 0 sein.`);
     if (!(c.minParticipants >= 1)) errors.push(`${name}: Mindestteilnehmerzahl muss ≥ 1 sein.`);
     if (c.saturdays.length !== 4 || c.saturdays.some((d) => !ISO.test(d))) errors.push(`${name}: bitte vier Termine angeben.`);

@@ -26,6 +26,7 @@ import {
   newCourse,
   parseCsv,
   parseTutor24Date,
+  FOLLOWUP_MARKER,
   renderMessage,
   scrollStop,
   snippetSig,
@@ -68,6 +69,11 @@ describe("classifyListing", () => {
       "Sek mit Kantonsschule als Ziel",
       { schulstufe: "Sekundarstufe", description: "Er möchte sein Englisch verbessern und später die Kantonsschule besuchen können." },
       "gymivorbereitung",
+    ],
+    [
+      "Primar mit Sek-Pruefung als Ziel",
+      { schulstufe: "Primarschule", description: "Unser Sohn (6. Klasse) bereitet sich vor. Erfahrung mit der Berner Sekundarschul-Kontrollprüfung wäre von Vorteil." },
+      "ausgeschlossen",
     ],
     [
       "Probezeit am Gymi",
@@ -154,6 +160,7 @@ describe("extractGrade", () => {
     expect(g("Gymnasium", "Tutor needed in maths for Y3 Gymi student").gymiJahr).toBe(3);
     expect(g("Gymnasium", "Er ist in der 9. Klasse am Gymnasium.")).toEqual({ klasse: 9, gymiJahr: 3, kurz: null });
     expect(g("Gymnasium", "Ich besuche das Gymnasium und bin im letzten Jahr.").gymiJahr).toBe(6);
+    expect(g("Gymnasium", "Ich besuche derzeit die 2. Klasse der Kantonsschule Wettingen.").gymiJahr).toBe(2);
   });
   it("Gymi-Pruefung ist kein Gymi-Jahr", () => {
     expect(g("Primarschule", "Sie ist in der 6. Klasse Gymiprüfung im März").gymiJahr).toBeNull();
@@ -176,8 +183,9 @@ describe("analyzeListing: Kursgruppe und Sicherheit", () => {
     ["Gymnasium", "Schülerin im zweiten Jahr des Kurzzeitgymnasiums", "gymi_mittel", "hoch"],
     ["Gymnasium", "Ich schreibe im Juni die Matura.", "matura", "hoch"],
     ["Berufslehre", "Lehre mit BM, Mathe ist schwierig.", "bm", "hoch"],
-    ["Gymnasium", "Unser Kind besucht das Gymnasium.", "", "tief"],
-    ["Sekundarstufe", "Nachhilfe für Sekundarstufe.", "", "tief"],
+    ["Gymnasium", "Unser Kind besucht das Gymnasium.", "offen", "tief"],
+    ["Sekundarstufe", "Nachhilfe für Sekundarstufe.", "offen", "tief"],
+    ["Gymnasium", "Ich besuche derzeit die 2. Klasse der Kantonsschule Wettingen.", "gymi_unter", "hoch"],
   ])("%s / %s → %s", (schulstufe, description, gruppe, sicherheit) => {
     const r = a(schulstufe, description);
     expect(r.kursgruppe).toBe(gruppe);
@@ -256,7 +264,8 @@ describe("Kurse und Nachricht", () => {
   it("neuer Kurs: Namensvorschlag, inaktiv, 4 Samstage, Anmeldeschluss davor, gueltig", () => {
     const c = newCourse("Mathe", "sek2", NOW);
     expect(c.name).toBe("Mathe-Repetitionskurs 2. Sek");
-    expect(newCourse("Physik", "matura", NOW).name).toBe("Physik-Vorbereitungskurs Matura");
+    expect(newCourse("Physik", "matura", NOW).name).toBe("Physik-Vorbereitungskurs für die Matura");
+    expect(newCourse("Mathe", "bm", NOW).name).toBe("Mathe-Vorbereitungskurs für die Berufsmatura");
     expect(c.active).toBe(false);
     expect(c.saturdays.every((d) => new Date(d).getDay() === 6)).toBe(true);
     expect(c.saturdays[0] > "2026-11-15").toBe(true);
@@ -270,11 +279,11 @@ describe("Kurse und Nachricht", () => {
     const r = renderMessage(c, "Michael", "Sie");
     expect(r.text.startsWith("Hallo Michael\n\nIch hatte mich vor einiger Zeit auf Ihre Anfrage für Mathe-Nachhilfe gemeldet.")).toBe(true);
     expect(r.text).toContain("Ich starte einen Mathe-Repetitionskurs 2. Gymi in einer kleinen Gruppe (maximal 6 Teilnehmende), an 4 Samstagen (28.11., 5.12., 12.12. und 19.12.), jeweils 9:30–11:10 Uhr, online.");
-    expect(r.text).toContain("CHF 45 pro Lektion statt CHF 89");
+    expect(r.text).toContain("Der ganze Kurs mit 8 Lektionen kostet CHF 440, also CHF 55 pro Lektion. Dieselben 8 Lektionen im Einzelunterricht kosten bei mir CHF 712.");
     expect(r.text).toContain("Der Kurs findet ab 3 Anmeldungen statt");
     expect(r.text.endsWith("Liebe Grüsse\nOmid")).toBe(true);
     const t = renderMessage(course({ template: "{fach} {total} {anmeldeschluss} {ort}", deadline: "2026-11-21", mode: "vor Ort", place: "Zürich" }), "", "Sie").text;
-    expect(t).toBe("Mathe 360 21.11. vor Ort (Zürich)");
+    expect(t).toBe("Mathe 440 21.11. vor Ort (Zürich)");
   });
 
   it("du-Form fuer den Standardtext, Fallback bei eigenem Text", () => {
@@ -296,11 +305,33 @@ describe("Kurse und Nachricht", () => {
   });
 
   it("lehnt Links, Telefonnummern, unbekannte Platzhalter und fehlende Daten ab", () => {
-    expect(validateCourses([course({ template: "Hallo\nwww.mathetogo.xyz" })])).toHaveLength(1);
-    expect(validateCourses([course({ template: "Hallo\n079 123 45 67" })])).toHaveLength(1);
-    expect(validateCourses([course({ template: "Hallo {name}" })])).toHaveLength(1);
+    const t = (rest: string) => `Hallo\n${FOLLOWUP_MARKER}\n${rest}`;
+    expect(validateCourses([course({ template: t("www.mathetogo.xyz") })])).toHaveLength(1);
+    expect(validateCourses([course({ template: t("079 123 45 67") })])).toHaveLength(1);
+    expect(validateCourses([course({ template: t("{name}") })])).toHaveLength(1);
+    expect(validateCourses([course({ template: "Hallo, neues Angebot" })])).toHaveLength(1);
     expect(validateCourses([course({ deadline: "" })])).toHaveLength(1);
     expect(validateCourses([course(), course()])).toHaveLength(1);
+  });
+
+  it("BM-Vorlage: ohne 'Ihr Kind', du-Form ableitbar, gueltig", () => {
+    const bm = { ...newCourse("Mathe", "bm", NOW), id: "bm1" };
+    expect(validateCourses([bm])).toEqual([]);
+    const sie = renderMessage(bm, "", "Sie").text;
+    expect(sie).not.toMatch(/Ihr Kind/);
+    expect(sie).toContain("Ich starte einen Mathe-Vorbereitungskurs für die Berufsmatura in einer kleinen Gruppe");
+    expect(renderMessage(bm, "Lea", "du")).toMatchObject({ anrede: "du" });
+  });
+
+  it("Stufe nachfragen: ohne Termine gueltig, du-Form ableitbar, kein Link", () => {
+    const q = { ...newCourse("Mathe", "offen", NOW), saturdays: ["", "", "", ""] as Course["saturdays"], deadline: "" };
+    expect(q.name).toBe("Mathe: Stufe nachfragen");
+    expect(validateCourses([q])).toEqual([]);
+    const du = renderMessage(q, "Lea", "du");
+    expect(du.anrede).toBe("du");
+    expect(du.text).toContain("Damit ich dir den passenden Kurs");
+    expect(du.text).toContain(FOLLOWUP_MARKER);
+    expect(containsForbiddenContact(renderMessage(q, "Lea", "Sie").text)).toBe(false);
   });
 
   it("formatSaturdays", () => {

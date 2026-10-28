@@ -96,6 +96,8 @@ function CourseEditor({
   const preview = renderMessage(course, "Lea", previewDu ? "du" : "Sie");
   const st = courseStats(course, log);
   const subjects = Array.from(new Set([...settings.mySubjects, course.fach]));
+  // Stufe nachfragen: nur Text, keine Termine/Preise/Zusagen.
+  const inquiry = course.gruppe === "offen";
 
   return (
     <div className="rounded-xl border border-gray-100">
@@ -109,8 +111,13 @@ function CourseEditor({
         </span>
         <span className="flex items-center gap-2 text-xs text-gray-600" title="Ampel: grün ab Mindestteilnehmerzahl Zusagen, gelb bei mindestens einer, rot bei keiner">
           <span className={`inline-block h-2.5 w-2.5 rounded-full ${AMPEL[st.ampel]}`} />
-          {st.angeschrieben} angeschrieben · {st.geantwortet} geantwortet ({pct(st.quote)}) · <b>{st.zusagen}</b>/{course.minParticipants} Zusagen ·{" "}
-          {st.tageBisSchluss >= 0 ? `noch ${st.tageBisSchluss} Tage bis Anmeldeschluss` : "Anmeldeschluss vorbei"}
+          {st.angeschrieben} angeschrieben · {st.geantwortet} geantwortet ({pct(st.quote)})
+          {!inquiry && (
+            <>
+              {" "}· <b>{st.zusagen}</b>/{course.minParticipants} Zusagen ·{" "}
+              {st.tageBisSchluss >= 0 ? `noch ${st.tageBisSchluss} Tage bis Anmeldeschluss` : "Anmeldeschluss vorbei"}
+            </>
+          )}
         </span>
         <button onClick={onToggle} className="ml-auto text-xs text-[#4A7FC1] underline underline-offset-2">
           {open ? "Einklappen" : "Bearbeiten"}
@@ -140,6 +147,13 @@ function CourseEditor({
                 </select>
               </label>
             </div>
+            {inquiry ? (
+              <p className="text-xs text-gray-500">
+                Für Kandidaten, deren Inserat nur die Stufe nennt (z.B. „Sekundarstufe“), nicht das Jahr. Die Nachricht fragt nach der genauen Stufe; mit der Antwort
+                ordnest du sie selbst einem Kurs zu.
+              </p>
+            ) : (
+            <>
             <div className="flex flex-wrap items-center gap-2">
               <label>Termine</label>
               {course.saturdays.map((d, i) => (
@@ -189,6 +203,8 @@ function CourseEditor({
                 <input type="number" min={1} value={course.minParticipants} disabled={disabled} onChange={(e) => set("minParticipants", Number(e.target.value))} className={`${inputClass} w-16`} />
               </label>
             </div>
+            </>
+            )}
             <div>
               <textarea
                 value={course.template}
@@ -329,7 +345,13 @@ export function Tutor24Followup() {
   const { state, send } = status;
   const setSettings = (patch: Partial<FollowupSettings>) => setDraft({ ...draft, settings: { ...draft.settings, ...patch } });
   const setCourses = (courses: Course[]) => setDraft({ ...draft, courses });
-  const activeCount = draft.courses.filter((c) => c.active).length;
+  const activeCount = draft.courses.filter((c) => c.active && c.gruppe !== "offen").length;
+  // Derselbe Knopf in "Meine Faecher", bei den Kursen und beim Senden: die liegen Bildschirme auseinander.
+  const saveButton = (
+    <button onClick={() => void saveConfig()} disabled={!dirty || saving || running || errors.length > 0} className={`ml-auto ${btnPrimary} py-1.5`}>
+      {saving ? "Speichert…" : dirty ? "Fächer & Kurse speichern" : "Gespeichert"}
+    </button>
+  );
   const addCourse = (fach: string, gruppe: CourseGroup) => {
     const c = newCourse(fach, gruppe);
     setCourses([...draft.courses, c]);
@@ -398,9 +420,7 @@ export function Tutor24Followup() {
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <h2 className="font-semibold text-gray-900">Meine Fächer</h2>
           <p className="text-xs text-gray-500">Nur diese Fächer zählen für Kurse und Vorschläge.</p>
-          <button onClick={() => void saveConfig()} disabled={!dirty || saving || running || errors.length > 0} className={`ml-auto ${btnPrimary} py-1.5`}>
-            {saving ? "Speichert…" : dirty ? "Fächer & Kurse speichern" : "Gespeichert"}
-          </button>
+          {saveButton}
         </div>
         <div className="flex flex-wrap gap-2">
           {SUBJECTS.map((s) => {
@@ -528,7 +548,7 @@ export function Tutor24Followup() {
                             disabled={running}
                             className="rounded-lg bg-[#4A7FC1] px-3 py-1 text-xs font-semibold text-white hover:bg-[#3a6fb1] disabled:opacity-50"
                           >
-                            Kurs anlegen
+                            {d.gruppe === "offen" ? "Nachfrage anlegen" : "Kurs anlegen"}
                           </button>
                         )}
                       </td>
@@ -552,7 +572,14 @@ export function Tutor24Followup() {
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <h2 className="font-semibold text-gray-900">Kurse</h2>
           <p className="text-xs text-gray-500">Gesendet wird nur für aktive Kurse. Neue Kurse sind inaktiv.</p>
+          {saveButton}
         </div>
+        {draft.courses.length > 0 && !draft.courses.some((c) => c.active) && (
+          <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+            Kein Kurs aktiv — Häkchen vor dem Kursnamen setzen und speichern, sonst wird nichts gesendet.
+          </p>
+        )}
+        {errors.length > 0 && <p className="mb-3 text-xs text-red-600">Speichern nicht möglich: {errors.join(" ")}</p>}
         {activeCount > MAX_ACTIVE_COURSES && (
           <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
             {activeCount} Kurse sind gleichzeitig aktiv. Mehr als {MAX_ACTIVE_COURSES} verteilen die Anmeldungen meist zu dünn.
@@ -728,7 +755,12 @@ export function Tutor24Followup() {
           Bereit mit aktivem Kurs: <b>{send.pending}</b>
           {send.pending > send.queue && ` (davon heute ${send.queue}, der Rest an einem späteren Tag)`}.
         </p>
-        {dirty && <p className="mb-2 text-xs text-amber-700">Bitte zuerst Fächer & Kurse speichern — gesendet wird mit den gespeicherten Kursen.</p>}
+        {dirty && (
+          <div className="mb-2 flex flex-wrap items-center gap-3">
+            <p className="text-xs text-amber-700">Ungespeicherte Änderungen — gesendet wird mit den gespeicherten Kursen.</p>
+            {saveButton}
+          </div>
+        )}
         <button
           onClick={() => void start("send")}
           disabled={blocked || busy || dirty || send.queue === 0}
