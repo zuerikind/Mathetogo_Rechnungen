@@ -177,10 +177,21 @@ async function collectList(
 ): Promise<{ entries: ListEntry[]; changed: Set<string> }> {
   const cache: ListCache = loadListCache(cacheKey);
   await visit(page, `${TUTOR24_BASE_URL}/de/conversations?tab=${tab}`, "liste", () =>
-    waitFor(page, `Liste ${tab}`, () => page.waitForSelector(".js-conversations-list", { timeout: 15_000 }),
+    // Ein leerer Tab hat nur die (versteckte) Mobil-Liste — sichtbar ist dann die Leer-Meldung.
+    waitFor(page, `Liste ${tab}`,
+      () => page.waitForSelector(".js-conversations-list a[data-conversation-id], .js-conversations-main-box h4", { timeout: 15_000 }),
       () => new StopRun(`Unerwarteter Seitenaufbau: Konversationsliste (${tab}) fehlt.`))
   );
   await assertPageOk(page, `Liste ${tab}`);
+  const { hasEntries, empty } = await page.evaluate(() => ({
+    hasEntries: !!document.querySelector(".js-conversations-list a[data-conversation-id]"),
+    empty: /keine .*Unterhaltungen/i.test(document.querySelector(".js-conversations-main-box")?.textContent ?? ""),
+  }));
+  if (!hasEntries) {
+    if (!empty) throw new StopRun(`Unerwarteter Seitenaufbau: Konversationsliste (${tab}) ohne Einträge und ohne Leer-Meldung.`);
+    log(`Liste „${tab}“: leer.`);
+    return { entries: [], changed: new Set() };
+  }
 
   const read = async (): Promise<ListEntry[]> => {
     const raw = await page.evaluate(() => {
