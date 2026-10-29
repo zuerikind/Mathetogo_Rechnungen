@@ -3,7 +3,7 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { academigoJobState, tutor24JobState } from "@/lib/automation-state";
-import { MAX_SENDS_PER_DAY } from "@/lib/tutor24-followup";
+import { MAX_SENDS_PER_DAY, needsReplyCheck, validateCourses } from "@/lib/tutor24-followup";
 import {
   FOLLOWUP_DIR,
   RUN_LOG_PATH,
@@ -17,7 +17,9 @@ import {
   sendQueue,
   sentToday,
   setMark,
+  assignToCourse,
   setRowStatus,
+  setRowAnrede,
   writeStatus,
   type RunStatus,
 } from "@/lib/tutor24-followup-store";
@@ -93,7 +95,7 @@ export async function GET() {
       budget,
       pending: pending.length,
       queue: queue.length,
-      recipients: queue.map((r) => ({ name: r.name, kurs: r.course.name })),
+      recipients: queue.map((r) => ({ id: r.conversation_id, name: r.name, kurs: r.course.name, anrede: r.anrede, problem: r.problem, text: r.text })),
     },
   });
 }
@@ -104,7 +106,9 @@ type PostBody =
   | { action: "replies" }
   | { action: "config"; settings: unknown; courses: unknown }
   | { action: "status"; id: string; status: "send" | "skip" }
-  | { action: "mark"; id: string; markierung: string };
+  | { action: "mark"; id: string; markierung: string }
+  | { action: "assign"; id: string; kurs: string }
+  | { action: "anrede"; id: string; anrede: "du" | "Sie" };
 
 /** POST — Lauf starten, Faecher/Kurse speichern, Zeile umschalten oder Antwort markieren */
 export async function POST(req: NextRequest) {
@@ -125,6 +129,15 @@ export async function POST(req: NextRequest) {
       setRowStatus(String(body.id), body.status);
       return NextResponse.json({ ok: true });
     }
+    if (body.action === "anrede") {
+      if (body.anrede !== "du" && body.anrede !== "Sie") throw new Error("Anrede muss du oder Sie sein.");
+      setRowAnrede(String(body.id), body.anrede);
+      return NextResponse.json({ ok: true });
+    }
+    if (body.action === "assign") {
+      assignToCourse(String(body.id), String(body.kurs));
+      return NextResponse.json({ ok: true });
+    }
     if (body.action === "mark") {
       setMark(String(body.id), String(body.markierung));
       return NextResponse.json({ ok: true });
@@ -134,9 +147,16 @@ export async function POST(req: NextRequest) {
       if (blocked) return NextResponse.json({ error: `tutor24 ist belegt: ${blocked}` }, { status: 409 });
       const max = body.action === "preview" ? Math.floor(Number(body.max ?? 150)) : undefined;
       if (max !== undefined && !(max >= 1)) throw new Error("max. Konversationen muss ≥ 1 sein.");
-      if (body.action === "send" && sendQueue().queue.length === 0)
-        throw new Error("Nichts zu senden: keine Zeile mit aktivem passendem Kurs und status=send, oder Tageslimit erreicht.");
-      if (body.action === "replies" && readLog().length === 0) throw new Error("Noch nichts nachgefasst — das Protokoll ist leer.");
+      const invalid = body.action === "send" ? validateCourses(loadCourses()) : [];
+      if (invalid.length) throw new Error(`Bitte zuerst die Kurse korrigieren: ${invalid.join(" ")}`);
+      if (body.action === "send") {
+        const { queue } = sendQueue();
+        if (queue.length === 0) throw new Error("Nichts zu senden: keine Zeile mit aktivem passendem Kurs und status=send, oder Tageslimit erreicht.");
+        const bad = queue.filter((r) => r.problem);
+        if (bad.length) throw new Error(`Nichts gesendet — fehlerhafte Nachrichten: ${bad.map((r) => `${r.name}: ${r.problem}`).join("; ")}`);
+      }
+      if (body.action === "replies" && !readLog().some(needsReplyCheck))
+        throw new Error("Nichts zu prüfen: alle Angeschriebenen haben geantwortet oder sind schon eingeordnet.");
 
       startRun(body.action, max);
       return NextResponse.json({ started: true });

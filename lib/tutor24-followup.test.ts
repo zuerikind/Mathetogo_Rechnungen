@@ -26,6 +26,10 @@ import {
   newCourse,
   parseCsv,
   parseTutor24Date,
+  pipelineStage,
+  needsReplyCheck,
+  findDuForm,
+  messageProblem,
   FOLLOWUP_MARKER,
   renderMessage,
   scrollStop,
@@ -253,6 +257,8 @@ describe("detectAnrede", () => {
     expect(detectAnrede("meine beiden 11-jährigen Söhne")).toBe("Sie");
     expect(detectAnrede("Ich bin 14 und suche Hilfe")).toBe("Sie");
     expect(detectAnrede("Ich suche Hilfe für meine Matura")).toBe("du");
+    expect(detectAnrede("Tutor needed in maths for my daughter, Y3 Gymi")).toBe("Sie");
+    expect(detectAnrede("We are looking for help for our son")).toBe("Sie");
   });
 });
 
@@ -291,7 +297,9 @@ describe("Kurse und Nachricht", () => {
     expect(r.anrede).toBe("du");
     expect(r.text).not.toMatch(/\b(Sie|Ihr|Ihre)\b/);
     expect(r.text).toContain("deine Anfrage");
-    expect(r.text).toContain("Du lernst");
+    expect(r.text).toContain("Falls du noch suchst");
+    // neutral: passt fuer Eltern und Lernende
+    expect(renderMessage(course(), "Lea", "Sie").text).not.toMatch(/Ihr Kind/);
     expect(toDuForm("Haben Sie Zeit?").ok).toBe(false);
     expect(renderMessage(course({ template: "Hallo {vorname}, haben Sie Zeit?" }), "Lea", "du").warning).toBeTruthy();
   });
@@ -310,6 +318,20 @@ describe("Kurse und Nachricht", () => {
     expect(validateCourses([course({ template: t("079 123 45 67") })])).toHaveLength(1);
     expect(validateCourses([course({ template: t("{name}") })])).toHaveLength(1);
     expect(validateCourses([course({ template: "Hallo, neues Angebot" })])).toHaveLength(1);
+    // Vorlage muss Sie-Form sein: sonst bekaemen Eltern "deine Anfrage … Ihr Kind".
+    expect(validateCourses([course({ template: t("auf deine Anfrage. Ihr Kind lernt.") })])[0]).toContain("„deine“");
+    expect(validateCourses([course({ template: t("Falls du noch suchst") })])).toHaveLength(1);
+    expect(validateCourses([course({ template: t("Du übst.") })])).toHaveLength(1);
+    // "Hallo Karla … Ihr Kind lernt" passt nicht, wenn Karla selbst angefragt hat
+    expect(validateCourses([course({ template: t("Ihr Kind lernt bei mir.") })])[0]).toContain("„Ihr Kind“");
+    expect(validateCourses([course({ template: t("Ihre Tochter lernt bei mir.") })])).toHaveLength(1);
+    expect(messageProblem(`Hallo Karla\n${FOLLOWUP_MARKER} … Ihr Kind lernt`, "Sie")).toContain("Eltern");
+    expect(messageProblem(`Hallo Karla\n${FOLLOWUP_MARKER} … Falls du noch suchst`, "Sie")).toContain("mischt");
+    expect(messageProblem(`Hallo Karla\n${FOLLOWUP_MARKER} … {daten}`, "Sie")).toContain("Platzhalter");
+    expect(messageProblem(`Hallo Karla\n${FOLLOWUP_MARKER} … alles gut`, "Sie")).toBeNull();
+    expect(findDuForm("Ihr Kind übt zwischen den Terminen, Dunkelheit, dirigieren")).toBeNull();
+    expect(findDuForm("Du übst")).toBe("Du");
+    expect(findDuForm("und übst")).toBe("übst");
     expect(validateCourses([course({ deadline: "" })])).toHaveLength(1);
     expect(validateCourses([course(), course()])).toHaveLength(1);
   });
@@ -421,9 +443,30 @@ describe("Antworten", () => {
     const c = course({ id: "k", deadline: "2026-11-05", minParticipants: 3 });
     const log = (markierung: string, geantwortet = "ja"): Partial<LogRow> => ({ kurs: "k", geantwortet, markierung });
     const s = courseStats(c, [log("Zusage"), log("Absage"), log("", "nein"), log("", "nein"), { kurs: "anderer", markierung: "Zusage" }], NOW);
-    expect(s).toEqual({ angeschrieben: 4, geantwortet: 2, zusagen: 1, quote: 0.5, tageBisSchluss: 10, ampel: "gelb" });
+    expect(s).toEqual({ angeschrieben: 4, geantwortet: 2, zusagen: 1, bezahlt: 0, quote: 0.5, tageBisSchluss: 10, ampel: "gelb" });
     expect(courseStats(c, [], NOW).ampel).toBe("rot");
-    expect(courseStats(c, [log("Zusage"), log("Zusage"), log("Zusage")], NOW).ampel).toBe("gruen");
+    // Bezahlt zaehlt auch als Zusage.
+    expect(courseStats(c, [log("Zusage"), log("Bezahlt"), log("Bezahlt")], NOW)).toMatchObject({ zusagen: 3, bezahlt: 2, ampel: "gruen" });
+  });
+
+  it("Antworten pruefen: nur ohne Antwort und noch nicht eingeordnet", () => {
+    expect(needsReplyCheck({ geantwortet: "nein", markierung: "" })).toBe(true);
+    expect(needsReplyCheck({ geantwortet: "fehler: x", markierung: "offen" })).toBe(true);
+    expect(needsReplyCheck({ geantwortet: "ja", markierung: "offen" })).toBe(false);
+    expect(needsReplyCheck({ geantwortet: "nein", markierung: "Zusage" })).toBe(false);
+  });
+
+  it("Pipeline-Spalte: Einordnung vor Antwortstatus", () => {
+    const st = (markierung: string, geantwortet: string) => pipelineStage({ markierung, geantwortet });
+    expect(st("", "")).toBe("angeschrieben");
+    expect(st("", "nein")).toBe("angeschrieben");
+    expect(st("", "fehler: timeout")).toBe("angeschrieben");
+    expect(st("offen", "ja")).toBe("antwort");
+    expect(st("Frage", "ja")).toBe("interessiert");
+    expect(st("Zusage", "ja")).toBe("zugesagt");
+    // auch ohne erkannte Antwort, z.B. Zusage per WhatsApp
+    expect(st("Bezahlt", "nein")).toBe("bezahlt");
+    expect(st("Absage", "ja")).toBe("abgesagt");
   });
 });
 

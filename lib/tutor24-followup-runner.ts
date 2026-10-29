@@ -29,19 +29,19 @@ import {
   ageDays,
   analyzeListing,
   compareAnalyses,
-  containsForbiddenContact,
   entryChanged,
   findReply,
   hasNewActivity,
+  needsReplyCheck,
   isOfferLevel,
   listSender,
   listSkipReason,
   listingFromConversation,
   needsListing,
   parseTutor24Date,
-  renderMessage,
   scrollStop,
   snippetSig,
+  validateCourses,
   type Bubble,
   type ListCache,
   type ListEntry,
@@ -509,7 +509,16 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
 }
 
 async function send(page: Page, log: Log): Promise<void> {
-  const { pending, queue } = sendQueue(loadCourses(), loadSettings());
+  const courses = loadCourses();
+  // Gespeicherte Kurse koennen aus der Zeit vor einer Pruefregel stammen: vor dem ersten Senden pruefen.
+  const invalid = validateCourses(courses);
+  if (invalid.length) throw new StopRun(`Kurse fehlerhaft, nichts gesendet: ${invalid.join(" ")}`);
+  const { pending, queue } = sendQueue(courses, loadSettings());
+  // Alle Texte VOR der ersten Nachricht pruefen: der Lauf bricht nie mittendrin wegen eines Textes ab.
+  const bad = queue.filter((r) => r.problem);
+  if (bad.length)
+    throw new StopRun(`Nichts gesendet — ${bad.length} Nachricht(en) fehlerhaft: ${bad.map((r) => `${r.name}: ${r.problem}`).join("; ")}`);
+  log(`Alle ${queue.length} Nachrichten vorab geprüft: Anrede, Platzhalter, Nachfass-Satz, keine Links/Nummern.`);
   log(
     `Heute schon gesendet: ${sentToday()}/25. Jetzt: ${queue.length} von ${pending.length} offenen (nur aktive Kurse).` +
       (pending.length > queue.length ? " Der Rest folgt an einem späteren Tag." : "")
@@ -522,10 +531,7 @@ async function send(page: Page, log: Log): Promise<void> {
     checkStop();
     state.done = sentCount;
     state.progress = `${row.name} (${row.conversation_id}), Nr. ${i + 1} von ${queue.length}, ${sentCount} gesendet`;
-    const rendered = renderMessage(row.course, row.name, row.anrede === "du" ? "du" : "Sie");
-    const text = rendered.text.trim();
-    if (!text.startsWith("Hallo") || containsForbiddenContact(text))
-      throw new StopRun(`Nachricht für ${row.conversation_id} sieht nicht wie die Vorlage aus — abgebrochen.`);
+    const text = row.text;
 
     // Zwischen Probelauf und Senden kann eine Antwort gekommen sein: neu pruefen.
     const convo = await readConversation(page, row.conversation_id);
@@ -565,7 +571,7 @@ async function send(page: Page, log: Log): Promise<void> {
       name: row.name,
       zeitstempel: new Date().toISOString(),
       kurs: row.course.id,
-      variante: `${row.course.name}/${rendered.anrede}`,
+      variante: `${row.course.name}/${row.anrede}`,
       status: confirmed ? "gesendet" : "unbestaetigt",
     });
     if (!confirmed) {
@@ -574,7 +580,7 @@ async function send(page: Page, log: Log): Promise<void> {
     }
     sentCount++;
     state.done = sentCount;
-    log(`[${i + 1}/${queue.length}] ✓ ${row.name} (${row.course.name}, ${rendered.anrede})`);
+    log(`[${i + 1}/${queue.length}] ✓ ${row.name} (${row.course.name}, ${row.anrede})`);
 
     if (i < queue.length - 1) {
       const wait = jitter(60_000, 180_000);
@@ -591,7 +597,7 @@ async function send(page: Page, log: Log): Promise<void> {
 
 /** Nur lesend: kam nach meinem Nachfassen eine Antwort? Gewertet wird sie nicht — das markiere ich im Tab. */
 async function replies(page: Page, log: Log): Promise<void> {
-  const open = readLog().filter((r) => r.geantwortet !== "ja");
+  const open = readLog().filter(needsReplyCheck);
   log(`${open.length} nachgefasste Konversationen ohne bekannte Antwort.`);
   if (!open.length) return;
   // Liste nur so weit laden, bis alle gesuchten Konversationen drin sind (oder aelter als das erste Nachfassen).
@@ -622,6 +628,15 @@ async function replies(page: Page, log: Log): Promise<void> {
     }
     try {
       const convo = await readConversation(page, r.conversation_id);
+      // Absage ueber tutor24 ist eine Systemmeldung, keine Chat-Blase: findReply saehe sie nie.
+      // Vor dem Senden war sie nicht da (Senden prueft das), also kam sie nach dem Nachfassen.
+      if (convo.service.some((t) => /nicht an ihrer bewerbung interessiert/i.test(t))) {
+        updateLog(r.conversation_id, { geantwortet: "ja", antwort: "Absage über tutor24 (Systemmeldung)", markierung: "Absage" });
+        answered++;
+        errorsInRow = 0;
+        log(`${tag}: Absage über tutor24`);
+        continue;
+      }
       const reply = findReply(convo.bubbles, new Date(r.zeitstempel));
       updateLog(
         r.conversation_id,

@@ -332,7 +332,8 @@ export function extractAnlass(info: ListingInfo): string {
 /** "du" nur, wenn das Inserat klar vom Schueler selbst stammt; sonst immer "Sie". */
 export function detectAnrede(description: string): Anrede {
   const d = description.toLowerCase();
-  const parent = /\b(mein(e|en)?|unser(e|en)?) (sohn|söhne|tochter|töchter|kind|kinder)\b/;
+  // Inserate sind oft englisch: "my son", "our daughter" schreiben ebenfalls Eltern.
+  const parent = /\b(mein(e|en)?|unser(e|en)?) (sohn|söhne|tochter|töchter|kind|kinder)\b|\b(my|our) (son|sons|daughter|daughters|child|children|kid|kids)\b/;
   if (parent.test(d)) return "Sie";
   const self = /\b(ich suche|ich bin \d{2}|ich bin in der|ich brauche|ich gehe|ich besuche|meine (prüfung|matura|bm)|bin \d{2} jahre)\b/;
   const age = d.match(/\bich bin (\d{2})\b|\b(\d{2}) jahre alt\b/);
@@ -526,7 +527,8 @@ export const DEFAULT_TEMPLATE = [
   "Hallo {vorname}",
   "Ich hatte mich vor einiger Zeit auf Ihre Anfrage für {fach}-Nachhilfe gemeldet. Falls Sie noch suchen, habe ich ein neues, deutlich günstigeres Angebot:",
   "Ich starte einen {kursname} in einer kleinen Gruppe (maximal 6 Teilnehmende), an 4 Samstagen ({daten}), jeweils {uhrzeit}, {ort}.",
-  "Ihr Kind lernt bei einem sehr erfahrenen Lehrer (über 12 Jahre Erfahrung, Schwerpunkt Gymi und Matura). Der ganze Kurs mit {lektionen} Lektionen kostet CHF {total}, also CHF {preis} pro Lektion. Dieselben {lektionen} Lektionen im Einzelunterricht kosten bei mir CHF {einzeltotal}. Dazu kommt Zugang zu meiner Übungsplattform: Ihr Kind übt zwischen den Terminen, und ich sehe genau, wo es steht.",
+  // Neutral statt "Ihr Kind": Anfragen stammen von Eltern UND von Lernenden selbst.
+  "Ich unterrichte seit über 12 Jahren, mit Schwerpunkt Gymi und Matura. Der ganze Kurs mit {lektionen} Lektionen kostet CHF {total}, also CHF {preis} pro Lektion. Dieselben {lektionen} Lektionen im Einzelunterricht kosten bei mir CHF {einzeltotal}. Dazu kommt Zugang zu meiner Übungsplattform: Zwischen den Terminen wird online weitergeübt, und ich sehe genau, wo es noch hakt.",
   'Soll ich einen Platz reservieren? Ein kurzes "Ja" hier im Chat reicht, dann schicke ich alle Details. Der Kurs findet ab 3 Anmeldungen statt; bezahlt wird erst, wenn er sicher stattfindet.',
   "Liebe Grüsse\nOmid",
 ].join("\n\n");
@@ -612,6 +614,13 @@ const DU_REPLACEMENTS: Array<[RegExp, string]> = [
   [/\bich Ihnen\b/g, "ich dir"],
 ];
 const SIE_LEFT = /\b(Sie|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihres|Ihnen|Ihr Kind)\b/;
+/** du-Formen: in einer Vorlage (Sie-Form) ein Fehler, in einer Sie-Nachricht gemischte Anrede. */
+// Unicode-Grenzen statt \b: \b kennt keine Umlaute ("übst").
+const DU_FORM = new RegExp("(?<!\\p{L})(du|dich|dir|dein|deine|deinen|deinem|deiner|deines|suchst|lernst|übst|stehst)(?!\\p{L})", "iu");
+export const findDuForm = (text: string): string | null => text.match(DU_FORM)?.[0] ?? null;
+/** Spricht die Eltern an: falsch, wenn die Lernenden selbst angefragt haben ("Hallo Karla … Ihr Kind"). */
+const PARENT_ADDRESS = /\b(Ihr(em|es|en)?|Ihre) (Kind|Kinder|Sohn|Tochter)\b/;
+export const findParentAddress = (text: string): string | null => text.match(PARENT_ADDRESS)?.[0] ?? null;
 
 export function toDuForm(sieText: string): { text: string; ok: boolean } {
   let t = sieText;
@@ -647,6 +656,22 @@ export function renderMessage(c: Course, firstName: string, wantAnrede: Anrede):
     : { text, anrede: "Sie", warning: "du-Form nicht ableitbar (eigener Text) — Sie-Form verwendet" };
 }
 
+/**
+ * Pruefung einer fertigen Nachricht vor dem Senden; null = in Ordnung.
+ * Der Sende-Lauf prueft damit ALLE Nachrichten, bevor er die erste schickt.
+ */
+export function messageProblem(text: string, anrede: Anrede): string | null {
+  if (!text.startsWith("Hallo")) return "beginnt nicht mit „Hallo“";
+  if (!text.includes(FOLLOWUP_MARKER)) return `Satz „${FOLLOWUP_MARKER}“ fehlt`;
+  if (/\{[a-zäöü]+\}/.test(text)) return "enthält einen nicht ersetzten Platzhalter";
+  if (containsForbiddenContact(text)) return "enthält Link, E-Mail oder Telefonnummer";
+  const du = findDuForm(text);
+  if (anrede === "Sie" && du) return `mischt Sie und du („${du}“)`;
+  const parent = findParentAddress(text);
+  if (parent) return `spricht Eltern an („${parent}“), obwohl evtl. die Lernenden selbst angefragt haben`;
+  return null;
+}
+
 /** Sicherheitsnetz fuer die Regel "keine Telefonnummern, Links, E-Mails". */
 export function containsForbiddenContact(text: string): boolean {
   return /https?:\/\/|www\.|@|\b\d{3}[ ./-]?\d{3}[ ./-]?\d{2}[ ./-]?\d{2}\b/.test(text);
@@ -669,6 +694,12 @@ export function validateCourses(courses: Course[]): string[] {
     if (!c.template.trim()) errors.push(`${name}: Text ist leer.`);
     const unknown = c.template.match(/\{[a-zäöü]+\}/g)?.filter((p) => !(PLACEHOLDERS as readonly string[]).includes(p));
     if (unknown?.length) errors.push(`${name}: unbekannter Platzhalter ${unknown.join(", ")}.`);
+    // Eltern bekaemen sonst "deine Anfrage … Ihr Kind lernt": die du-Form entsteht automatisch.
+    const du = findDuForm(c.template);
+    if (du) errors.push(`${name}: Text bitte in der Sie-Form schreiben, die du-Form entsteht automatisch (gefunden: „${du}“).`);
+    const parent = findParentAddress(c.template);
+    if (parent)
+      errors.push(`${name}: „${parent}“ passt nicht, wenn die Lernenden selbst angefragt haben — bitte neutral formulieren (z.B. „Zwischen den Terminen wird weitergeübt“).`);
     // Ohne den Satz erkennt der naechste Lauf das Nachfassen nicht und koennte doppelt schreiben.
     if (!c.template.includes(FOLLOWUP_MARKER)) errors.push(`${name}: Text muss „${FOLLOWUP_MARKER}“ enthalten.`);
     // Stufe nachfragen: keine Termine, kein Preis.
@@ -695,7 +726,44 @@ export const LOG_COLS = [
 
 export type PreviewRow = Record<(typeof PREVIEW_COLS)[number], string>;
 export type LogRow = Record<(typeof LOG_COLS)[number], string>;
-export const MARKS = ["offen", "Zusage", "Absage", "Frage"] as const;
+export const MARKS = ["offen", "Frage", "Zusage", "Bezahlt", "Absage"] as const;
+export type Mark = (typeof MARKS)[number];
+export const MARK_LABEL: Record<Mark, string> = {
+  offen: "nicht eingeordnet",
+  Frage: "Interessiert / Frage",
+  Zusage: "Zugesagt",
+  Bezahlt: "Bezahlt",
+  Absage: "Abgesagt",
+};
+
+// ── Pipeline pro Kurs ─────────────────────────────────────────────────────────
+
+export const STAGES = ["bereit", "angeschrieben", "antwort", "interessiert", "zugesagt", "bezahlt", "abgesagt"] as const;
+export type Stage = (typeof STAGES)[number];
+export const STAGE_LABEL: Record<Stage, string> = {
+  bereit: "Bereit zum Anschreiben",
+  angeschrieben: "Angeschrieben",
+  antwort: "Antwort erhalten",
+  interessiert: "Interessiert / Frage",
+  zugesagt: "Zugesagt",
+  bezahlt: "Bezahlt",
+  abgesagt: "Abgesagt",
+};
+
+/** "Antworten pruefen" oeffnet nur, wer noch keine Antwort hat und noch nicht von mir eingeordnet ist. */
+export const needsReplyCheck = (r: Partial<LogRow>): boolean =>
+  r.geantwortet !== "ja" && (!r.markierung || r.markierung === "offen");
+
+/** Spalte einer angeschriebenen Person: meine Einordnung zuerst, sonst ob eine Antwort kam. */
+export function pipelineStage(r: Partial<LogRow>): Exclude<Stage, "bereit"> {
+  switch (r.markierung) {
+    case "Frage": return "interessiert";
+    case "Zusage": return "zugesagt";
+    case "Bezahlt": return "bezahlt";
+    case "Absage": return "abgesagt";
+    default: return r.geantwortet === "ja" ? "antwort" : "angeschrieben";
+  }
+}
 
 // ── Zuordnung und effektiver Status ───────────────────────────────────────────
 
@@ -808,7 +876,9 @@ export function findReply(bubbles: Bubble[], sentAt: Date): { date: Date | null;
 export type CourseStats = {
   angeschrieben: number;
   geantwortet: number;
+  /** Zugesagt oder schon bezahlt */
   zusagen: number;
+  bezahlt: number;
   quote: number;
   tageBisSchluss: number;
   ampel: "gruen" | "gelb" | "rot";
@@ -817,13 +887,15 @@ export type CourseStats = {
 export function courseStats(c: Course, log: Array<Partial<LogRow>>, now = new Date()): CourseStats {
   const mine = log.filter((r) => r.kurs === c.id);
   const geantwortet = mine.filter((r) => r.geantwortet === "ja").length;
-  const zusagen = mine.filter((r) => r.markierung === "Zusage").length;
+  const bezahlt = mine.filter((r) => r.markierung === "Bezahlt").length;
+  const zusagen = mine.filter((r) => r.markierung === "Zusage").length + bezahlt;
   const [y, m, d] = c.deadline.split("-").map(Number);
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return {
     angeschrieben: mine.length,
     geantwortet,
     zusagen,
+    bezahlt,
     quote: mine.length ? geantwortet / mine.length : 0,
     tageBisSchluss: Math.round((new Date(y, m - 1, d).getTime() - today.getTime()) / DAY_MS),
     ampel: zusagen >= c.minParticipants ? "gruen" : zusagen > 0 ? "gelb" : "rot",

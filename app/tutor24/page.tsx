@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { DashboardShell } from "@/components/DashboardShell";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { Tutor24Followup } from "@/components/Tutor24Followup";
@@ -42,6 +43,7 @@ Omid`;
 
 export default function Tutor24Page() {
   const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
+  const router = useRouter();
   const [tab, setTab] = useState<"erst" | "nachfassen">("erst");
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [starting, setStarting] = useState(false);
@@ -128,7 +130,8 @@ export default function Tutor24Page() {
         </div>
 
         {tab === "nachfassen" ? (
-          <Tutor24Followup />
+          // Kurse haben eine eigene Seite: "Kurs anlegen" springt dorthin, mit dem Kurs ausgewaehlt.
+          <Tutor24Followup onOpenCourse={(id) => router.push(`/kurse?course=${encodeURIComponent(id)}`)} />
         ) : (
         <>
         {/* Control panel */}

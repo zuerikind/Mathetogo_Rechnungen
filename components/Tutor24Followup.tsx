@@ -5,15 +5,16 @@ import {
   COURSE_GROUPS,
   GROUP_LABEL,
   LEVEL_LABEL,
-  MARKS,
   MAX_ACTIVE_COURSES,
   PLACEHOLDERS,
   SUBJECTS,
   courseStats,
   demandOverview,
   effectiveStatus,
+  formatSaturdays,
   isCourseGroup,
   isOfferLevel,
+  needsReplyCheck,
   newCourse,
   renderMessage,
   validateCourses,
@@ -24,6 +25,7 @@ import {
   type LogRow,
   type PreviewRow,
 } from "@/lib/tutor24-followup";
+import { CoursePipeline } from "./Tutor24Pipeline";
 
 type Row = Omit<PreviewRow, "nachricht">;
 type Mode = "preview" | "send" | "replies";
@@ -52,7 +54,8 @@ type StatusResponse = {
     budget: number;
     pending: number;
     queue: number;
-    recipients: Array<{ name: string; kurs: string }>;
+    /** fertig geprueft: problem = null heisst "so geht es raus" */
+    recipients: Array<{ id: string; name: string; kurs: string; anrede: "du" | "Sie"; problem: string | null; text: string }>;
   };
 };
 
@@ -94,6 +97,8 @@ function CourseEditor({
   const [previewDu, setPreviewDu] = useState(false);
   const set = <K extends keyof Course>(k: K, v: Course[K]) => onChange({ ...course, [k]: v });
   const preview = renderMessage(course, "Lea", previewDu ? "du" : "Sie");
+  // Unabhaengig von der Vorschau: bekommen du-Empfaenger wirklich die du-Form?
+  const duWarning = renderMessage(course, "Lea", "du").warning;
   const st = courseStats(course, log);
   const subjects = Array.from(new Set([...settings.mySubjects, course.fach]));
   // Stufe nachfragen: nur Text, keine Termine/Preise/Zusagen.
@@ -216,6 +221,12 @@ function CourseEditor({
               <p className="mt-1 text-xs text-gray-400">
                 Sie-Form schreiben, die du-Form wird automatisch abgeleitet. Platzhalter: {PLACEHOLDERS.join(" ")}
               </p>
+              {duWarning && (
+                <p className="mt-1 rounded-lg bg-amber-50 p-2 text-xs text-amber-800">
+                  Aus diesem Text lässt sich keine du-Form ableiten: Wer „du“ bekommen sollte, erhält die Sie-Form. Die Sätze der Vorlage
+                  (z.B. „Ihre Anfrage“, „Falls Sie noch suchen“, „ich Ihnen“) werden umgewandelt, eigene Sie-Formulierungen nicht.
+                </p>
+              )}
             </div>
             <button
               onClick={onDelete}
@@ -242,10 +253,25 @@ function CourseEditor({
   );
 }
 
-export function Tutor24Followup() {
+/**
+ * view "nachfassen": Faecher, Nachfrage-Analyse, Vorschau. view "kurse": Kurse, Pipeline, Automationen.
+ * Beide teilen Status, Entwurf und automatisches Speichern; onOpenCourse wechselt auf die Seite /kurse.
+ */
+export function Tutor24Followup({
+  view = "nachfassen",
+  focusCourse = null,
+  onOpenCourse,
+}: {
+  view?: "nachfassen" | "kurse";
+  focusCourse?: string | null;
+  onOpenCourse?: (courseId: string) => void;
+} = {}) {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [openCourse, setOpenCourse] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(focusCourse);
+  const [newFach, setNewFach] = useState("Mathe");
+  const [newGruppe, setNewGruppe] = useState<CourseGroup>("bm");
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [maxChecks, setMaxChecks] = useState(150);
@@ -301,23 +327,48 @@ export function Tutor24Followup() {
 
   const saveConfig = async () => {
     if (!draft) return;
+    const sent = JSON.stringify(draft);
     setSaving(true);
     try {
       const data = await post({ action: "config", ...draft });
-      if (data?.courses) setDraft({ settings: data.settings, courses: data.courses });
+      if (!data) failedRef.current = sent;
+      // Serverfassung (normalisiert) nur uebernehmen, wenn seither nichts getippt wurde.
+      else if (data.courses) setDraft((d) => (JSON.stringify(d) === sent ? { settings: data.settings, courses: data.courses } : d));
       await fetchStatus();
     } finally {
       setSaving(false);
     }
   };
 
+  // Automatisch speichern: ein neu angelegter Kurs war sonst nach dem Neuladen weg.
+  // Ein fehlgeschlagener Stand wird nicht wiederholt, erst die naechste Aenderung.
+  const failedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!dirty || errors.length > 0 || running || saving || failedRef.current === JSON.stringify(draft)) return;
+    const t = setTimeout(() => void saveConfig(), 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, dirty, errors.length, running, saving]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  // Tab-Wechsel innerhalb der 800 ms haengt die Komponente ab: offenen Stand sofort senden.
+  const pendingRef = useRef<string | null>(null);
+  pendingRef.current = dirty && errors.length === 0 && !running ? JSON.stringify({ action: "config", ...draft }) : null;
+  useEffect(
+    () => () => {
+      if (pendingRef.current)
+        void fetch("/api/tutor24/followup", { method: "POST", headers: { "Content-Type": "application/json" }, body: pendingRef.current, keepalive: true });
+    },
+    []
+  );
+
   const start = async (action: Mode) => {
     if (!status) return;
-    if (action === "send") {
-      const s = status.send;
-      const list = s.recipients.map((r) => `• ${r.name || "—"} → ${r.kurs}`).join("\n");
-      if (!window.confirm(`${s.queue} ${s.queue === 1 ? "Nachricht" : "Nachrichten"} senden?\n\n${list}\n\nZwischen den Nachrichten wartet die Automation 60–180 Sekunden.`)) return;
-    }
+    // Kein Bestaetigungsfenster: die gepruefte Liste steht beim Knopf, der Lauf geht dann ohne Rueckfrage durch.
     setBusy(true);
     try {
       if (await post({ action, max: maxChecks })) await fetchStatus();
@@ -340,6 +391,18 @@ export function Tutor24Followup() {
     await fetchStatus();
   };
 
+  const setAnrede = async (id: string, anrede: "du" | "Sie") => {
+    setStatus((s) => s && { ...s, rows: s.rows.map((r) => (r.conversation_id === id ? { ...r, anrede } : r)) });
+    await post({ action: "anrede", id, anrede });
+    await fetchStatus();
+  };
+
+  const assign = async (id: string, kurs: string) => {
+    setStatus((s) => s && { ...s, log: s.log.map((r) => (r.conversation_id === id ? { ...r, kurs, markierung: "Frage" } : r)) });
+    await post({ action: "assign", id, kurs });
+    await fetchStatus();
+  };
+
   if (!status || !draft) return <div className="h-64 animate-pulse rounded-2xl border border-blue-100 bg-white" />;
 
   const { state, send } = status;
@@ -352,11 +415,29 @@ export function Tutor24Followup() {
       {saving ? "Speichert…" : dirty ? "Fächer & Kurse speichern" : "Gespeichert"}
     </button>
   );
-  const addCourse = (fach: string, gruppe: CourseGroup) => {
+  const addCourse = async (fach: string, gruppe: CourseGroup) => {
     const c = newCourse(fach, gruppe);
-    setCourses([...draft.courses, c]);
+    const next = { ...draft, courses: [...draft.courses, c] };
+    setDraft(next);
+    setSelectedId(c.id);
     setOpenCourse(c.id);
+    // Aus dem Nachfassen-Tab: sofort speichern, dann auf die Seite /kurse (die laedt frisch vom Server).
+    if (onOpenCourse && (await post({ action: "config", ...next }))) onOpenCourse(c.id);
   };
+  const openCourseTab = (id: string) => (onOpenCourse ? onOpenCourse(id) : setSelectedId(id));
+  const selected = draft.courses.find((c) => c.id === selectedId) ?? draft.courses[0] ?? null;
+  // "Bereit": wer beim naechsten Senden diesen Kurs bekaeme — auch wenn er gerade pausiert ist.
+  const readyFor = (c: Course) => {
+    const asActive = draft.courses.map((x) => (x.id === c.id ? { ...x, active: true } : x));
+    return status.rows.filter((r) => {
+      const eff = effectiveStatus(r, asActive, draft.settings, logged);
+      return eff.send && eff.course?.id === c.id;
+    });
+  };
+  const waiting = status.log.filter(needsReplyCheck).length;
+  const badRecipients = send.recipients.filter((r) => r.problem);
+  // Auswahl und Anlegen mit demselben Fach: "Mathe" ist nur Startwert, falls es unter "Meine Faecher" steht.
+  const fachForNew = draft.settings.mySubjects.includes(newFach) ? newFach : draft.settings.mySubjects[0] ?? "";
 
   const withEff = status.rows.map((r) => ({ r, eff: effectiveStatus(r, draft.courses, draft.settings, logged) }));
   const shown = withEff.filter(({ r, eff }) => (filter === "alle" || statusGroup(eff.label) === filter) && (!onlySend || r.status === "send"));
@@ -364,9 +445,7 @@ export function Tutor24Followup() {
     const g = statusGroup(eff.label);
     return { ...acc, [g]: (acc[g] ?? 0) + 1 };
   }, {});
-  const answers = status.log.filter((r) => r.geantwortet === "ja");
   const notAnalysed = status.rows.filter((r) => r.fach && !r.faecher).length;
-  const courseName = (id: string) => status.courses.find((c) => c.id === id)?.name ?? id;
   const lastLine = state.log.at(-1) ?? "";
   const runningLabel = { preview: "Probelauf läuft", send: "Senden läuft", replies: "Antworten werden geprüft", compare: "Vergleich läuft" };
 
@@ -415,6 +494,230 @@ export function Tutor24Followup() {
         </div>
       )}
 
+      {view === "kurse" ? (
+        <>
+          {/* Automationen: der Ablauf in drei Schritten */}
+          <div className={cardClass}>
+            <div className="mb-1 flex flex-wrap items-center gap-3">
+              <h2 className="font-semibold text-gray-900">Automationen</h2>
+              {errors.length > 0 ? (
+                <span className="text-xs font-semibold text-red-600">Senden gesperrt: ein Kurs hat einen Fehler (siehe Kurse).</span>
+              ) : (
+                dirty && <span className="text-xs text-amber-700">Änderungen werden gespeichert …</span>
+              )}
+            </div>
+            <p className="mb-4 text-sm text-gray-500">
+              Drei Schritte, von links nach rechts. Jeder läuft im Hintergrund weiter, auch wenn du die Seite neu lädst; es läuft immer nur einer gleichzeitig.
+            </p>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="flex flex-col rounded-xl border border-gray-100 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 1</p>
+                <h3 className="font-semibold text-gray-900">Neue Kandidaten suchen</h3>
+                <p className="mt-1 flex-1 text-sm text-gray-500">
+                  Liest deine tutor24-Konversationen und ordnet passende Personen den Kursen zu (Spalte „Bereit“). Sendet nichts.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button onClick={() => void start("preview")} disabled={blocked || busy || !(maxChecks >= 1)} className={btnPrimary}>
+                    Kandidaten suchen
+                  </button>
+                  <label className="flex items-center gap-1 text-xs text-gray-500">
+                    max.
+                    <input type="number" min={1} value={maxChecks} onChange={(e) => setMaxChecks(Number(e.target.value))} disabled={blocked} className={`${inputClass} w-16`} />
+                  </label>
+                </div>
+              </div>
+              <div className="flex flex-col rounded-xl border border-gray-100 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 2</p>
+                <h3 className="font-semibold text-gray-900">Kursangebot senden</h3>
+                <p className="mt-1 flex-1 text-sm text-gray-500">
+                  Schickt das Angebot an alle in „Bereit“ der <b>aktiven</b> Kurse. Höchstens {send.limit} pro Tag (heute noch {send.budget}), 1–3 Minuten
+                  Pause dazwischen. Alle Texte werden vorher geprüft; danach läuft es ohne Rückfrage durch.
+                  {send.pending > send.queue && ` ${send.pending - send.queue} weitere folgen an einem späteren Tag.`}
+                </p>
+                {send.queue > 0 && (
+                  <details className="mt-2 text-xs" open={badRecipients.length > 0}>
+                    <summary className={`cursor-pointer font-semibold ${badRecipients.length ? "text-red-600" : "text-green-700"}`}>
+                      {badRecipients.length
+                        ? `${badRecipients.length} von ${send.queue} Nachrichten fehlerhaft — so wird nichts gesendet`
+                        : `✓ ${send.queue} Nachrichten geprüft — Liste ansehen`}
+                    </summary>
+                    <ul className="mt-1 max-h-56 space-y-1 overflow-y-auto">
+                      {send.recipients.map((r) => (
+                        <li key={r.id} className="rounded-md bg-gray-50 p-1.5">
+                          <span className="font-semibold text-gray-800">{r.name || r.id}</span>
+                          <span className="text-gray-500"> · {r.kurs} · {r.anrede}</span>
+                          {r.problem && <span className="block text-red-600">{r.problem}</span>}
+                          <details>
+                            <summary className="cursor-pointer text-[#4A7FC1]">Text</summary>
+                            <p className="mt-1 whitespace-pre-wrap text-gray-700">{r.text}</p>
+                          </details>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                <div className="mt-3">
+                  <button
+                    onClick={() => void start("send")}
+                    disabled={blocked || busy || dirty || errors.length > 0 || badRecipients.length > 0 || send.queue === 0}
+                    className="rounded-xl bg-green-600 px-5 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {send.queue > 0 ? `${send.queue} ${send.queue === 1 ? "Person" : "Personen"} anschreiben` : "Niemand bereit"}
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-col rounded-xl border border-gray-100 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 3</p>
+                <h3 className="font-semibold text-gray-900">Antworten prüfen</h3>
+                <p className="mt-1 flex-1 text-sm text-gray-500">
+                  Schaut in den Chats der Angeschriebenen nach Antworten. Neue erscheinen in der Pipeline unter „Antwort erhalten“. Sendet nichts.
+                </p>
+                <div className="mt-3">
+                  <button
+                    onClick={() => void start("replies")}
+                    disabled={blocked || busy || waiting === 0}
+                    className="rounded-xl border border-[#4A7FC1] px-5 py-2 text-sm font-semibold text-[#4A7FC1] hover:bg-blue-50 disabled:opacity-50"
+                  >
+                    {waiting > 0
+                      ? `${waiting} ${waiting === 1 ? "Chat" : "Chats"} prüfen`
+                      : status.log.length === 0
+                        ? "Noch niemand angeschrieben"
+                        : "Alle haben geantwortet oder sind eingeordnet"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Kursauswahl */}
+          <div className={cardClass}>
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              <h2 className="font-semibold text-gray-900">Kurse</h2>
+              <p className="text-xs text-gray-500">Kurs anklicken, um seine Pipeline zu sehen. Gespeichert wird automatisch.</p>
+              {/* Nur zum erneuten Versuch, falls das automatische Speichern fehlschlug */}
+              {saveButton}
+            </div>
+            {draft.courses.length > 0 && !draft.courses.some((c) => c.active) && (
+              <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                Kein Kurs aktiv — beim Anschreiben bekommt niemand ein Angebot. Kurs auswählen und unten das Häkchen vor dem Kursnamen setzen.
+              </p>
+            )}
+            {errors.length > 0 && <p className="mb-3 rounded-lg bg-red-50 p-3 text-xs text-red-600">Bitte korrigieren (bis dahin wird nichts gespeichert und nichts gesendet): {errors.join(" ")}</p>}
+            {activeCount > MAX_ACTIVE_COURSES && (
+              <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                {activeCount} Kurse sind gleichzeitig aktiv. Mehr als {MAX_ACTIVE_COURSES} verteilen die Anmeldungen meist zu dünn.
+              </p>
+            )}
+            <div className="flex flex-wrap gap-3">
+              {draft.courses.map((c) => {
+                const st = courseStats(c, status.log);
+                const isSel = selected?.id === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelectedId(c.id)}
+                    className={`w-64 rounded-xl border p-3 text-left transition ${isSel ? "border-[#4A7FC1] bg-blue-50/40 ring-2 ring-[#4A7FC1]/20" : "border-gray-200 hover:border-gray-300"}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-sm font-semibold text-gray-900">{c.name || "Kurs ohne Namen"}</span>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${c.active ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                        {c.active ? "aktiv" : "pausiert"}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-gray-500">
+                      {c.gruppe === "offen" ? "Fragt nach der genauen Stufe" : `${formatSaturdays(c.saturdays)} · ${c.mode === "online" ? "online" : c.place || "vor Ort"}`}
+                    </p>
+                    <p className="mt-2 text-xs text-gray-600">
+                      {readyFor(c).length} bereit · {st.angeschrieben} angeschrieben · {st.geantwortet} Antworten
+                    </p>
+                    {c.gruppe !== "offen" && (
+                      <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-600">
+                        <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${AMPEL[st.ampel]}`} />
+                        <span>
+                          <b>{st.zusagen}</b>/{c.minParticipants} Zusagen · {st.bezahlt} bezahlt ·{" "}
+                          {st.tageBisSchluss >= 0 ? `noch ${st.tageBisSchluss} T. bis Anmeldeschluss` : "Anmeldeschluss vorbei"}
+                        </span>
+                      </p>
+                    )}
+                  </button>
+                );
+              })}
+              <div className="w-64 rounded-xl border border-dashed border-gray-300 p-3">
+                <p className="text-sm font-semibold text-gray-700">Neuer Kurs</p>
+                <div className="mt-2 flex flex-col gap-2">
+                  <select value={fachForNew} onChange={(e) => setNewFach(e.target.value)} className={inputClass} aria-label="Fach">
+                    {draft.settings.mySubjects.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <select value={newGruppe} onChange={(e) => setNewGruppe(e.target.value as CourseGroup)} className={inputClass} aria-label="Kursgruppe">
+                    {COURSE_GROUPS.map((g) => <option key={g} value={g}>{GROUP_LABEL[g]}</option>)}
+                  </select>
+                  <button
+                    onClick={() => void addCourse(fachForNew, newGruppe)}
+                    disabled={running || !fachForNew}
+                    className="rounded-lg bg-[#4A7FC1] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#3a6fb1] disabled:opacity-50"
+                  >
+                    Anlegen
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Pipeline des gewaehlten Kurses */}
+          {selected && (
+            <div className={cardClass}>
+              <div className="mb-3">
+                <h2 className="font-semibold text-gray-900">Pipeline: {selected.name || "Kurs ohne Namen"}</h2>
+                <p className="text-xs text-gray-500">
+                  Name anklicken öffnet den Chat in tutor24. Mit dem Auswahlfeld ordnest du jede Person ein; sie wandert dann in die passende Spalte.
+                  {selected.gruppe === "offen" && " Wer die Stufe nennt, übernimmst du mit „In Kurs übernehmen“ in den passenden Kurs."}
+                </p>
+              </div>
+              {!selected.active && (
+                <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                  Dieser Kurs ist pausiert: „Bereit“ zeigt, wer ihn bekäme, gesendet wird aber erst, wenn du unten das Häkchen vor dem Kursnamen setzt.
+                </p>
+              )}
+              <CoursePipeline
+                course={selected}
+                courses={draft.courses}
+                ready={readyFor(selected)}
+                log={status.log.filter((r) => r.kurs === selected.id)}
+                rows={status.rows}
+                disabled={running}
+                onMark={(id, m) => void mark(id, m)}
+                onSkip={(r) => void toggleRow(r)}
+                onAssign={(id, kurs) => void assign(id, kurs)}
+                onAnrede={(id, a) => void setAnrede(id, a)}
+              />
+              <div className="mt-4">
+                <CourseEditor
+                  course={selected}
+                  settings={draft.settings}
+                  log={status.log}
+                  open={openCourse === selected.id}
+                  disabled={running}
+                  onToggle={() => setOpenCourse(openCourse === selected.id ? null : selected.id)}
+                  onChange={(next) => setCourses(draft.courses.map((x) => (x.id === selected.id ? next : x)))}
+                  onDelete={() => {
+                    // Mit Angeschriebenen haette deren Pipeline keinen Kurs mehr: Antworten waeren unsichtbar.
+                    const contacted = status.log.filter((r) => r.kurs === selected.id).length;
+                    if (contacted > 0) {
+                      alert(`„${selected.name}“ hat schon ${contacted} Angeschriebene. Löschen würde ihre Antworten aus der Pipeline entfernen. Nimm stattdessen das Häkchen weg (pausieren).`);
+                      return;
+                    }
+                    if (window.confirm(`Kurs „${selected.name}“ löschen?`)) {
+                      setCourses(draft.courses.filter((x) => x.id !== selected.id));
+                      setSelectedId(null);
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
       {/* Speichern + Meine Faecher */}
       <div className={cardClass}>
         <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -477,14 +780,7 @@ export function Tutor24Followup() {
           <button onClick={() => void start("preview")} disabled={blocked || busy || !(maxChecks >= 1)} className={btnPrimary}>
             Probelauf starten
           </button>
-          <button
-            onClick={() => void start("replies")}
-            disabled={blocked || busy || status.log.length === 0}
-            title="Öffnet nur nachgefasste Konversationen und schaut, ob eine Antwort kam. Sendet nichts."
-            className="rounded-xl border border-[#4A7FC1] px-5 py-2 text-sm font-semibold text-[#4A7FC1] hover:bg-blue-50 disabled:opacity-50"
-          >
-            Antworten prüfen ({status.log.filter((r) => r.geantwortet !== "ja").length})
-          </button>
+          <span className="text-xs text-gray-500">Senden und Antworten prüfen: auf der Seite „Kurse“ (Navigation oben).</span>
         </div>
       </div>
 
@@ -539,12 +835,12 @@ export function Tutor24Followup() {
                       <td className="py-2 pr-3 text-right text-xs">{pct(d.hoch / d.count)}</td>
                       <td className="py-2 text-right">
                         {existing ? (
-                          <button onClick={() => setOpenCourse(existing.id)} className="text-xs text-[#4A7FC1] underline underline-offset-2">
+                          <button onClick={() => openCourseTab(existing.id)} className="text-xs text-[#4A7FC1] underline underline-offset-2">
                             {existing.name}
                           </button>
                         ) : (
                           <button
-                            onClick={() => addCourse(d.fach, d.gruppe)}
+                            onClick={() => void addCourse(d.fach, d.gruppe)}
                             disabled={running}
                             className="rounded-lg bg-[#4A7FC1] px-3 py-1 text-xs font-semibold text-white hover:bg-[#3a6fb1] disabled:opacity-50"
                           >
@@ -565,48 +861,6 @@ export function Tutor24Followup() {
           </p>
         )}
         <p className="mt-3 text-xs text-gray-500">Faustregel: Für 3 Anmeldungen braucht ein Kurs etwa 25–30 angeschriebene Kandidaten.</p>
-      </div>
-
-      {/* Kurse */}
-      <div className={cardClass}>
-        <div className="mb-3 flex flex-wrap items-center gap-3">
-          <h2 className="font-semibold text-gray-900">Kurse</h2>
-          <p className="text-xs text-gray-500">Gesendet wird nur für aktive Kurse. Neue Kurse sind inaktiv.</p>
-          {saveButton}
-        </div>
-        {draft.courses.length > 0 && !draft.courses.some((c) => c.active) && (
-          <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
-            Kein Kurs aktiv — Häkchen vor dem Kursnamen setzen und speichern, sonst wird nichts gesendet.
-          </p>
-        )}
-        {errors.length > 0 && <p className="mb-3 text-xs text-red-600">Speichern nicht möglich: {errors.join(" ")}</p>}
-        {activeCount > MAX_ACTIVE_COURSES && (
-          <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
-            {activeCount} Kurse sind gleichzeitig aktiv. Mehr als {MAX_ACTIVE_COURSES} verteilen die Anmeldungen meist zu dünn.
-          </p>
-        )}
-        {draft.courses.length === 0 ? (
-          <p className="text-sm text-gray-400">Noch keine Kurse. Lege einen über „Kurs anlegen“ in der Nachfrage-Übersicht an.</p>
-        ) : (
-          <div className="space-y-2">
-            {draft.courses.map((c, i) => (
-              <CourseEditor
-                key={c.id}
-                course={c}
-                settings={draft.settings}
-                log={status.log}
-                open={openCourse === c.id}
-                disabled={running}
-                onToggle={() => setOpenCourse(openCourse === c.id ? null : c.id)}
-                onChange={(next) => setCourses(draft.courses.map((x, j) => (j === i ? next : x)))}
-                onDelete={() => {
-                  if (window.confirm(`Kurs „${c.name}“ löschen? Bereits gesendete Nachrichten bleiben im Protokoll.`))
-                    setCourses(draft.courses.filter((_, j) => j !== i));
-                }}
-              />
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Vorschau */}
@@ -707,68 +961,8 @@ export function Tutor24Followup() {
         )}
       </div>
 
-      {/* Antworten */}
-      <div className={cardClass}>
-        <h2 className="mb-1 font-semibold text-gray-900">Antworten ({answers.length})</h2>
-        <p className="mb-3 text-sm text-gray-500">
-          {status.log.length} nachgefasst, {answers.length} mit Antwort. Jede Antwort selbst markieren, sie wird nicht automatisch ausgewertet.
-        </p>
-        {answers.length === 0 ? (
-          <p className="text-sm text-gray-400">Noch keine Antworten bekannt. „Antworten prüfen“ startet die Suche.</p>
-        ) : (
-          <div className="max-h-[28rem] overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-white">
-                <tr className="border-b border-gray-100 text-left text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-                  <th className="py-2 pr-3">Name</th>
-                  <th className="py-2 pr-3">Kurs</th>
-                  <th className="py-2 pr-3">Datum</th>
-                  <th className="py-2 pr-3">Antwort (Anfang)</th>
-                  <th className="py-2">Markierung</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {answers.map((a) => (
-                  <tr key={a.conversation_id} className="align-top">
-                    <td className="py-2 pr-3 font-medium text-gray-800">{a.name || a.conversation_id}</td>
-                    <td className="py-2 pr-3 text-xs">{courseName(a.kurs)}</td>
-                    <td className="whitespace-nowrap py-2 pr-3 text-xs text-gray-500">{a.antwort_datum}</td>
-                    <td className="max-w-md py-2 pr-3 text-xs text-gray-700">{a.antwort}</td>
-                    <td className="py-2">
-                      <select value={a.markierung || "offen"} disabled={running} onChange={(e) => void mark(a.conversation_id, e.target.value)} className={inputClass}>
-                        {MARKS.map((m) => <option key={m} value={m}>{m}</option>)}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Senden */}
-      <div className={cardClass}>
-        <h2 className="mb-1 font-semibold text-gray-900">Senden</h2>
-        <p className="mb-3 text-sm text-gray-500">
-          Heute schon gesendet: <b>{send.sentToday}</b> von {send.limit}. Heute noch erlaubt: <b>{send.budget}</b>.{" "}
-          Bereit mit aktivem Kurs: <b>{send.pending}</b>
-          {send.pending > send.queue && ` (davon heute ${send.queue}, der Rest an einem späteren Tag)`}.
-        </p>
-        {dirty && (
-          <div className="mb-2 flex flex-wrap items-center gap-3">
-            <p className="text-xs text-amber-700">Ungespeicherte Änderungen — gesendet wird mit den gespeicherten Kursen.</p>
-            {saveButton}
-          </div>
-        )}
-        <button
-          onClick={() => void start("send")}
-          disabled={blocked || busy || dirty || send.queue === 0}
-          className="rounded-xl bg-green-600 px-5 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
-        >
-          {send.queue > 0 ? `${send.queue} ${send.queue === 1 ? "Nachricht" : "Nachrichten"} senden` : "Nichts zu senden"}
-        </button>
-      </div>
+        </>
+      )}
     </div>
   );
 }

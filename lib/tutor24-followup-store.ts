@@ -13,6 +13,7 @@ import {
   effectiveStatus,
   isOfferLevel,
   mergeSettings,
+  messageProblem,
   parseCsv,
   renderMessage,
   toCsv,
@@ -166,6 +167,15 @@ export function writePreview(rows: PreviewRow[], courses = loadCourses(), settin
   writeChecked(PREVIEW_PATH, toCsv(withText, PREVIEW_COLS));
 }
 
+/** Anrede einer Person von Hand korrigieren (die Erkennung aus dem Inserat liegt mal daneben). */
+export function setRowAnrede(conversationId: string, anrede: Anrede): void {
+  const rows = readPreview();
+  const row = rows.find((r) => r.conversation_id === conversationId);
+  if (!row) throw new Error(`Konversation ${conversationId} steht nicht in der Vorschau.`);
+  row.anrede = anrede;
+  writePreview(rows);
+}
+
 export function setRowStatus(conversationId: string, status: "send" | "skip"): void {
   const rows = readPreview();
   const row = rows.find((r) => r.conversation_id === conversationId);
@@ -204,6 +214,17 @@ export function updateLog(conversationId: string, patch: Partial<LogRow>): void 
   writeLog(rows);
 }
 
+/**
+ * Antwort auf "Stufe nachfragen" einem richtigen Kurs zuordnen: die Person steht dann in dessen
+ * Pipeline unter "Interessiert". Gesendet wird ihr nichts mehr (sie steht im Protokoll).
+ */
+export function assignToCourse(conversationId: string, courseId: string): void {
+  const course = loadCourses().find((c) => c.id === courseId);
+  if (!course || course.gruppe === "offen") throw new Error("Unbekannter Kurs.");
+  const row = readLog().find((r) => r.conversation_id === conversationId);
+  updateLog(conversationId, { kurs: course.id, markierung: "Frage", variante: `${row?.variante ?? ""} → ${course.name}` });
+}
+
 export function setMark(conversationId: string, markierung: string): void {
   if (!(MARKS as readonly string[]).includes(markierung)) throw new Error(`Markierung muss eine von ${MARKS.join(", ")} sein.`);
   updateLog(conversationId, { markierung });
@@ -221,7 +242,13 @@ export function sendQueue(courses = loadCourses(), settings = loadSettings(), no
   const pending = readPreview()
     .map((row) => ({ row, eff: effectiveStatus(row, courses, settings, logged) }))
     .filter((x) => x.eff.send)
-    .map((x) => ({ ...x.row, course: x.eff.course as Course }));
+    .map((x) => {
+      const course = x.eff.course as Course;
+      // Fertiger Text samt Pruefung: derselbe, den Tab, API und Sende-Lauf sehen.
+      const m = renderMessage(course, x.row.name, x.row.anrede === "du" ? "du" : "Sie");
+      const text = m.text.trim();
+      return { ...x.row, course, text, anrede: m.anrede, problem: messageProblem(text, m.anrede) };
+    });
   const budget = Math.max(0, MAX_SENDS_PER_DAY - sentToday(now));
   return { pending, queue: pending.slice(0, budget), budget };
 }
