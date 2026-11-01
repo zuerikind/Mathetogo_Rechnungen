@@ -491,6 +491,9 @@ export function InvoiceHistoryClient() {
 
       const blob = await response.blob();
       saveBlob(blob, `rechnungen-${year}-${String(month).padStart(2, "0")}.zip`);
+      // Der Export legt fehlende Rechnungen an (Nummer + PDF) — ohne Neuladen
+      // blieben die Zeilen virtuell/"Ausstehend" und "Rechnung gesendet" gesperrt.
+      await loadInvoices();
     } catch {
       alert("ZIP-Download fehlgeschlagen. Bitte erneut versuchen.");
     } finally {
