@@ -22,7 +22,7 @@ import {
   planFirstMessage,
   sentenceProblem,
 } from "./tutor24-course-offer";
-import { courseBlock, type LeadInfo } from "./tutor24-followup";
+import { courseBlock, courseChanged, courseSnapshot, type LeadInfo } from "./tutor24-followup";
 
 const NOW = new Date(2026, 10, 4);
 const settings = mergeSettings(null);
@@ -132,7 +132,7 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
   ).text;
   const lead = (p: Partial<LeadInfo> = {}): LeadInfo => ({
     quelle: "erstnachricht", status: "offen", wer: "eltern", kind: "Tochter", anrede: "Sie", sprache: "de",
-    erstKursId: "m1", erstText: erst, freigabeKursId: null, ...p,
+    erstKursId: "m1", erstKursDaten: courseSnapshot(matura()), freigabeKursId: null, nachgefasst: false, ...p,
   });
   const row = (p: Partial<PreviewRow> = {}): PreviewRow =>
     ({
@@ -165,9 +165,19 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
     expect(erinnerung.problem).toBeNull();
     expect(erinnerung.text).not.toContain("CHF");
     expect(erinnerung.text).toContain("Dabei hatte ich auch den");
-    // Termine geaendert: Erst-Nachricht enthaelt den alten Block → aktueller Block
+    // Kursdaten geaendert (gespeicherte Daten der Erst-Nachricht ≠ heute) → aktueller Block
     const moved = matura({ saturdays: ["2027-01-09", "2027-01-16", "2027-01-23", "2027-01-30"] });
     expect(eff(lead(), [moved]).kind).toBe("geaendert");
+    for (const p of [{ time: "10:00–11:40 Uhr" }, { pricePerLesson: 60 }, { maxParticipants: 8, minParticipants: 3 }, { deadline: "2026-11-13" }])
+      expect(eff(lead(), [matura(p)]).kind).toBe("geaendert");
+    // Nur Text geaendert (Kursname, Baustein, englischer Name, Einzelpreis): bleibt Erinnerung
+    expect(eff(lead(), [matura({ name: "Matura-Mathekurs", nameEn: "Matura maths course" })]).kind).toBe("erinnerung");
+    expect(effectiveStatus(row(), [matura()], { ...settings, privatePricePerLesson: 95 }, new Set(), [], NOW, lead()).kind).toBe("erinnerung");
+    // JSON aus der Datenbank: andere Schluessel-Reihenfolge zaehlt nicht
+    const reordered = Object.fromEntries(Object.entries(courseSnapshot(matura())).reverse());
+    expect(courseChanged(reordered, matura())).toBe(false);
+    // Aeltere Nachricht ohne gespeicherte Kursdaten: nicht als geaendert werten
+    expect(eff(lead({ erstKursDaten: null }), [moved]).kind).toBe("erinnerung");
     // Kurs aus der Erst-Nachricht voll, neuer Durchgang derselben Gruppe
     expect(eff(lead({ erstKursId: "alt" })).kind).toBe("neuer_durchgang");
     // Erst-Nachricht ohne Kurs: nur mit Freigabe
@@ -175,7 +185,15 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
     expect(eff(lead({ erstKursId: null, freigabeKursId: "m1" })).kind).toBe("angebot");
     expect(eff(lead({ status: "Zusage" })).label).toBe("angemeldet");
     expect(eff(lead({ status: "Bezahlt" })).send).toBe(false);
-    expect(eff(lead({ sprache: "fr" })).send).toBe(false);
+    expect(eff(lead({ nachgefasst: true })).label).toBe("bereits nachgefasst");
+    // Franzoesisch: einfaches Nachfassen ohne Kurs, vous-Form, keine Kontaktangaben
+    const fr = eff(lead({ sprache: "fr" }));
+    expect(fr).toMatchObject({ send: true, kind: "einfach", course: null });
+    const frText = followupMessage("einfach", followupForm(lead({ sprache: "fr" }), "Sie"), "Claire", null, 89);
+    expect(frText.problem).toBeNull();
+    expect(frText.text).toMatch(/^Bonjour Claire,\n\nJe vous avais contacté il y a quelque temps/);
+    expect(frText.text.endsWith("Meilleures salutations\nOmid")).toBe(true);
+    expect(frText.text).not.toContain("CHF");
     // Aeltere Kontakte ohne Erst-Nachricht in der Datenbank: wie bisher
     expect(eff(undefined).kind).toBe("angebot");
     expect(eff(lead({ quelle: "nachfassen", erstKursId: null })).kind).toBe("angebot");
@@ -220,5 +238,11 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
     const n = followupMessage("erinnerung", { typ: "en" }, "Sam", matura(), 89);
     expect(n.text).toMatch(/^Hello Sam,\n\nI got in touch with you a while ago/);
     expect(n.problem).toBeNull();
+    // Englischer Kursname, falls gesetzt; sonst der deutsche
+    const en = matura({ nameEn: "Matura maths preparation course" });
+    expect(courseBlock(en, 89, "en")).toContain("offering a Matura maths preparation course in a small group");
+    expect(courseBlock(en, 89, "de")).toContain("einen Mathe-Vorbereitungskurs für die Matura");
+    expect(followupMessage("erinnerung", { typ: "en" }, "Sam", en, 89).text).toContain("mentioned the Matura maths preparation course");
+    expect(courseBlock(matura(), 89, "en")).toContain("offering a Mathe-Vorbereitungskurs für die Matura");
   });
 });

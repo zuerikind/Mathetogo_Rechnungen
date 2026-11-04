@@ -54,13 +54,16 @@ export function InterestList() {
 
   if (!data) return <div className={`${cardClass} h-32 animate-pulse`} />;
   const courseName = (id: string | null) => data.courses.find((c) => c.id === id)?.name ?? "";
-  const total = data.groups.reduce((n, g) => n + g.sicher + g.unsicher, 0);
+  const sum = (k: "sicher" | "unsicher" | "tief") => data.groups.reduce((n, g) => n + g[k], 0);
 
   return (
     <div className={cardClass}>
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-base font-semibold text-gray-800">Interessentenliste</h2>
-        <span className="text-xs text-gray-500">{total} Personen ohne offenen Kurs · ohne meine Freigabe wird niemand aus dieser Liste angeschrieben</span>
+        <span className="text-xs text-gray-500">
+          ohne offenen Kurs: <b className="text-gray-800">{sum("sicher")} sicher</b> · <b className="text-amber-700">{sum("unsicher")} unsicher</b> · {sum("tief")} ohne
+          Klassenangabe (eingeklappt) · ohne meine Freigabe wird niemand aus dieser Liste angeschrieben
+        </span>
         <label className="ml-auto flex items-center gap-1 text-xs text-gray-500">
           <input type="checkbox" checked={showIgnored} onChange={(e) => setShowIgnored(e.target.checked)} />
           Ignorierte zeigen
@@ -154,6 +157,9 @@ function Group({
   onPatch: (ids: string[], body: Record<string, unknown>) => Promise<void>;
 }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [showTief, setShowTief] = useState(false);
+  const shown = g.people.filter((p) => !p.tief);
+  const tief = g.people.filter((p) => p.tief);
   const listIds = g.people.filter((p) => p.status === "offen").map((p) => p.id);
   // Freigabe zaehlt nur fuer Personen aus der Erst-Nachricht; aeltere Kontakte stehen im Nachfassen unter "Bereit".
   const releasable = g.people.filter((p) => p.passtZu && p.quelle === "erstnachricht" && p.freigabeKursId !== p.passtZu && p.status === "offen");
@@ -172,7 +178,10 @@ function Group({
           </button>
         </td>
         <td className="py-1.5 pr-3">{g.sicher}</td>
-        <td className="py-1.5 pr-3 text-gray-500">{g.unsicher}</td>
+        <td className="py-1.5 pr-3 text-amber-700">
+          {g.unsicher}
+          {g.tief > 0 && <span className="ml-1 text-gray-400">(+ {g.tief} ohne Klassenangabe)</span>}
+        </td>
         {g.perWeek.map((n, i) => (
           <td key={i} className={`py-1.5 pr-2 text-right ${n ? "" : "text-gray-300"}`}>{n}</td>
         ))}
@@ -221,9 +230,22 @@ function Group({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {g.people.map((p) => (
+                {shown.map((p) => (
                   <Person key={p.id} p={p} busy={busy} picked={picked.has(p.id)} canPick={releasable.includes(p)} courseName={courseName} onPick={() => togglePick(p.id)} onPatch={onPatch} />
                 ))}
+                {tief.length > 0 && (
+                  <tr>
+                    <td colSpan={12} className="py-1.5">
+                      <button onClick={() => setShowTief(!showTief)} className="text-[11px] font-semibold text-[#4A7FC1]">
+                        {showTief ? "▾" : "▸"} + {tief.length} ohne Klassenangabe
+                      </button>
+                    </td>
+                  </tr>
+                )}
+                {showTief &&
+                  tief.map((p) => (
+                    <Person key={p.id} p={p} busy={busy} picked={picked.has(p.id)} canPick={releasable.includes(p)} courseName={courseName} onPick={() => togglePick(p.id)} onPatch={onPatch} />
+                  ))}
               </tbody>
             </table>
           </td>
@@ -266,7 +288,7 @@ function Person({
       </td>
       <td className="py-1 pr-2">{p.ort || "—"}</td>
       <td className="py-1 pr-2">{p.anrede}</td>
-      <td className="py-1 pr-2">{p.sicher ? "sicher" : <span className="text-amber-700">unsicher</span>}</td>
+      <td className="py-1 pr-2">{p.sicher ? "sicher" : p.tief ? <span className="text-gray-400">ohne Klasse</span> : <span className="text-amber-700">unsicher</span>}</td>
       <td className="py-1 pr-2">
         {p.grund}
         {p.freigabeKursId && <span className="block text-green-700">freigegeben: {courseName(p.freigabeKursId)}</span>}

@@ -502,6 +502,7 @@ const MINE_RE = new RegExp(
     "ich unterrichte seit",
     "ich hatte mich vor einiger zeit",
     "i got in touch with you a while ago",
+    "je vous avais contact[ée] il y a quelque temps",
     "math\\S*\\s+(and|et|und)\\s+(der\\s+|la\\s+|en\\s+|in\\s+)?ph[yi]si",
     "(teaching|taught|enseigne)\\D{0,30}12",
   ].join("|"),
@@ -580,18 +581,40 @@ export type Course = {
   minParticipants: number;
   /** Plaetze im Kurs; fehlt in aelteren courses.json → DEFAULT_MAX_PARTICIPANTS */
   maxParticipants?: number;
+  /** Englischer Kursname fuer englische Nachrichten; leer = deutscher Name. */
+  nameEn?: string;
   /** Frueher: eigene Nachfass-Vorlage. Nicht mehr verwendet — der Text entsteht im Code (./tutor24-course-offer). */
   template?: string;
 };
 
 export const DEFAULT_MAX_PARTICIPANTS = 6;
 export const capacity = (c: Course) => c.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS;
+export const courseName = (c: Course, sprache: string = "de") => (sprache === "en" && c.nameEn?.trim()) || c.name.trim();
+
+/**
+ * Kursdaten, wie sie in einer Nachricht standen (Tutor24Message.kursDaten). "Kurs seither geaendert" vergleicht
+ * diese Werte — nicht den Text: eine Umformulierung des Bausteins zaehlt nicht als Aenderung.
+ */
+export type CourseSnapshot = {
+  saturdays: string[]; time: string; pricePerLesson: number; lessons: number; maxParticipants: number;
+  deadline: string; minParticipants: number; mode: string; place: string;
+};
+export const courseSnapshot = (c: Course): CourseSnapshot => ({
+  saturdays: [...c.saturdays], time: c.time.trim(), pricePerLesson: c.pricePerLesson, lessons: c.lessons, maxParticipants: capacity(c),
+  deadline: c.deadline, minParticipants: c.minParticipants, mode: c.mode, place: c.place.trim(),
+});
+/** Feld fuer Feld (die Datenbank ordnet JSON-Schluessel um). Ohne gespeicherte Daten: nicht geaendert. */
+export function courseChanged(saved: Partial<CourseSnapshot> | null | undefined, c: Course): boolean {
+  if (!saved) return false;
+  const cur = courseSnapshot(c);
+  return (Object.keys(cur) as Array<keyof CourseSnapshot>).some((k) => JSON.stringify(saved[k]) !== JSON.stringify(cur[k]));
+}
 
 /** Standard fuer settings.privatePricePerLesson (Vergleichspreis im Kursblock). */
 export const DEFAULT_PRIVATE_PRICE = 89;
 
 /** Erkennt meine Nachfass-Nachricht (alle Fassungen, de/en): Senden-Bestaetigung, Antworten, Liste. */
-export const FOLLOWUP_MARKER_RE = /ich hatte mich vor einiger zeit|i got in touch with you a while ago/i;
+export const FOLLOWUP_MARKER_RE = /ich hatte mich vor einiger zeit|i got in touch with you a while ago|je vous avais contacté il y a quelque temps/i;
 export const hasFollowupMarker = (text: string) => FOLLOWUP_MARKER_RE.test(text);
 
 const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -639,7 +662,7 @@ export type Sprache = "de" | "en";
 
 /**
  * Kursblock nur aus den Kursdaten, ohne du/Sie: steht WORTGLEICH in Erst-Nachricht und Nachfassen.
- * Das Nachfassen erkennt daran auch, ob sich der Kurs seit der Erst-Nachricht geaendert hat.
+ * Ob sich der Kurs seit der Erst-Nachricht geaendert hat, erkennt das Nachfassen an courseSnapshot, nicht am Text.
  */
 export function courseBlock(c: Course, privatePrice: number, sprache: Sprache = "de"): string {
   const total = c.pricePerLesson * c.lessons;
@@ -647,7 +670,7 @@ export function courseBlock(c: Course, privatePrice: number, sprache: Sprache = 
     const dates = formatSaturdays(c.saturdays).replace(" und ", " and ");
     const ort = c.mode === "online" ? "online" : `in person${c.place.trim() ? ` (${c.place.trim()})` : ""}`;
     return (
-      `Besides one-to-one lessons, I am currently offering a ${c.name.trim()} in a small group (max. ${capacity(c)} participants): ` +
+      `Besides one-to-one lessons, I am currently offering a ${courseName(c, "en")} in a small group (max. ${capacity(c)} participants): ` +
       `on ${c.saturdays.length} Saturdays (${dates}), each ${c.time.trim().replace(/\s*Uhr$/, "")}, ${ort}. ` +
       `The ${c.lessons} lessons cost CHF ${total} in total, i.e. CHF ${c.pricePerLesson} per lesson instead of CHF ${privatePrice} for one-to-one lessons. ` +
       `Registration closes on ${dayMonth(c.deadline)}; the course takes place with at least ${c.minParticipants} registrations.`
@@ -689,7 +712,7 @@ export function validateCourses(courses: Course[]): string[] {
     if (!isCourseGroup(c.gruppe)) errors.push(`${name}: unbekannte Kursgruppe.`);
     if (!c.fach.trim()) errors.push(`${name}: Fach fehlt.`);
     // Name und Ort stehen woertlich im Kursblock beider Nachrichten (das Nachfassen darf keine Kontaktangaben enthalten).
-    if (containsForbiddenContact(`${c.name}\n${c.place}`)) errors.push(`${name}: Name oder Ort enthält Link, E-Mail oder Telefonnummer.`);
+    if (containsForbiddenContact(`${c.name}\n${c.nameEn ?? ""}\n${c.place}`)) errors.push(`${name}: Name oder Ort enthält Link, E-Mail oder Telefonnummer.`);
     // Stufe nachfragen: keine Termine, kein Preis.
     if (c.gruppe === "offen") continue;
     if (!(c.pricePerLesson > 0) || !(c.lessons > 0)) errors.push(`${name}: Preis und Anzahl Lektionen müssen > 0 sein.`);
@@ -851,8 +874,9 @@ export const OFFER_LABEL: Record<string, string> = {
  * - geaendert: derselbe Kurs, aber Termine/Preis/Ort geaendert → aktueller Kursblock
  * - neuer_durchgang: Kurs aus der Erst-Nachricht voll/vorbei, neuer Kurs derselben Gruppe → voller Kursblock
  * - frage: Kursgruppe "offen" → Frage nach der Stufe
+ * - einfach: Franzoesisch — kurzes Nachfassen ohne Kurs, in derselben Sprache wie die Erst-Nachricht
  */
-export type FollowupKind = "angebot" | "erinnerung" | "geaendert" | "neuer_durchgang" | "frage";
+export type FollowupKind = "angebot" | "erinnerung" | "geaendert" | "neuer_durchgang" | "frage" | "einfach";
 
 /** Was das Nachfassen ueber die Person aus Tutor24Lead weiss (fehlt bei aelteren Kontakten). */
 export type LeadInfo = {
@@ -862,16 +886,21 @@ export type LeadInfo = {
   kind: string | null;
   anrede: string;
   sprache: string;
-  /** Kurs aus der Erst-Nachricht und deren Text */
+  /** Kurs aus der Erst-Nachricht und dessen Daten beim Senden (courseSnapshot) */
   erstKursId: string | null;
-  erstText: string;
+  erstKursDaten: Partial<CourseSnapshot> | null;
   freigabeKursId: string | null;
+  /** schon eine Nachfass-Nachricht bekommen (auch ohne Kurs, z.B. franzoesisch) */
+  nachgefasst: boolean;
 };
 
 /** Konversation zuerst, sonst Inserat ("inserat:<id>"). */
 export type LeadMap = Record<string, LeadInfo>;
 export const leadFor = (leads: LeadMap | undefined, row: Pick<PreviewRow, "conversation_id" | "inserat_id">): LeadInfo | undefined =>
   leads?.[row.conversation_id] ?? (row.inserat_id ? leads?.[`inserat:${row.inserat_id}`] : undefined);
+
+/** Kurs-Filter fuers Senden: Nachfassen ohne Kurs (franzoesisch). */
+export const NO_COURSE = "__ohne__";
 
 export type Effective = { send: boolean; label: string; course: Course | null; kind?: FollowupKind };
 
@@ -891,12 +920,14 @@ export function effectiveStatus(
   lead?: LeadInfo
 ): Effective {
   const no = (label: string): Effective => ({ send: false, label, course: null });
-  if (logged.has(row.conversation_id)) return no("bereits nachgefasst");
+  if (logged.has(row.conversation_id) || lead?.nachgefasst) return no("bereits nachgefasst");
   if (lead?.status === "Zusage" || lead?.status === "Bezahlt") return no("angemeldet");
   if (lead?.status === "Absage") return no("abgesagt");
   if (lead?.status === "ignoriert") return no("ignoriert");
-  if (lead && lead.sprache !== "de" && lead.sprache !== "en") return no(`Sprache ${lead.sprache}: kein Nachfassen`);
   if (row.grund) return no(row.grund);
+  // Franzoesisch: einfaches Nachfassen ohne Kurs (es gibt keinen franzoesischen Kursblock).
+  if (lead?.sprache === "fr") return { send: true, label: "wird gesendet", course: null, kind: "einfach" };
+  if (lead && lead.sprache !== "de" && lead.sprache !== "en") return no(`Sprache ${lead.sprache}: kein Nachfassen`);
   if (!isOfferLevel(row.kategorie)) return no(`ausgeschlossen: Stufe (${row.kategorie || "?"})`);
   if (!splitList(row.faecher).some((f) => settings.mySubjects.includes(f))) return no("ausgeschlossen: Fach");
   if (!row.kursgruppe) return no("keine Kursgruppe");
@@ -914,9 +945,7 @@ export function effectiveStatus(
     if (offer.kind === "nichts") return no(offer.grund.startsWith("ausschluss_") ? `ausgeschlossen: ${offer.grund.slice(11)}` : offer.grund);
     if (offer.kind === "nachfrage") return no(OFFER_LABEL[offer.grund] ?? "kein Kurs");
     course = offer.course;
-    const sprache: Sprache = lead?.sprache === "en" ? "en" : "de";
-    if (lead?.erstKursId === course.id)
-      kind = lead.erstText.includes(courseBlock(course, settings.privatePricePerLesson, sprache)) ? "erinnerung" : "geaendert";
+    if (lead?.erstKursId === course.id) kind = courseChanged(lead.erstKursDaten, course) ? "geaendert" : "erinnerung";
     else if (lead?.erstKursId) kind = "neuer_durchgang";
     // Aus der Interessentenliste (Erst-Nachricht ohne Kurs): nur mit meiner Freigabe fuer genau diesen Kurs.
     else if (lead?.quelle === "erstnachricht" && lead.freigabeKursId !== course.id) return { send: false, label: "wartet auf Freigabe", course };

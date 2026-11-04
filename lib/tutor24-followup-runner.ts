@@ -27,6 +27,7 @@ import {
   MIN_AGE_DAYS,
   hasFollowupMarker,
   ageDays,
+  courseSnapshot,
   analyzeListing,
   compareAnalyses,
   entryChanged,
@@ -569,11 +570,12 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
       inseratId: row.inserat_id || null,
       name: row.name,
       art: "nachfassen",
-      kursId: row.course.id,
-      variante: `${row.course.name}/${row.anrede}/${row.kind}`,
+      kursId: row.course?.id ?? null,
+      variante: `${row.course?.name ?? "ohne Kurs"}/${row.anrede}/${row.kind}`,
       text,
       status: confirmed ? "gesendet" : "unbestaetigt",
       lead: fromPreview(row),
+      kursDaten: row.course ? courseSnapshot(row.course) : null,
     });
     if (!confirmed) {
       await assertPageOk(page, `nach dem Senden ${row.conversation_id}`);
@@ -581,7 +583,7 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
     }
     sentCount++;
     state.done = sentCount;
-    log(`[${i + 1}/${queue.length}] ✓ ${row.name} (${row.course.name}, ${row.anrede})`);
+    log(`[${i + 1}/${queue.length}] ✓ ${row.name} (${row.course?.name ?? "ohne Kurs"}, ${row.anrede}, ${row.kind})`);
 
     if (i < queue.length - 1) {
       const wait = jitter(60_000, 180_000);

@@ -3,7 +3,7 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { academigoJobState, tutor24JobState } from "@/lib/automation-state";
-import { MAX_SENDS_PER_DAY, needsReplyCheck, validateCourses } from "@/lib/tutor24-followup";
+import { MAX_SENDS_PER_DAY, NO_COURSE, needsReplyCheck, validateCourses } from "@/lib/tutor24-followup";
 import {
   FOLLOWUP_DIR,
   RUN_LOG_PATH,
@@ -100,7 +100,7 @@ export async function GET() {
       pending: pending.length,
       queue: queue.length,
       // Alle offenen, nicht nur das Tageskontingent: der Tab rechnet pro ausgewaehltem Kurs.
-      recipients: pending.map((r) => ({ id: r.conversation_id, name: r.name, kurs: r.course.name, courseId: r.course.id, anrede: r.anrede, problem: r.problem, text: r.text })),
+      recipients: pending.map((r) => ({ id: r.conversation_id, name: r.name, kurs: r.course?.name ?? "ohne Kurs", courseId: r.course?.id ?? NO_COURSE, anrede: r.anrede, problem: r.problem, text: r.text })),
     },
   });
 }
@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
       const max = body.action === "preview" ? Math.floor(Number(body.max ?? 150)) : undefined;
       if (max !== undefined && !(max >= 1)) throw new Error("max. Konversationen muss ≥ 1 sein.");
       const courseId = body.action === "preview" ? undefined : body.courseId ? String(body.courseId) : undefined;
-      if (courseId && (!/^[\w-]+$/.test(courseId) || !loadCourses().some((c) => c.id === courseId)))
+      if (courseId && courseId !== NO_COURSE && (!/^[\w-]+$/.test(courseId) || !loadCourses().some((c) => c.id === courseId)))
         throw new Error("Unbekannter Kurs.");
       const invalid = body.action === "send" ? validateCourses(loadCourses()) : [];
       if (invalid.length) throw new Error(`Bitte zuerst die Kurse korrigieren: ${invalid.join(" ")}`);

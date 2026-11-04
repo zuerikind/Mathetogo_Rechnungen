@@ -394,6 +394,8 @@ model Tutor24Message {
   text     String      @default("")
   /// gesendet | unbestaetigt
   status   String      @default("gesendet")
+  /// Kursdaten beim Senden (Termine, Zeit, Preis, Plaetze, Anmeldeschluss): "Kurs seither geaendert" vergleicht diese
+  kursDaten Json?
   sentAt   DateTime    @default(now())
 
   @@index([leadId])

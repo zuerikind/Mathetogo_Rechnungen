@@ -74,6 +74,7 @@ const KIND_LABEL: Record<FollowupKind, string> = {
   geaendert: "Kurs geändert seit der Erst-Nachricht",
   neuer_durchgang: "neuer Durchgang",
   frage: "Frage nach der Stufe",
+  einfach: "einfaches Nachfassen ohne Kurs",
 };
 
 function ReadyMessage({

@@ -13,6 +13,7 @@ import {
   PREVIEW_COLS,
   courseExclusion,
   effectiveStatus,
+  NO_COURSE,
   followedUpIds,
   isOfferLevel,
   leadFor,
@@ -185,7 +186,7 @@ export function readPreview(): PreviewRow[] {
 export function messageFor(row: PreviewRow, courses: Course[], settings: FollowupSettings, log: LogRow[], leads: LeadMap = {}, now = new Date()) {
   const lead = leadFor(leads, row);
   const eff = effectiveStatus(row, courses, settings, followedUpIds(log), log, now, lead);
-  if (!eff.course || !eff.kind) return null;
+  if (!eff.kind) return null;
   const m = followupMessage(eff.kind, followupForm(lead, row.anrede), row.name, eff.course, settings.privatePricePerLesson);
   return { course: eff.course, send: eff.send, kind: eff.kind, ...m };
 }
@@ -194,7 +195,7 @@ export function messageFor(row: PreviewRow, courses: Course[], settings: Followu
 export function writePreview(rows: PreviewRow[], log: LogRow[], leads: LeadMap = {}, courses = loadCourses(), settings = loadSettings()): void {
   const withText = rows.map((r) => {
     const m = messageFor(r, courses, settings, log, leads);
-    return { ...r, kurs: m?.course.name ?? "", nachricht: m?.text ?? "" };
+    return { ...r, kurs: m?.course?.name ?? "", nachricht: m?.text ?? "" };
   });
   writeChecked(PREVIEW_PATH, toCsv(withText, PREVIEW_COLS));
 }
@@ -249,7 +250,7 @@ export async function sendQueue(courses = loadCourses(), settings = loadSettings
   const [log, sent, leads] = await Promise.all([loadLog(), sentToday(now), loadLeadInfo()]);
   const pending = readPreview()
     .map((row) => ({ row, m: messageFor(row, courses, settings, log, leads, now) }))
-    .filter((x) => x.m?.send && (!courseId || x.m.course.id === courseId))
+    .filter((x) => x.m?.send && (!courseId || (courseId === NO_COURSE ? !x.m.course : x.m.course?.id === courseId)))
     // Fertiger Text samt Pruefung: derselbe, den Tab, API und Sende-Lauf sehen.
     .map(({ row, m }) => ({ ...row, course: m!.course, kind: m!.kind, text: m!.text.trim(), anrede: m!.anrede, problem: m!.problem }));
   const budget = Math.max(0, MAX_SENDS_PER_DAY - sent);

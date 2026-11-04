@@ -11,6 +11,7 @@ import {
   capacity,
   containsForbiddenContact,
   courseBlock,
+  courseName,
   detectAddressee,
   findDuForm,
   formatSaturdays,
@@ -43,7 +44,8 @@ const CHILD: Record<"Tochter" | "Sohn" | "Kind", { nom: string; akk: string; dat
 };
 
 /** Welche Fassung: Eltern ohne genau ein genanntes Kind bekommen die neutrale; Englisch hat nur eine. */
-export type Form = { typ: "du" } | { typ: "eltern"; nom: string; akk: string; dat: string } | { typ: "neutral" } | { typ: "en" };
+/** "fr": nur Nachfassen (die franzoesische Erst-Nachricht schreibt weiter die KI, in der vous-Form). */
+export type Form = { typ: "du" } | { typ: "eltern"; nom: string; akk: string; dat: string } | { typ: "neutral" } | { typ: "en" } | { typ: "fr" };
 export function formFor(ad: Addressee, sprache: string = "de"): Form {
   if (sprache === "en") return { typ: "en" };
   if (ad.wer === "schueler") return { typ: "du" };
@@ -53,6 +55,7 @@ export function formFor(ad: Addressee, sprache: string = "de"): Form {
 
 /** Fassung fuers Nachfassen: aus der Erst-Nachricht (Lead), sonst aus der Vorschau-Anrede (du / neutral). */
 export function followupForm(lead: LeadInfo | undefined, previewAnrede: string): Form {
+  if (lead?.sprache === "fr") return { typ: "fr" };
   if (lead?.quelle === "erstnachricht") {
     const kind = lead.kind === "Tochter" || lead.kind === "Sohn" || lead.kind === "Kind" ? lead.kind : null;
     return formFor({ wer: lead.wer as Addressee["wer"], anrede: lead.anrede === "du" ? "du" : "Sie", kind }, lead.sprache);
@@ -65,8 +68,9 @@ const sprache = (f: Form): Sprache => (f.typ === "en" ? "en" : "de");
 const isDu = (f: Form) => f.typ === "du";
 
 /** Gruss und Signatur: in Erst-Nachricht und Nachfassen dieselben. */
-export const greeting = (f: Form) => (f.typ === "en" ? "Hello" : isDu(f) ? "Hallo" : "Guten Tag");
-export const signature = (f: Form) => (f.typ === "en" ? "Best regards\nOmid" : "Liebi Grüess\nOmid");
+export const greeting = (f: Form) => (f.typ === "en" ? "Hello" : f.typ === "fr" ? "Bonjour" : isDu(f) ? "Hallo" : "Guten Tag");
+export const signature = (f: Form) =>
+  f.typ === "en" ? "Best regards\nOmid" : f.typ === "fr" ? "Meilleures salutations\nOmid" : "Liebi Grüess\nOmid";
 
 // ── Erst-Nachricht ────────────────────────────────────────────────────────────
 
@@ -187,8 +191,19 @@ const FACH_EN: Record<string, string> = { Mathe: "maths", Physik: "physics", Che
  * wortgleicher Kursblock. Wiederholt weder den persoenlichen Satz noch die Vorstellung und nimmt Bezug
  * auf die Erst-Nachricht, statt ein "neues Angebot" zu behaupten.
  */
-export function buildFollowup(kind: FollowupKind, f: Form, name: string, c: Course, privatePrice: number): string {
+export function buildFollowup(kind: FollowupKind, f: Form, name: string, course: Course | null, privatePrice: number): string {
   const hello = `${greeting(f)}${name.trim() ? ` ${name.trim()}` : ""},`;
+  // Franzoesisch (und jede Art ohne Kurs): einfaches Nachfassen, vous-Form wie die Erst-Nachricht.
+  if (f.typ === "fr" || kind === "einfach" || !course) {
+    const body =
+      f.typ === "fr"
+        ? "Je vous avais contacté il y a quelque temps au sujet de votre demande de cours particuliers en mathématiques et en physique. Si vous cherchez toujours, je serais ravi de vous aider. Une courte réponse ici dans le chat suffit."
+        : f.typ === "en"
+          ? "I got in touch with you a while ago about your request for tutoring. In case you are still looking, I would be happy to help. A short answer here in the chat is enough."
+          : `ich hatte mich vor einiger Zeit auf ${isDu(f) ? "deine" : "Ihre"} Anfrage für Nachhilfe gemeldet. ${isDu(f) ? "Falls du noch suchst" : "Falls Sie noch suchen"}, helfe ich gerne weiter. Eine kurze Antwort hier im Chat reicht.`;
+    return [hello, body, signature(f)].join("\n\n");
+  }
+  const c = course;
   const block = courseBlock(c, privatePrice, sprache(f));
   const deadline = dayMonth(c.deadline);
   let body: string[];
@@ -198,9 +213,9 @@ export function buildFollowup(kind: FollowupKind, f: Form, name: string, c: Cour
     const close = 'Shall I reserve a place for you? A short "Yes" here in the chat is enough, and I will send you all the details. Payment is only due once the course is confirmed.';
     body =
       kind === "erinnerung"
-        ? [`${ref} In that message I also mentioned the ${c.name.trim()}. There are still places available; registration closes on ${deadline}.`, close]
+        ? [`${ref} In that message I also mentioned the ${courseName(c, "en")}. There are still places available; registration closes on ${deadline}.`, close]
         : kind === "geaendert"
-          ? [`${ref} In that message I also mentioned the ${c.name.trim()}. Some details have changed since then, here is the current information:`, block, close]
+          ? [`${ref} In that message I also mentioned the ${courseName(c, "en")}. Some details have changed since then, here is the current information:`, block, close]
           : kind === "neuer_durchgang"
             ? [`${ref} The course from my first message is no longer open, but there is a new run:`, block, close]
             : kind === "frage"
@@ -270,7 +285,8 @@ export function sentenceProblem(s: string, f: Form): string | null {
 }
 
 function anredeProblem(text: string, f: Form): string | null {
-  if (f.typ === "en") return null;
+  // Englisch/Franzoesisch: keine du/Sie-Pruefung (franzoesisch "du" ist ein Artikel).
+  if (f.typ === "en" || f.typ === "fr") return null;
   if (f.typ === "du") {
     const sie = text.match(SIE_FORM)?.[0];
     if (sie) return `du-Nachricht enthält „${sie}“`;
@@ -313,9 +329,9 @@ export const firstMessageProblem = (text: string, f: Form, course: Course | null
   messageCheck("erst", text, f, course, privatePrice);
 
 /** Nachfass-Text samt Pruefung — derselbe fuer Tab, API und Sende-Lauf. */
-export function followupMessage(kind: FollowupKind, f: Form, name: string, course: Course, privatePrice: number) {
+export function followupMessage(kind: FollowupKind, f: Form, name: string, course: Course | null, privatePrice: number) {
   const text = buildFollowup(kind, f, name, course, privatePrice);
-  const withBlock = kind !== "erinnerung" && kind !== "frage";
+  const withBlock = kind !== "erinnerung" && kind !== "frage" && kind !== "einfach" && f.typ !== "fr";
   const anrede: "du" | "Sie" = f.typ === "du" ? "du" : "Sie";
   return { text, anrede, problem: messageCheck("nachfassen", text, f, withBlock ? course : null, privatePrice) };
 }

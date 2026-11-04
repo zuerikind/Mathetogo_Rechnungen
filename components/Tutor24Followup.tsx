@@ -7,6 +7,7 @@ import {
   GROUP_LABEL,
   LEVEL_LABEL,
   MAX_ACTIVE_COURSES,
+  NO_COURSE,
   SUBJECTS,
   courseStats,
   followedUpIds,
@@ -141,6 +142,16 @@ function CourseEditor({
               <label className="flex items-center gap-2">
                 Name
                 <input value={course.name} disabled={disabled} onChange={(e) => set("name", e.target.value)} className={`${inputClass} w-72`} />
+              </label>
+              <label className="flex items-center gap-2" title="Für englische Nachrichten; leer = deutscher Name">
+                Name englisch
+                <input
+                  value={course.nameEn ?? ""}
+                  placeholder="optional, z.B. Matura maths preparation course"
+                  disabled={disabled}
+                  onChange={(e) => set("nameEn", e.target.value)}
+                  className={`${inputClass} w-72`}
+                />
               </label>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -361,13 +372,13 @@ export function Tutor24Followup({
     []
   );
 
-  const start = async (action: Mode) => {
+  const start = async (action: Mode, forCourse?: string) => {
     if (!status) return;
     // Kein Bestaetigungsfenster: die gepruefte Liste steht beim Knopf, der Lauf geht dann ohne Rueckfrage durch.
     setBusy(true);
     try {
       // Senden und Antworten prüfen gelten nur fuer den ausgewaehlten Kurs; Kandidaten suchen liest alle Konversationen.
-      const courseId = action === "send" || action === "replies" ? selected?.id : undefined;
+      const courseId = action === "send" || action === "replies" ? forCourse ?? selected?.id : undefined;
       if (await post({ action, max: maxChecks, courseId })) await fetchStatus();
     } finally {
       setBusy(false);
@@ -436,6 +447,7 @@ export function Tutor24Followup({
   const coursePending = send.recipients.filter((r) => r.courseId === selected?.id);
   const courseQueue = coursePending.slice(0, send.budget);
   const badRecipients = courseQueue.filter((r) => r.problem);
+  const frenchQueue = send.recipients.filter((r) => r.courseId === NO_COURSE).slice(0, send.budget);
   // Auswahl und Anlegen mit demselben Fach: "Mathe" ist nur Startwert, falls es unter "Meine Faecher" steht.
   const fachForNew = draft.settings.mySubjects.includes(newFach) ? newFach : draft.settings.mySubjects[0] ?? "";
 
@@ -565,6 +577,23 @@ export function Tutor24Followup({
                     {courseQueue.length > 0 ? `${courseQueue.length} ${courseQueue.length === 1 ? "Person" : "Personen"} anschreiben` : "Niemand bereit"}
                   </button>
                 </div>
+                {frenchQueue.length > 0 && (
+                  <div className="mt-3 rounded-lg bg-gray-50 p-2 text-xs text-gray-600">
+                    {frenchQueue.length} französische {frenchQueue.length === 1 ? "Person bekommt" : "Personen bekommen"} ein einfaches Nachfassen ohne Kurs
+                    {frenchQueue.some((r) => r.problem) && <b className="text-red-600"> — Text fehlerhaft: {frenchQueue.find((r) => r.problem)?.problem}</b>}
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-[#4A7FC1]">Text ansehen</summary>
+                      <p className="mt-1 whitespace-pre-wrap">{frenchQueue[0].text}</p>
+                    </details>
+                    <button
+                      onClick={() => void start("send", NO_COURSE)}
+                      disabled={blocked || busy || dirty || frenchQueue.some((r) => r.problem)}
+                      className="mt-2 rounded-lg border border-green-600 px-3 py-1 font-semibold text-green-700 hover:bg-green-50 disabled:opacity-50"
+                    >
+                      Französisch nachfassen
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="flex flex-col rounded-xl border border-gray-100 p-4">
                 <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 3</p>

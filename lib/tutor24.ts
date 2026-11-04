@@ -7,7 +7,7 @@ import {
   TUTOR24_MESSAGE_TEMPLATE,
 } from "./tutor24-message-prompt";
 import { assembleFirstMessage, planFirstMessage } from "./tutor24-course-offer";
-import { parseJobText, type ListingInfo } from "./tutor24-followup";
+import { courseSnapshot, parseJobText, type ListingInfo } from "./tutor24-followup";
 import { loadCourses, loadLog, loadSettings } from "./tutor24-followup-store";
 import { listingHash, recordSend, type LeadFields } from "./tutor24-leads";
 import {
@@ -41,7 +41,7 @@ export async function composeFirstMessage(info: ListingInfo, log: (s: string) =>
   const f = plan.form;
   const personal = await generatePersonalSentence(
     info,
-    f.typ,
+    f.typ === "fr" ? "neutral" : f.typ,
     f.typ === "eltern" ? f.nom : null,
     log
   );
@@ -352,6 +352,7 @@ export async function runTutor24Messaging(
                 variante: course ? `${course.name}/${plan.addressee.anrede}` : `ohne Kurs/${plan.addressee.anrede}`,
                 text: message,
                 status: "gesendet",
+                kursDaten: course ? courseSnapshot(course) : null,
                 lead: leadFields(info, plan, language),
               });
               result.messaged++;

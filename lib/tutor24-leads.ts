@@ -17,7 +17,9 @@ import {
   pickCourse,
   splitList,
   type Course,
+  type CourseSnapshot,
   type FollowupSettings,
+  type LeadInfo,
   type LeadMap,
   type LogRow,
   type PreviewRow,
@@ -67,13 +69,16 @@ export async function loadLog(): Promise<LogRow[]> {
 
 /** Was das Nachfassen pro Person wissen muss (Anrede, Sprache, Kurs und Text der Erst-Nachricht, Stand). */
 export async function loadLeadInfo(): Promise<LeadMap> {
-  const leads = await prisma.tutor24Lead.findMany({ include: { messages: { where: { art: "erst" }, orderBy: { sentAt: "asc" }, take: 1 } } });
+  const leads = await prisma.tutor24Lead.findMany({ include: { messages: { select: { art: true, kursId: true, kursDaten: true }, orderBy: { sentAt: "asc" } } } });
   const out: LeadMap = {};
   for (const l of leads) {
-    const erst = l.messages[0];
-    const info = {
+    const erst = l.messages.find((m) => m.art === "erst");
+    const info: LeadInfo = {
       quelle: l.quelle, status: l.status, wer: l.wer, kind: l.kind, anrede: l.anrede, sprache: l.sprache,
-      erstKursId: erst?.kursId ?? null, erstText: erst?.text ?? "", freigabeKursId: l.freigabeKursId,
+      erstKursId: erst?.kursId ?? null,
+      erstKursDaten: (erst?.kursDaten as Partial<CourseSnapshot> | null) ?? null,
+      freigabeKursId: l.freigabeKursId,
+      nachgefasst: l.messages.some((m) => m.art === "nachfassen"),
     };
     if (l.conversationId) out[l.conversationId] = info;
     if (l.inseratId) out[`inserat:${l.inseratId}`] = info;
@@ -104,6 +109,8 @@ export type SendRecord = {
   status: "gesendet" | "unbestaetigt";
   /** Analyse, falls die Person neu ist (Erst-Nachricht) */
   lead?: Partial<LeadFields>;
+  /** Kursdaten zum Zeitpunkt des Sendens (courseSnapshot) */
+  kursDaten?: CourseSnapshot | null;
   sentAt?: Date;
 };
 
@@ -132,7 +139,10 @@ export async function recordSend(r: SendRecord): Promise<void> {
         data: { quelle: r.art === "erst" ? "erstnachricht" : "nachfassen", ...r.lead, ...keys, ...offer, name: r.name },
       });
   await prisma.tutor24Message.create({
-    data: { leadId: lead.id, art: r.art, kursId: r.kursId, variante: r.variante, text: r.text, status: r.status, ...(r.sentAt ? { sentAt: r.sentAt } : {}) },
+    data: {
+      leadId: lead.id, art: r.art, kursId: r.kursId, variante: r.variante, text: r.text, status: r.status,
+      ...(r.kursDaten ? { kursDaten: r.kursDaten } : {}), ...(r.sentAt ? { sentAt: r.sentAt } : {}),
+    },
   });
 }
 
@@ -257,6 +267,8 @@ export type InterestPerson = {
   anrede: string;
   sprache: string;
   sicher: boolean;
+  /** Sicherheit "tief" oder Stufe ohne Jahr: standardmaessig eingeklappt ("+ N ohne Klassenangabe") */
+  tief: boolean;
   grund: string;
   inseratUrl: string | null;
   konversationUrl: string | null;
@@ -269,7 +281,10 @@ export type InterestPerson = {
   freigabeKursId: string | null;
 };
 
-export type InterestGroup = { key: string; kursgruppe: string; label: string; fach: string; sicher: number; unsicher: number; perWeek: number[]; people: InterestPerson[] };
+/** sicher = Sicherheit hoch, unsicher = mittel, tief = ohne Klassenangabe. perWeek zaehlt sicher + unsicher. */
+export type InterestGroup = {
+  key: string; kursgruppe: string; label: string; fach: string; sicher: number; unsicher: number; tief: number; perWeek: number[]; people: InterestPerson[];
+};
 
 export type CourseFunnel = { courseId: string; angeboten: number; geantwortet: number; angemeldet: number; frei: number; passend: number; freigegeben: number };
 
@@ -309,12 +324,16 @@ export async function interestList(courses: Course[], settings: FollowupSettings
     const kursgruppe = isCourseGroup(l.kursgruppe) ? l.kursgruppe : "offen";
     const fach = mine[0];
     const key = `${kursgruppe}|${fach}`;
-    const g = groups.get(key) ?? { key, kursgruppe, label: GROUP_LABEL[kursgruppe], fach, sicher: 0, unsicher: 0, perWeek: weeks.map(() => 0), people: [] };
-    const sicher = l.sicherheit === "hoch" && kursgruppe !== "offen";
-    if (sicher) g.sicher++;
-    else g.unsicher++;
-    const w = weeks.indexOf(weekStart(l.createdAt));
-    if (w > -1) g.perWeek[w]++;
+    const g = groups.get(key) ?? { key, kursgruppe, label: GROUP_LABEL[kursgruppe], fach, sicher: 0, unsicher: 0, tief: 0, perWeek: weeks.map(() => 0), people: [] };
+    const tief = l.sicherheit === "tief" || kursgruppe === "offen";
+    const sicher = !tief && l.sicherheit === "hoch";
+    if (tief) g.tief++;
+    else {
+      if (sicher) g.sicher++;
+      else g.unsicher++;
+      const w = weeks.indexOf(weekStart(l.createdAt));
+      if (w > -1) g.perWeek[w]++;
+    }
     g.people.push({
       id: l.id,
       name: l.name,
@@ -326,6 +345,7 @@ export async function interestList(courses: Course[], settings: FollowupSettings
       anrede: l.anrede === "du" ? "du" : l.wer === "eltern" ? `Sie (Eltern${l.kind ? `, ${l.kind}` : ""})` : "Sie (unklar)",
       sprache: l.sprache,
       sicher,
+      tief,
       grund:
         offer.kind === "kurs" ? "passender Kurs offen" : offer.kind === "nachfrage" ? OFFER_LABEL[offer.grund] ?? offer.grund : offer.grund === "stufe_ohne_jahr" ? "Stufe ohne Jahr" : offer.grund,
       inseratUrl: l.inseratId ? `https://www.tutor24.ch/de/jobs/${l.inseratId}` : null,
@@ -347,7 +367,7 @@ export async function interestList(courses: Course[], settings: FollowupSettings
       const p = passend.get(c.id) ?? { passend: 0, freigegeben: 0 };
       return { courseId: c.id, angeboten: st.angeschrieben, geantwortet: st.geantwortet, angemeldet: st.zusagen, frei: Math.max(0, capacity(c) - st.zusagen), ...p };
     });
-  return { weeks, groups: Array.from(groups.values()).sort((a, b) => b.sicher + b.unsicher - (a.sicher + a.unsicher)), funnel };
+  return { weeks, groups: Array.from(groups.values()).sort((a, b) => b.sicher - a.sicher || b.unsicher - a.unsicher || b.tief - a.tief), funnel };
 }
 
 /** Status-Knoepfe pro Person und pro Liste. freigabeKursId: ich gebe die Person fuer diesen Kurs frei (null = zurueck). */
