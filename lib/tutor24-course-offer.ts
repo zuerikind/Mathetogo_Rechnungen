@@ -9,13 +9,11 @@ import {
   PRIVATE_PRICE_PER_LESSON,
   analyzeListing,
   capacity,
-  courseExclusion,
-  courseStats,
   detectAddressee,
   findDuForm,
   formatSaturdays,
   isOfferLevel,
-  splitList,
+  pickCourse,
   type Addressee,
   type Course,
   type FollowupSettings,
@@ -26,58 +24,8 @@ import {
 
 export type Analysis = ReturnType<typeof analyzeListing>;
 
-export const DEMAND_REASONS = ["kein_kurs", "anmeldeschluss_vorbei", "ausgebucht", "nur_vor_ort", "kurs_vorhanden_unsicher"] as const;
-export type DemandReason = (typeof DEMAND_REASONS)[number];
-
-export type Offer =
-  | { kind: "kurs"; course: Course }
-  /** Stufe erkannt, aber kein Kurs angeboten: wird in course_demand erfasst. */
-  | { kind: "nachfrage"; grund: DemandReason; kursId: string | null; fach: string }
-  | { kind: "nichts"; grund: string };
-
-const isoToday = (now: Date) =>
-  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-
-/** Warum ein Kurs fuer dieses Inserat nicht geht; null = geht. */
-function blockReason(c: Course, a: Analysis, log: Array<Partial<LogRow>>, now: Date): DemandReason | null {
-  if (c.deadline < isoToday(now)) return "anmeldeschluss_vorbei";
-  if (courseStats(c, log, now).zusagen >= capacity(c)) return "ausgebucht";
-  if (c.mode === "online" && a.ort === "vor Ort") return "nur_vor_ort";
-  return null;
-}
-
-// Wenn mehrere Kurse in Frage kommen: der Grund, der einem Angebot am naechsten ist.
-const REASON_RANK: DemandReason[] = ["nur_vor_ort", "ausgebucht", "anmeldeschluss_vorbei", "kein_kurs"];
-
-export function pickCourse(
-  info: ListingInfo,
-  a: Analysis,
-  courses: Course[],
-  settings: FollowupSettings,
-  log: Array<Partial<LogRow>>,
-  now = new Date()
-): Offer {
-  if (!isOfferLevel(a.kategorie)) return { kind: "nichts", grund: `stufe_${a.kategorie}` };
-  if (!a.kursgruppe || a.kursgruppe === "offen" || a.sicherheit === "tief") return { kind: "nichts", grund: "stufe_ohne_jahr" };
-  const excl = courseExclusion(info);
-  if (excl) return { kind: "nichts", grund: `ausschluss_${excl}` };
-  const subjects = splitList(a.faecher).filter((f) => settings.mySubjects.includes(f));
-  if (!subjects.length) return { kind: "nichts", grund: "fach_nicht_meins" };
-
-  // Pausierte Kurse zaehlen als "kein Kurs": nur aktive werden angeboten.
-  let best: { grund: DemandReason; kursId: string | null; fach: string } = { grund: "kein_kurs", kursId: null, fach: subjects[0] };
-  for (const fach of subjects) {
-    for (const c of courses.filter((x) => x.active && x.fach === fach && x.gruppe === a.kursgruppe)) {
-      const why = blockReason(c, a, log, now);
-      if (!why) {
-        if (a.sicherheit === "hoch") return { kind: "kurs", course: c };
-        return { kind: "nachfrage", grund: "kurs_vorhanden_unsicher", kursId: c.id, fach };
-      }
-      if (REASON_RANK.indexOf(why) < REASON_RANK.indexOf(best.grund)) best = { grund: why, kursId: c.id, fach };
-    }
-  }
-  return { kind: "nachfrage", ...best };
-}
+// Kurswahl (pickCourse) liegt in ./tutor24-followup: dieselbe Regel fuer Erst-Nachricht und Nachfassen.
+export { pickCourse, DEMAND_REASONS, type DemandReason, type Offer } from "./tutor24-followup";
 
 // ── Text ──────────────────────────────────────────────────────────────────────
 
@@ -243,7 +191,7 @@ export function planFirstMessage(
   const analysis = analyzeListing(info);
   const addressee = detectAddressee(info.description);
   const form = formFor(addressee);
-  const offer = pickCourse(info, analysis, courses, settings, log, now);
+  const offer = pickCourse(analysis, courses, settings, log, now);
   return { analysis, addressee, form, offer, course: offer.kind === "kurs" ? offer.course : null };
 }
 

@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { detectAddressee, mergeSettings, newCourse, parseJobText, type Course, type ListingInfo } from "./tutor24-followup";
+import {
+  PREVIEW_COLS,
+  detectAddressee,
+  effectiveStatus,
+  mergeSettings,
+  newCourse,
+  parseJobText,
+  type Course,
+  type ListingInfo,
+  type PreviewRow,
+} from "./tutor24-followup";
 import { assembleFirstMessage, firstMessageProblem, formFor, planFirstMessage, sentenceProblem } from "./tutor24-course-offer";
 
 const NOW = new Date(2026, 10, 4);
@@ -33,6 +43,30 @@ describe("Kurswahl", () => {
     expect(plan("Ich mache dieses Jahr Matura", [matura({ maxParticipants: 0, minParticipants: 0 })]).offer).toMatchObject({ grund: "ausgebucht" });
     expect(plan("Ich mache dieses Jahr Matura, Unterricht bei uns zu Hause").offer).toMatchObject({ grund: "nur_vor_ort" });
     expect(plan("Ich bin an der FMS und mache die Fachmatura").offer.kind).toBe("nichts");
+  });
+});
+
+describe("Nachfassen nutzt dieselbe Kurswahl", () => {
+  const row = (p: Partial<PreviewRow>): PreviewRow =>
+    ({
+      ...Object.fromEntries(PREVIEW_COLS.map((c) => [c, ""])),
+      status: "send", conversation_id: "1", kategorie: "matura", faecher: "Mathe", kursgruppe: "matura", sicherheit: "hoch", ort: "online",
+      ...p,
+    }) as PreviewRow;
+  const eff = (p: Partial<PreviewRow>, courses = [matura()], now = NOW) => effectiveStatus(row(p), courses, settings, new Set(), [], now);
+
+  it("sendet nur, was auch die Erst-Nachricht anbieten wuerde", () => {
+    expect(eff({}).label).toBe("wird gesendet");
+    expect(eff({ sicherheit: "mittel" }).label).toBe("kein Kurs: Stufe unsicher");
+    expect(eff({ ausschluss: "fachmatur" }).label).toBe("ausgeschlossen: fachmatur");
+    expect(eff({}, [matura()], new Date(2026, 10, 15)).label).toBe("kein Kurs: Anmeldeschluss vorbei");
+    expect(eff({ ort: "vor Ort" }).label).toBe("kein Kurs: will vor Ort");
+    expect(eff({}, [matura({ maxParticipants: 1, minParticipants: 1 })]).send).toBe(true);
+  });
+
+  it("volle Kurse: Zusagen aus dem Protokoll zaehlen", () => {
+    const log = [{ kurs: "m1", markierung: "Zusage" }, { kurs: "m1", markierung: "Bezahlt" }];
+    expect(effectiveStatus(row({}), [matura({ maxParticipants: 2, minParticipants: 1 })], settings, new Set(), log, NOW).label).toBe("kein Kurs: ausgebucht");
   });
 });
 

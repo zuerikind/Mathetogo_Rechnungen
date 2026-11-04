@@ -401,6 +401,8 @@ export function analyzeListing(info: ListingInfo) {
     zeitwunsch: joinList(extractZeitwunsch(info)),
     anlass: extractAnlass(info),
     anrede: detectAnrede(info.description),
+    /** FMS, Fachmatura, Passerelle, Bachelor, Erwachsene: nie ein Kurs. "" = kein Ausschluss. */
+    ausschluss: courseExclusion(info) ?? "",
   };
 }
 
@@ -484,8 +486,23 @@ export type ListEntry = {
 };
 export type ListCache = Record<string, ListEntry>;
 
-// Eigene Texte: die Erst-Nachricht ("… unterstütze ich dich in …") und das Nachfassen (FOLLOWUP_MARKER).
-const MINE_RE = /unterst[üu]tze ich dich|ich unterrichte seit|ich hatte mich vor einiger zeit/i;
+// Eigene Texte: alle Fassungen der Erst-Nachricht und das Nachfassen (FOLLOWUP_MARKER).
+// - du / Eltern: "gerne unterstütze ich dich | Ihre Tochter | Ihren Sohn | Ihr Kind …"
+// - unklar: "gerne biete ich Nachhilfe in Mathematik …"
+// - en/fr (KI-Uebersetzung, Wortlaut frei): "mathematics and physics", "mathématiques et (la) physique",
+//   dazu "12 years/ans" — beides steht im ersten Absatz jeder Fassung.
+// Nur ein Vorfilter fuer die Konversationsliste: die Konversationsseite selbst prueft die Absender.
+const MINE_RE = new RegExp(
+  [
+    "unterst[üu]tze ich (dich|ihr(e|en)? (tochter|sohn|kind))",
+    "gerne biete ich nachhilfe",
+    "ich unterrichte seit",
+    "ich hatte mich vor einiger zeit",
+    "math\\S*\\s+(and|et|und)\\s+(der\\s+|la\\s+|en\\s+|in\\s+)?ph[yi]si",
+    "(teaching|taught|enseigne)\\D{0,30}12",
+  ].join("|"),
+  "i"
+);
 const REJECTED_RE = /nicht an ihrer bewerbung interessiert/i;
 
 /**
@@ -768,7 +785,7 @@ export function validateCourses(courses: Course[]): string[] {
 export const PREVIEW_COLS = [
   "status", "conversation_id", "link", "name", "kategorie", "begruendung", "stufe", "fach",
   "faecher", "klasse", "gymi_jahr", "kursgruppe", "sicherheit", "ort", "ortsname", "zeitwunsch", "anlass",
-  "letzte_nachricht", "anrede", "grund", "quelle", "kurs", "nachricht", "inserat_id",
+  "letzte_nachricht", "anrede", "grund", "quelle", "kurs", "nachricht", "inserat_id", "ausschluss",
 ] as const;
 export const LOG_COLS = [
   "conversation_id", "name", "zeitstempel", "kurs", "variante", "status",
@@ -832,14 +849,88 @@ export function assignCourse(
   return null;
 }
 
+// ── Kurswahl: EINE Regel fuer Erst-Nachricht und Nachfassen ───────────────────
+
+export const DEMAND_REASONS = ["kein_kurs", "anmeldeschluss_vorbei", "ausgebucht", "nur_vor_ort", "kurs_vorhanden_unsicher"] as const;
+export type DemandReason = (typeof DEMAND_REASONS)[number];
+
+export type Offer =
+  | { kind: "kurs"; course: Course }
+  /** Stufe erkannt, aber kein Kurs angeboten: Interessent fuer einen (kuenftigen) Kurs. */
+  | { kind: "nachfrage"; grund: DemandReason; kursId: string | null; fach: string }
+  | { kind: "nichts"; grund: string };
+
+/** Was die Kurswahl braucht — liefert analyzeListing, steht aber auch in jeder Vorschau-Zeile. */
+export type CourseInput = { kategorie: string; kursgruppe: string; sicherheit: string; faecher: string; ort: string; ausschluss: string };
+
+const isoToday = (now: Date) =>
+  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+/** Warum ein Kurs fuer diese Person nicht geht; null = geht. */
+function blockReason(c: Course, a: CourseInput, log: Array<Partial<LogRow>>, now: Date): DemandReason | null {
+  if (c.deadline < isoToday(now)) return "anmeldeschluss_vorbei";
+  if (courseStats(c, log, now).zusagen >= capacity(c)) return "ausgebucht";
+  if (c.mode === "online" && a.ort === "vor Ort") return "nur_vor_ort";
+  return null;
+}
+
+// Wenn mehrere Kurse in Frage kommen: der Grund, der einem Angebot am naechsten ist.
+const REASON_RANK: DemandReason[] = ["nur_vor_ort", "ausgebucht", "anmeldeschluss_vorbei", "kein_kurs"];
+
+/**
+ * Passender Kurs: aktiv, Fach + Kursgruppe, Sicherheit "hoch", kein Ausschluss (FMS, Fachmatura …),
+ * Anmeldeschluss nicht vorbei, Platz frei, kein reiner Vor-Ort-Wunsch bei einem Online-Kurs.
+ */
+export function pickCourse(
+  a: CourseInput,
+  courses: Course[],
+  settings: FollowupSettings,
+  log: Array<Partial<LogRow>>,
+  now = new Date()
+): Offer {
+  if (!isOfferLevel(a.kategorie)) return { kind: "nichts", grund: `stufe_${a.kategorie || "?"}` };
+  if (!a.kursgruppe || a.kursgruppe === "offen" || a.sicherheit === "tief") return { kind: "nichts", grund: "stufe_ohne_jahr" };
+  if (a.ausschluss) return { kind: "nichts", grund: `ausschluss_${a.ausschluss}` };
+  const subjects = splitList(a.faecher).filter((f) => settings.mySubjects.includes(f));
+  if (!subjects.length) return { kind: "nichts", grund: "fach_nicht_meins" };
+
+  // Pausierte Kurse zaehlen als "kein Kurs": nur aktive werden angeboten.
+  let best: { grund: DemandReason; kursId: string | null; fach: string } = { grund: "kein_kurs", kursId: null, fach: subjects[0] };
+  for (const fach of subjects) {
+    for (const c of courses.filter((x) => x.active && x.fach === fach && x.gruppe === a.kursgruppe)) {
+      const why = blockReason(c, a, log, now);
+      if (!why) {
+        if (a.sicherheit === "hoch") return { kind: "kurs", course: c };
+        return { kind: "nachfrage", grund: "kurs_vorhanden_unsicher", kursId: c.id, fach };
+      }
+      if (REASON_RANK.indexOf(why) < REASON_RANK.indexOf(best.grund)) best = { grund: why, kursId: c.id, fach };
+    }
+  }
+  return { kind: "nachfrage", ...best };
+}
+
+const OFFER_LABEL: Record<string, string> = {
+  kein_kurs: "kein Kurs",
+  anmeldeschluss_vorbei: "kein Kurs: Anmeldeschluss vorbei",
+  ausgebucht: "kein Kurs: ausgebucht",
+  nur_vor_ort: "kein Kurs: will vor Ort",
+  kurs_vorhanden_unsicher: "kein Kurs: Stufe unsicher",
+};
+
 export type Effective = { send: boolean; label: string; course: Course | null };
 
-/** Was mit einer Zeile passiert. Gesendet wird nur bei send = true. */
+/**
+ * Was mit einer Zeile passiert. Gesendet wird nur bei send = true.
+ * Kursgruppe "offen" (Stufe nachfragen) ist ein Sonderfall ohne Termine: dort genuegt ein aktiver
+ * Nachfrage-Kurs. Alle anderen laufen durch pickCourse, dieselbe Regel wie in der Erst-Nachricht.
+ */
 export function effectiveStatus(
   row: PreviewRow | Omit<PreviewRow, "nachricht">,
   courses: Course[],
   settings: FollowupSettings,
-  logged: Set<string> = new Set()
+  logged: Set<string> = new Set(),
+  log: Array<Partial<LogRow>> = [],
+  now = new Date()
 ): Effective {
   const no = (label: string): Effective => ({ send: false, label, course: null });
   if (logged.has(row.conversation_id)) return no("bereits nachgefasst");
@@ -847,8 +938,16 @@ export function effectiveStatus(
   if (!isOfferLevel(row.kategorie)) return no(`ausgeschlossen: Stufe (${row.kategorie || "?"})`);
   if (!splitList(row.faecher).some((f) => settings.mySubjects.includes(f))) return no("ausgeschlossen: Fach");
   if (!row.kursgruppe) return no("keine Kursgruppe");
-  const course = assignCourse(row, courses, settings);
-  if (!course) return no("kein Kurs");
+  let course: Course | null;
+  if (row.kursgruppe === "offen") {
+    course = assignCourse(row, courses, settings);
+    if (!course) return no("kein Kurs");
+  } else {
+    const offer = pickCourse(row, courses, settings, log, now);
+    if (offer.kind === "nichts") return no(offer.grund.startsWith("ausschluss_") ? `ausgeschlossen: ${offer.grund.slice(11)}` : offer.grund);
+    if (offer.kind === "nachfrage") return no(OFFER_LABEL[offer.grund] ?? "kein Kurs");
+    course = offer.course;
+  }
   if (row.status.trim().toLowerCase() !== "send") return { send: false, label: "skip", course };
   return { send: true, label: "wird gesendet", course };
 }

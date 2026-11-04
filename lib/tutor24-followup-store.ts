@@ -11,6 +11,7 @@ import {
   MARKS,
   MAX_SENDS_PER_DAY,
   PREVIEW_COLS,
+  courseExclusion,
   effectiveStatus,
   isOfferLevel,
   mergeSettings,
@@ -170,21 +171,26 @@ export function readPreview(): PreviewRow[] {
   return parseCsv(readFileSync(PREVIEW_PATH, "utf8")).map((r) => {
     const row = Object.fromEntries(PREVIEW_COLS.map((c) => [c, r[c] ?? ""])) as PreviewRow;
     if (!row.kursgruppe && row.faecher && isOfferLevel(row.kategorie)) row.kursgruppe = "offen";
+    // Vor der Ausschluss-Spalte gespeichert: so gut es geht aus Stufe und Fundstelle nachholen.
+    // Der naechste Probelauf ueberschreibt das mit der Analyse des ganzen Inserats.
+    if (!("ausschluss" in r))
+      row.ausschluss = courseExclusion({ title: "", fach: row.fach, schulstufe: row.stufe, description: row.begruendung }) ?? "";
     return row;
   });
 }
 
 /** Zugeordneter Kurs und Text einer Zeile aus den AKTUELLEN Kursen; null = wird nicht gesendet. */
-export function messageFor(row: PreviewRow, courses: Course[], settings: FollowupSettings, logged?: Set<string>) {
-  const eff = effectiveStatus(row, courses, settings, logged);
+export function messageFor(row: PreviewRow, courses: Course[], settings: FollowupSettings, log: LogRow[]) {
+  const eff = effectiveStatus(row, courses, settings, undefined, log);
   if (!eff.course) return null;
   return { course: eff.course, send: eff.send, ...renderMessage(eff.course, row.name, (row.anrede === "du" ? "du" : "Sie") as Anrede) };
 }
 
 /** Schreibt die Vorschau; "kurs" und "nachricht" folgen immer den aktuellen Kursen. */
 export function writePreview(rows: PreviewRow[], courses = loadCourses(), settings = loadSettings()): void {
+  const log = readLog();
   const withText = rows.map((r) => {
-    const m = messageFor(r, courses, settings);
+    const m = messageFor(r, courses, settings, log);
     return { ...r, kurs: m?.course.name ?? "", nachricht: m?.text ?? "" };
   });
   writeChecked(PREVIEW_PATH, toCsv(withText, PREVIEW_COLS));
@@ -277,9 +283,10 @@ export function sendQueue(
   courseId?: string,
   offered: Map<string, string> = new Map()
 ) {
-  const logged = loggedIds();
+  const log = readLog();
+  const logged = new Set(log.map((r) => r.conversation_id));
   const pending = readPreview()
-    .map((row) => ({ row, eff: effectiveStatus(row, courses, settings, logged) }))
+    .map((row) => ({ row, eff: effectiveStatus(row, courses, settings, logged, log, now) }))
     .filter((x) => x.eff.send && (!courseId || x.eff.course?.id === courseId))
     .filter((x) => !(x.row.inserat_id && offered.get(x.row.inserat_id) === x.eff.course?.id))
     .map((x) => {

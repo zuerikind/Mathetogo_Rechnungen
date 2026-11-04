@@ -364,7 +364,7 @@ describe("Kurse und Nachricht", () => {
 const row = (p: Partial<PreviewRow>): PreviewRow => ({
   status: "send", conversation_id: "1", link: "", name: "Lea", kategorie: "gymi", begruendung: "", stufe: "", fach: "",
   faecher: "Mathe", klasse: "", gymi_jahr: "", kursgruppe: "gymi_unter", sicherheit: "hoch", ort: "unbekannt", ortsname: "",
-  zeitwunsch: "", anlass: "unbekannt", letzte_nachricht: "", anrede: "Sie", grund: "", quelle: "", kurs: "", nachricht: "", inserat_id: "",
+  zeitwunsch: "", anlass: "unbekannt", letzte_nachricht: "", anrede: "Sie", grund: "", quelle: "", kurs: "", nachricht: "", inserat_id: "", ausschluss: "",
   ...p,
 });
 
@@ -523,6 +523,16 @@ describe("Konversationsliste", () => {
     expect(listSender("Leider ist Mia nicht an Ihrer Bewerbung interessiert. Wir wünschen …", 1)).toBe("system");
     expect(listSender("Hallo Omid, gerne eine Probelektion", 1)).toBe("gegenseite");
     expect(listSender("Hallo zusammen, gerne unterstütze ich dich in Mathematik …", 0)).toBe("ich");
+    // Neue Erst-Nachricht: alle Fassungen
+    expect(listSender("Hallo, gerne unterstütze ich dich in Mathematik und der Physik …", 0)).toBe("ich");
+    expect(listSender("Guten Tag, gerne unterstütze ich Ihre Tochter in Mathematik …", 0)).toBe("ich");
+    expect(listSender("Guten Tag, gerne unterstütze ich Ihren Sohn in Mathematik …", 0)).toBe("ich");
+    expect(listSender("Guten Tag, gerne unterstütze ich Ihr Kind in Mathematik …", 0)).toBe("ich");
+    expect(listSender("Guten Tag, gerne biete ich Nachhilfe in Mathematik und Physik an …", 0)).toBe("ich");
+    expect(listSender("Hello everyone, I'd be happy to support you in mathematics and physics …", 0)).toBe("ich");
+    expect(listSender("Bonjour à tous, je serais ravi de t'aider en mathématiques et en physique …", 0)).toBe("ich");
+    expect(listSender("Bonjour, j'enseigne depuis plus de 12 ans …", 0)).toBe("ich");
+    expect(listSender("Danke, wir melden uns", 0)).toBe("unbekannt");
     expect(listSender("Hallo Lea, Ich hatte mich vor einiger Zeit bei Ihnen gemeldet …", 0)).toBe("ich");
     // Bereits gelesene Antwort ohne meinen Wortlaut: nicht sicher → unbekannt (wird geoeffnet)
     expect(listSender("Hallo Omid, danke, wir haben schon jemanden", 0)).toBe("unbekannt");

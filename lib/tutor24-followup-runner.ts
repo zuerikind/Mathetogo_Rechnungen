@@ -406,7 +406,7 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
       status: "skip", conversation_id: item.id, link: convoUrl(item.id), name: item.name,
       kategorie: "", begruendung: "", stufe: "", fach: "",
       faecher: "", klasse: "", gymi_jahr: "", kursgruppe: "", sicherheit: "", ort: "", ortsname: "", zeitwunsch: "", anlass: "",
-      letzte_nachricht: date ? fmtDate(date) : "", anrede: "", grund: "", quelle: "", kurs: "", nachricht: "", inserat_id: "",
+      letzte_nachricht: date ? fmtDate(date) : "", anrede: "", grund: "", quelle: "", kurs: "", nachricht: "", inserat_id: "", ausschluss: "",
     };
     const existing = rows.findIndex((r) => r.conversation_id === item.id);
     if (existing > -1) rows[existing] = row;

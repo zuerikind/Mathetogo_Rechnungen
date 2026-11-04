@@ -437,7 +437,7 @@ export function Tutor24Followup({
   const readyFor = (c: Course) => {
     const asActive = draft.courses.map((x) => (x.id === c.id ? { ...x, active: true } : x));
     return status.rows.filter((r) => {
-      const eff = effectiveStatus(r, asActive, draft.settings, logged);
+      const eff = effectiveStatus(r, asActive, draft.settings, logged, status.log);
       return eff.send && eff.course?.id === c.id;
     });
   };
@@ -449,7 +449,7 @@ export function Tutor24Followup({
   // Auswahl und Anlegen mit demselben Fach: "Mathe" ist nur Startwert, falls es unter "Meine Faecher" steht.
   const fachForNew = draft.settings.mySubjects.includes(newFach) ? newFach : draft.settings.mySubjects[0] ?? "";
 
-  const withEff = status.rows.map((r) => ({ r, eff: effectiveStatus(r, draft.courses, draft.settings, logged) }));
+  const withEff = status.rows.map((r) => ({ r, eff: effectiveStatus(r, draft.courses, draft.settings, logged, status.log) }));
   const shown = withEff.filter(({ r, eff }) => (filter === "alle" || statusGroup(eff.label) === filter) && (!onlySend || r.status === "send"));
   const groupCounts = withEff.reduce<Record<string, number>>((acc, { eff }) => {
     const g = statusGroup(eff.label);
