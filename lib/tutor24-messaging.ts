@@ -372,49 +372,55 @@ function isSiteBoilerplate(text: string): boolean {
   return SITE_BOILERPLATE_RE.test(text);
 }
 
-function scoreTextLanguage(text: string): { de: number; en: number; fr: number } {
-  const s = text.toLowerCase();
-  const count = (re: RegExp) => (s.match(re) ?? []).length;
+// Nur Funktionswoerter und typische Satzteile: Fachwoerter wie "Math", "Tutor", "Coach", "online"
+// stehen auch in deutschen Inseraten und zaehlen nicht. Italienisch und Spanisch werden mitgezaehlt,
+// damit "la", "le", "per" … sie nicht zu Franzoesisch machen — unterstuetzt sind sie nicht (→ Deutsch).
+const LANG_WORDS: Record<"de" | "en" | "fr" | "it" | "es", string[]> = {
+  de: [
+    "der", "die", "das", "und", "ich", "wir", "mein", "meine", "meinen", "unser", "unsere", "unseren", "sucht", "suche", "suchen", "gesucht",
+    "für", "mit", "nachhilfe", "schüler", "schülerin", "klasse", "ist", "sind", "bei", "auf", "zu", "im", "ein", "eine", "einen", "prüfung",
+    "wird", "unterricht", "sohn", "tochter", "kind", "brauchen", "braucht", "bitte", "oder", "nicht",
+  ],
+  en: [
+    "the", "and", "for", "with", "you", "your", "my", "our", "we", "is", "are", "i am", "i'm", "looking for", "need", "needs", "would", "could",
+    "son", "daughter", "child", "lessons", "improve", "grades", "year old", "who", "this", "that", "to", "of", "in the", "help with",
+  ],
+  fr: [
+    "le", "les", "des", "du", "je", "nous", "notre", "nos", "cherche", "cherchons", "recherche", "recherché", "recherchés", "élève", "cours",
+    "pour", "avec", "est", "une", "et", "enfant", "fils", "fille", "mathématiques", "particuliers", "besoin", "aide", "sont", "dans",
+  ],
+  it: [
+    "il", "di", "per", "che", "della", "delle", "dello", "gli", "sono", "nostro", "nostra", "figlio", "figlia", "scuola", "ripetizioni",
+    "lezioni", "cercate", "cerchiamo", "cercasi", "studente", "matematica", "tedesco", "casa", "alla", "piacerebbe", "trovare", "viviamo",
+  ],
+  es: ["el", "los", "las", "para", "con", "que", "clases", "busco", "buscamos", "hijo", "hija", "estudiante", "matemáticas", "profesor", "ayuda"],
+};
+const LANG_RE = Object.fromEntries(
+  Object.entries(LANG_WORDS).map(([k, ws]) => [k, new RegExp(`(?<!\\p{L})(?:${ws.join("|")})(?!\\p{L})`, "gu")])
+) as Record<keyof typeof LANG_WORDS, RegExp>;
 
-  const en =
-    count(
-      /\b(the|and|for|with|you|your|student|tutor|math|mathematics|physics|wanted|needed|help|lessons|hour|school|primary|secondary|university|looking|searching|tutoring|weekly|online|experience)\b/g
-    ) +
-    count(/\b(tutor wanted|wanted for|need a tutor|math tutor|looking for|searching for|hourly rate)\b/g);
-
-  const de =
-    count(
-      /\b(der|die|das|und|ich|wir|suche|gesucht|schüler|schülerin|nachhilfe|prüfung|stunde|gymnasium|mathematik|physik|lehrer|lehrerin|auftrag|anfrage)\b/g
-    ) +
-    count(/\b(nachhilfelehrer|gesucht in|ich suche|wir suchen|bitte melden)\b/g);
-
-  const fr =
-    count(/\b(le|la|les|des|je|nous|cherche|recherche|élève|professeur|mathématiques|physique|cours|besoin|soutien)\b/g) +
-    count(/\b(je recherche|cherche un|recherche un prof)\b/g);
-
-  return { de, en, fr };
+export function scoreTextLanguage(text: string): Record<keyof typeof LANG_WORDS, number> {
+  const s = text.toLowerCase().replace(/[’`]/g, "'");
+  return Object.fromEntries(Object.entries(LANG_RE).map(([k, re]) => [k, (s.match(re) ?? []).length])) as Record<keyof typeof LANG_WORDS, number>;
 }
 
-function pickLanguage(scores: { de: number; en: number; fr: number }): ListingProfile["language"] | null {
-  const { de, en, fr } = scores;
-  const max = Math.max(de, en, fr);
-  if (max < 2) return null;
-  if (en === max && en >= de && en >= fr) return "en";
-  if (fr === max && fr > de && fr >= en) return "fr";
-  if (de === max) return "de";
-  return null;
-}
+/** Englisch/Franzoesisch nur bei klarem Signal (mind. 4 typische Woerter, doppelt so viele wie jede andere Sprache). */
+const MIN_SIGNAL = 4;
 
-function detectLanguageFromText(listingTitle: string, bodyText: string): ListingProfile["language"] | null {
-  const title = listingTitle.trim();
+/**
+ * Sprache des Inserats: de, en oder fr. Im Zweifel und bei anderen Sprachen (Italienisch, Spanisch …) Deutsch.
+ * null nur ohne Text (dann entscheiden URL bzw. HTML).
+ */
+export function detectLanguageFromText(listingTitle: string, bodyText: string): ListingProfile["language"] | null {
   const body = isSiteBoilerplate(bodyText) ? "" : bodyText.trim();
-
-  const fromTitle = title ? pickLanguage(scoreTextLanguage(title)) : null;
-  if (fromTitle) return fromTitle;
-
-  const combined = `${title} ${body}`.trim();
+  const combined = `${listingTitle.trim()} ${body}`.trim();
   if (!combined) return null;
-  return pickLanguage(scoreTextLanguage(combined));
+  const scores = scoreTextLanguage(combined);
+  for (const lang of ["en", "fr"] as const) {
+    const others = Math.max(...Object.entries(scores).filter(([k]) => k !== lang).map(([, n]) => n));
+    if (scores[lang] >= MIN_SIGNAL && scores[lang] >= 2 * others) return lang;
+  }
+  return "de";
 }
 
 export function resolveTargetLanguage(
