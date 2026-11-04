@@ -44,7 +44,17 @@ const prevRows = existsSync(OUT) ? parseCsv(readFileSync(OUT, "utf8")) : [];
 const messages: Record<string, string> = existsSync(MSG) ? JSON.parse(readFileSync(MSG, "utf8")) : {};
 
 const candidates = readPreview().filter((r) => r.stufe || r.fach);
-const batch = candidates.slice(offset, offset + limit);
+// --fetch-only: nur Inserate lesen und zwischenspeichern (ohne Text, ohne KI) — fuer scripts/step7-test.mts.
+const fetchOnly = process.argv.includes("--fetch-only");
+// --nachgefasst: zusaetzlich die schon Nachgefassten ohne Analyse (nur lesen aus der Datenbank, nichts schreiben).
+const extra: Array<{ conversation_id: string; anrede: string }> = [];
+if (process.argv.includes("--nachgefasst")) {
+  const { prisma } = await import("../lib/prisma");
+  const leads = await prisma.tutor24Lead.findMany({ where: { kategorie: "", conversationId: { not: null }, messages: { some: { art: "nachfassen" } } }, select: { conversationId: true, anrede: true } });
+  extra.push(...leads.map((l) => ({ conversation_id: l.conversationId as string, anrede: l.anrede })));
+  await prisma.$disconnect();
+}
+const batch = [...candidates.slice(offset, offset + limit), ...extra] as Array<{ conversation_id: string; anrede: string }>;
 console.log(`${candidates.length} Konversationen mit gelesenem Inserat; dieser Lauf: ${offset + 1}–${offset + batch.length}.`);
 
 const pause = () => sleep(3_000 + Math.random() * 2_000);
@@ -107,6 +117,10 @@ try {
       writeFileSync(CACHE, JSON.stringify(cache, null, 1));
     }
 
+    if (fetchOnly) {
+      console.log(`${tag}: ${c.info ? `gelesen (${c.info.schulstufe || "?"})` : c.error}`);
+      continue;
+    }
     if (!c.info) {
       rows.set(r.conversation_id, { conversation_id: r.conversation_id, inserat_id: "", ergebnis: "fehler", grund: c.error ?? "", anrede_alt: r.anrede } as Record<string, string>);
       console.log(`${tag}: ${c.error}`);

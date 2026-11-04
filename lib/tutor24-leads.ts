@@ -296,6 +296,19 @@ export type CourseFunnel = { courseId: string; angeboten: number; geantwortet: n
  */
 export async function interestList(courses: Course[], settings: FollowupSettings, log: LogRow[], now = new Date(), showIgnored = false) {
   const leads = await prisma.tutor24Lead.findMany({ orderBy: { createdAt: "desc" } });
+  return buildInterestList(leads, courses, settings, log, now, showIgnored);
+}
+
+/** Felder eines Tutor24Lead, die die Liste braucht (auch fuer den Testlauf ohne Datenbank). */
+export type LeadRow = {
+  id: string; name: string; createdAt: Date; inseratId: string | null; conversationId: string | null; quelle: string;
+  stufe: string; kategorie: string; kursgruppe: string; sicherheit: string; ausschluss: string; faecher: string; anlass: string;
+  ort: string; ortsname: string; wer: string; anrede: string; kind: string | null; sprache: string; kursId: string | null;
+  freigabeKursId: string | null; status: string; geantwortet: string; einzelunterricht: boolean;
+};
+
+/** Reine Rechnung der Interessentenliste aus Lead-Zeilen. */
+export function buildInterestList(leads: LeadRow[], courses: Course[], settings: FollowupSettings, log: LogRow[], now = new Date(), showIgnored = false) {
   const today = isoDay(now);
   const open = (id: string | null) => {
     const c = id ? courses.find((x) => x.id === id) : null;
