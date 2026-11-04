@@ -1,18 +1,18 @@
 /**
- * Dateiablage fuers Nachfassen: Einstellungen und Kurse (JSON), Vorschau und Protokoll (CSV).
+ * Dateiablage fuers Nachfassen: Einstellungen und Kurse (JSON), Vorschau (CSV). Protokoll: Datenbank (./tutor24-leads).
  * Alles unter tutor24-followup/ im Projektordner — dort, wo Kommandozeile und
  * App-Server gleichermassen hinschauen. Der Ordner ist gitignored (Namen).
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { prisma } from "./prisma";
+import { appendVariante, loadLog, offeredCourses, sentToday, updateLead } from "./tutor24-leads";
 import {
-  LOG_COLS,
   MARKS,
   MAX_SENDS_PER_DAY,
   PREVIEW_COLS,
   courseExclusion,
   effectiveStatus,
+  followedUpIds,
   isOfferLevel,
   mergeSettings,
   messageProblem,
@@ -30,6 +30,7 @@ import {
 
 export const FOLLOWUP_DIR = join(process.cwd(), "tutor24-followup");
 export const PREVIEW_PATH = join(FOLLOWUP_DIR, "followup_preview.csv");
+/** Altes Protokoll (bis Nov. 2026): nach scripts/migrate-followup-log.mts nur noch Archiv. */
 export const LOG_PATH = join(FOLLOWUP_DIR, "followup_log.csv");
 export const SETTINGS_PATH = join(FOLLOWUP_DIR, "settings.json");
 export const COURSES_PATH = join(FOLLOWUP_DIR, "courses.json");
@@ -151,7 +152,7 @@ function backupCourses(now = new Date()): void {
 }
 
 /** Speichert Faecher + Kurse nach Pruefung und frischt Kurs und Nachricht in der Vorschau-CSV auf. */
-export function saveConfig(input: { settings?: unknown; courses?: unknown }): { settings: FollowupSettings; courses: Course[] } {
+export async function saveConfig(input: { settings?: unknown; courses?: unknown }): Promise<{ settings: FollowupSettings; courses: Course[] }> {
   const settings = mergeSettings(input.settings as Partial<FollowupSettings> | null);
   const courses = Array.isArray(input.courses) ? (input.courses as Course[]) : [];
   const errors = validateCourses(courses);
@@ -160,7 +161,7 @@ export function saveConfig(input: { settings?: unknown; courses?: unknown }): { 
   const next = JSON.stringify(courses, null, 2);
   if (existsSync(COURSES_PATH) && readFileSync(COURSES_PATH, "utf8") !== next) backupCourses();
   writeChecked(COURSES_PATH, next);
-  if (existsSync(PREVIEW_PATH)) writePreview(readPreview(), courses, settings);
+  if (existsSync(PREVIEW_PATH)) writePreview(readPreview(), await loadLog(), courses, settings);
   return { settings, courses };
 }
 
@@ -187,8 +188,7 @@ export function messageFor(row: PreviewRow, courses: Course[], settings: Followu
 }
 
 /** Schreibt die Vorschau; "kurs" und "nachricht" folgen immer den aktuellen Kursen. */
-export function writePreview(rows: PreviewRow[], courses = loadCourses(), settings = loadSettings()): void {
-  const log = readLog();
+export function writePreview(rows: PreviewRow[], log: LogRow[], courses = loadCourses(), settings = loadSettings()): void {
   const withText = rows.map((r) => {
     const m = messageFor(r, courses, settings, log);
     return { ...r, kurs: m?.course.name ?? "", nachricht: m?.text ?? "" };
@@ -197,98 +197,64 @@ export function writePreview(rows: PreviewRow[], courses = loadCourses(), settin
 }
 
 /** Anrede einer Person von Hand korrigieren (die Erkennung aus dem Inserat liegt mal daneben). */
-export function setRowAnrede(conversationId: string, anrede: Anrede): void {
+export async function setRowAnrede(conversationId: string, anrede: Anrede): Promise<void> {
   const rows = readPreview();
   const row = rows.find((r) => r.conversation_id === conversationId);
   if (!row) throw new Error(`Konversation ${conversationId} steht nicht in der Vorschau.`);
   row.anrede = anrede;
-  writePreview(rows);
+  writePreview(rows, await loadLog());
 }
 
-export function setRowStatus(conversationId: string, status: "send" | "skip"): void {
+export async function setRowStatus(conversationId: string, status: "send" | "skip"): Promise<void> {
   const rows = readPreview();
   const row = rows.find((r) => r.conversation_id === conversationId);
   if (!row) throw new Error(`Konversation ${conversationId} steht nicht in der Vorschau.`);
   row.status = status;
-  writePreview(rows);
+  writePreview(rows, await loadLog());
 }
 
-export function readLog(): LogRow[] {
-  if (!existsSync(LOG_PATH)) return [];
-  // Aeltere Protokolle haben weniger Spalten: fehlende als leer ergaenzen.
-  return parseCsv(readFileSync(LOG_PATH, "utf8")).map(
-    (r) => Object.fromEntries(LOG_COLS.map((c) => [c, r[c] ?? ""])) as LogRow
-  );
-}
+// ── Protokoll: liegt in der Datenbank (Tutor24Lead/Tutor24Message), siehe ./tutor24-leads ──
 
-export function writeLog(rows: LogRow[]): void {
-  writeChecked(LOG_PATH, toCsv(rows, LOG_COLS));
-}
+export { loadLog, offeredCourses, sentToday } from "./tutor24-leads";
 
-export function loggedIds(): Set<string> {
-  return new Set(readLog().map((r) => r.conversation_id));
-}
-
-/** Ganze Datei neu schreiben: so bekommen auch alte Protokolle die neuen Spalten. */
-export function appendLog(row: Partial<LogRow> & Pick<LogRow, "conversation_id" | "zeitstempel" | "status">): void {
-  const full = Object.fromEntries(LOG_COLS.map((c) => [c, row[c] ?? ""])) as LogRow;
-  writeLog([...readLog(), full]);
-}
-
-export function updateLog(conversationId: string, patch: Partial<LogRow>): void {
-  const rows = readLog();
-  const row = rows.find((r) => r.conversation_id === conversationId);
-  if (!row) throw new Error(`Konversation ${conversationId} steht nicht im Protokoll.`);
-  Object.assign(row, patch);
-  writeLog(rows);
+export async function updateLog(conversationId: string, patch: Partial<LogRow>): Promise<void> {
+  await updateLead(conversationId, patch);
 }
 
 /**
  * Antwort auf "Stufe nachfragen" einem richtigen Kurs zuordnen: die Person steht dann in dessen
  * Pipeline unter "Interessiert". Gesendet wird ihr nichts mehr (sie steht im Protokoll).
  */
-export function assignToCourse(conversationId: string, courseId: string): void {
+export async function assignToCourse(conversationId: string, courseId: string): Promise<void> {
   const course = loadCourses().find((c) => c.id === courseId);
   if (!course || course.gruppe === "offen") throw new Error("Unbekannter Kurs.");
-  const row = readLog().find((r) => r.conversation_id === conversationId);
-  updateLog(conversationId, { kurs: course.id, markierung: "Frage", variante: `${row?.variante ?? ""} → ${course.name}` });
+  await updateLead(conversationId, { kurs: course.id, markierung: "Frage" });
+  await appendVariante(conversationId, ` → ${course.name}`);
 }
 
-export function setMark(conversationId: string, markierung: string): void {
+export async function setMark(conversationId: string, markierung: string): Promise<void> {
   if (!(MARKS as readonly string[]).includes(markierung)) throw new Error(`Markierung muss eine von ${MARKS.join(", ")} sein.`);
-  updateLog(conversationId, { markierung });
-}
-
-/** Heute schon versuchte Sendungen (auch "unbestaetigt" zaehlt mit). */
-export function sentToday(now = new Date()): number {
-  const today = now.toDateString();
-  return readLog().filter((r) => new Date(r.zeitstempel).toDateString() === today).length;
-}
-
-/** Was jetzt gesendet wuerde: effektiver Status "wird gesendet", im Tageslimit. */
-/** Inserat-ID → Kurs, der schon in der Erst-Nachricht angeboten wurde (Tutor24Contact.kursId). */
-export async function offeredCourses(): Promise<Map<string, string>> {
-  const rows = await prisma.tutor24Contact.findMany({ where: { kursId: { not: null } }, select: { tutor24Id: true, kursId: true } });
-  return new Map(rows.map((r) => [r.tutor24Id, r.kursId as string]));
+  await updateLead(conversationId, { markierung });
 }
 
 /**
+ * Was jetzt gesendet wuerde: effektiver Status "wird gesendet", im Tageslimit.
  * courseId: nur diesen Kurs anschreiben (Knopf beim ausgewaehlten Kurs); das Tageslimit gilt trotzdem gesamt.
  * offered: wer denselben Kurs schon in der Erst-Nachricht bekam, wird nicht nochmals angeschrieben.
  */
-export function sendQueue(
+export async function sendQueue(
   courses = loadCourses(),
   settings = loadSettings(),
   now = new Date(),
   courseId?: string,
-  offered: Map<string, string> = new Map()
+  offered?: Map<string, string>
 ) {
-  const log = readLog();
-  const logged = new Set(log.map((r) => r.conversation_id));
+  const [log, sent, offeredMap] = await Promise.all([loadLog(), sentToday(now), offered ?? offeredCourses()]);
+  const logged = followedUpIds(log);
   const pending = readPreview()
     .map((row) => ({ row, eff: effectiveStatus(row, courses, settings, logged, log, now) }))
     .filter((x) => x.eff.send && (!courseId || x.eff.course?.id === courseId))
-    .filter((x) => !(x.row.inserat_id && offered.get(x.row.inserat_id) === x.eff.course?.id))
+    .filter((x) => !(x.row.inserat_id && offeredMap.get(x.row.inserat_id) === x.eff.course?.id))
     .map((x) => {
       const course = x.eff.course as Course;
       // Fertiger Text samt Pruefung: derselbe, den Tab, API und Sende-Lauf sehen.
@@ -296,6 +262,6 @@ export function sendQueue(
       const text = m.text.trim();
       return { ...x.row, course, text, anrede: m.anrede, problem: messageProblem(text, m.anrede) };
     });
-  const budget = Math.max(0, MAX_SENDS_PER_DAY - sentToday(now));
-  return { pending, queue: pending.slice(0, budget), budget };
+  const budget = Math.max(0, MAX_SENDS_PER_DAY - sent);
+  return { pending, queue: pending.slice(0, budget), budget, log };
 }

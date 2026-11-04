@@ -64,6 +64,13 @@ describe("Nachfassen nutzt dieselbe Kurswahl", () => {
     expect(eff({}, [matura({ maxParticipants: 1, minParticipants: 1 })]).send).toBe(true);
   });
 
+  it("Stufe offen: Ausgeschlossene bekommen auch die Stufen-Frage nicht", () => {
+    const frage = { ...newCourse("Mathe", "offen", NOW), id: "q1", active: true };
+    expect(eff({ kursgruppe: "offen", sicherheit: "tief" }, [frage]).label).toBe("wird gesendet");
+    for (const ausschluss of ["fms", "fachmatur", "passerelle", "bachelor", "erwachsen"])
+      expect(eff({ kursgruppe: "offen", sicherheit: "tief", ausschluss }, [frage]).label).toBe(`ausgeschlossen: ${ausschluss}`);
+  });
+
   it("volle Kurse: Zusagen aus dem Protokoll zaehlen", () => {
     const log = [{ kurs: "m1", markierung: "Zusage" }, { kurs: "m1", markierung: "Bezahlt" }];
     expect(effectiveStatus(row({}), [matura({ maxParticipants: 2, minParticipants: 1 })], settings, new Set(), log, NOW).label).toBe("kein Kurs: ausgebucht");

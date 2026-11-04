@@ -8,7 +8,8 @@ import {
 } from "./tutor24-message-prompt";
 import { assembleFirstMessage, planFirstMessage } from "./tutor24-course-offer";
 import { parseJobText, type ListingInfo } from "./tutor24-followup";
-import { loadCourses, loadSettings, readLog } from "./tutor24-followup-store";
+import { loadCourses, loadLog, loadSettings } from "./tutor24-followup-store";
+import { listingHash, recordSend, type LeadFields } from "./tutor24-leads";
 import {
   EXISTING_CONVO_SEL,
   TUTOR24_BASE_URL,
@@ -36,7 +37,7 @@ export const MESSAGE_TEMPLATE = TUTOR24_MESSAGE_TEMPLATE;
 
 /** Deutsche Erst-Nachricht: Analyse, Kurswahl, KI-Satz, Pruefung. Auch vom Probelauf (scripts/course-offer-dryrun.mts) genutzt. */
 export async function composeFirstMessage(info: ListingInfo, log: (s: string) => void, now = new Date()) {
-  const plan = planFirstMessage(info, loadCourses(), loadSettings(), readLog(), now);
+  const plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), now);
   const f = plan.form;
   const personal = await generatePersonalSentence(
     info,
@@ -52,19 +53,27 @@ export async function composeFirstMessage(info: ListingInfo, log: (s: string) =>
   return { ...m, plan };
 }
 
-/** Stufe erkannt, kein Kurs angeboten: einmal pro Inserat in course_demand (mittel = unsicher). */
-export async function recordDemand(tutor24Id: string, url: string, info: ListingInfo, plan: ReturnType<typeof planFirstMessage>) {
-  if (plan.offer.kind !== "nachfrage") return;
+/** Analyse beim ersten Kontakt → Tutor24Lead (auch ohne Kurs: Interessentenliste auf /kurse). */
+export function leadFields(info: ListingInfo, plan: ReturnType<typeof planFirstMessage>, sprache: string): LeadFields {
   const a = plan.analysis;
-  await prisma.courseDemand.upsert({
-    where: { tutor24Id },
-    update: {},
-    create: {
-      tutor24Id, url, fach: plan.offer.fach, stufe: info.schulstufe, kategorie: a.kategorie, kursgruppe: a.kursgruppe,
-      anlass: a.anlass, ort: a.ort, ortsname: a.ortsname || null, sicherheit: a.sicherheit, grund: plan.offer.grund,
-      kursId: plan.offer.kursId, auszug: info.description.replace(/\s+/g, " ").slice(0, 300), quelle: "erstnachricht",
-    },
-  });
+  const offer = plan.offer;
+  return {
+    quelle: "erstnachricht",
+    listingHash: listingHash([info.title, info.fach, info.schulstufe, info.description]),
+    faecher: a.faecher, stufe: info.schulstufe, kategorie: a.kategorie, kursgruppe: a.kursgruppe, sicherheit: a.sicherheit,
+    ausschluss: a.ausschluss, anlass: a.anlass, ort: a.ort, ortsname: a.ortsname,
+    wer: plan.addressee.wer, anrede: plan.addressee.anrede, kind: plan.addressee.kind, sprache,
+    grund: offer.kind === "kurs" ? "" : offer.grund,
+    auszug: info.description.replace(/\s+/g, " ").slice(0, 300),
+  };
+}
+
+/** Konversation nach dem Senden: aus der URL oder dem Link "Konversation öffnen" (sonst verknuepft der Probelauf). */
+async function conversationIdOnPage(page: import("playwright").Page): Promise<string | null> {
+  const fromUrl = page.url().match(/conversations\/(\d+)/)?.[1];
+  if (fromUrl) return fromUrl;
+  const href = await page.locator('a[href*="/conversations/"]').first().getAttribute("href", { timeout: 2000 }).catch(() => null);
+  return href?.match(/conversations\/(\d+)/)?.[1] ?? null;
 }
 
 const BASE_URL = TUTOR24_BASE_URL;
@@ -308,10 +317,12 @@ export async function runTutor24Messaging(
             // Deutsch: fester Text in drei Anredeformen, ggf. mit Gruppenkurs. en/fr: bisherige KI-Nachricht.
             let message: string;
             let kursId: string | null = null;
+            const info = parseJobText(await page.evaluate(() => document.body.innerText), listingTitle);
+            // Analyse immer (ohne KI): die Person kommt so oder so in Tutor24Lead.
+            let plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog());
             if (language === "de" && loadSettings().newFirstMessage) {
-              const info = parseJobText(await page.evaluate(() => document.body.innerText), listingTitle);
               const composed = await composeFirstMessage(info, tag);
-              await recordDemand(tutor24Id, href, info, composed.plan);
+              plan = composed.plan;
               if (composed.problem) {
                 tag(`⚠ Nachricht nicht sendbar (${composed.problem}) — übersprungen`);
                 result.skipped++;
@@ -330,6 +341,18 @@ export async function runTutor24Messaging(
 
             if (outcome === "sent") {
               await prisma.tutor24Contact.create({ data: { tutor24Id, name: displayName, profileUrl: href, kursId } });
+              const course = kursId ? loadCourses().find((c) => c.id === kursId) : null;
+              await recordSend({
+                inseratId: tutor24Id,
+                conversationId: await conversationIdOnPage(page),
+                name: displayName,
+                art: "erst",
+                kursId,
+                variante: course ? `${course.name}/${plan.addressee.anrede}` : `ohne Kurs/${plan.addressee.anrede}`,
+                text: message,
+                status: "gesendet",
+                lead: leadFields(info, plan, language),
+              });
               result.messaged++;
               result.newContacts.push({ name: displayName, tutor24Id, profileUrl: href });
               await sleep(1500);

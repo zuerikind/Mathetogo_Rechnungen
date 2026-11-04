@@ -10,6 +10,7 @@ import {
   PLACEHOLDERS,
   SUBJECTS,
   courseStats,
+  followedUpIds,
   demandOverview,
   effectiveStatus,
   formatSaturdays,
@@ -316,7 +317,7 @@ export function Tutor24Followup({
   );
   const errors = useMemo(() => (draft ? validateCourses(draft.courses) : []), [draft]);
   const demand = useMemo(() => (status && draft ? demandOverview(status.rows, draft.settings) : []), [status, draft]);
-  const logged = useMemo(() => new Set(status?.log.map((r) => r.conversation_id) ?? []), [status]);
+  const logged = useMemo(() => followedUpIds(status?.log ?? []), [status]);
   const blocked = running || !!status?.blockedBy;
 
   const post = async (body: Record<string, unknown>) => {

@@ -9,12 +9,11 @@ import {
   RUN_LOG_PATH,
   loadCourses,
   loadSettings,
-  readLog,
+  loadLog,
   readPreview,
   readStatus,
   requestStop,
   saveConfig,
-  offeredCourses,
   sendQueue,
   sentToday,
   setMark,
@@ -83,7 +82,7 @@ export async function GET() {
 
   const settings = loadSettings();
   const courses = loadCourses();
-  const { pending, queue, budget } = sendQueue(courses, settings, new Date(), undefined, await offeredCourses());
+  const { pending, queue, budget, log } = await sendQueue(courses, settings, new Date());
   const status = runStatus();
   return NextResponse.json({
     state: { ...status, log: status.log.slice(-40) },
@@ -92,10 +91,10 @@ export async function GET() {
     courses,
     // Ohne Nachrichtentext: den rendert der Tab live aus den Kursen.
     rows: readPreview().map(({ nachricht: _omit, ...r }) => r),
-    log: readLog(),
+    log,
     send: {
       limit: MAX_SENDS_PER_DAY,
-      sentToday: sentToday(),
+      sentToday: await sentToday(),
       budget,
       pending: pending.length,
       queue: queue.length,
@@ -127,24 +126,24 @@ export async function POST(req: NextRequest) {
 
   try {
     if (body.action === "config") {
-      return NextResponse.json(saveConfig({ settings: body.settings, courses: body.courses }));
+      return NextResponse.json(await saveConfig({ settings: body.settings, courses: body.courses }));
     }
     if (body.action === "status") {
       if (body.status !== "send" && body.status !== "skip") throw new Error("Status muss send oder skip sein.");
-      setRowStatus(String(body.id), body.status);
+      await setRowStatus(String(body.id), body.status);
       return NextResponse.json({ ok: true });
     }
     if (body.action === "anrede") {
       if (body.anrede !== "du" && body.anrede !== "Sie") throw new Error("Anrede muss du oder Sie sein.");
-      setRowAnrede(String(body.id), body.anrede);
+      await setRowAnrede(String(body.id), body.anrede);
       return NextResponse.json({ ok: true });
     }
     if (body.action === "assign") {
-      assignToCourse(String(body.id), String(body.kurs));
+      await assignToCourse(String(body.id), String(body.kurs));
       return NextResponse.json({ ok: true });
     }
     if (body.action === "mark") {
-      setMark(String(body.id), String(body.markierung));
+      await setMark(String(body.id), String(body.markierung));
       return NextResponse.json({ ok: true });
     }
     if (body.action === "preview" || body.action === "send" || body.action === "replies") {
@@ -158,12 +157,12 @@ export async function POST(req: NextRequest) {
       const invalid = body.action === "send" ? validateCourses(loadCourses()) : [];
       if (invalid.length) throw new Error(`Bitte zuerst die Kurse korrigieren: ${invalid.join(" ")}`);
       if (body.action === "send") {
-        const { queue } = sendQueue(undefined, undefined, undefined, courseId, await offeredCourses());
+        const { queue } = await sendQueue(undefined, undefined, undefined, courseId);
         if (queue.length === 0) throw new Error("Nichts zu senden: keine Zeile mit aktivem passendem Kurs und status=send, oder Tageslimit erreicht.");
         const bad = queue.filter((r) => r.problem);
         if (bad.length) throw new Error(`Nichts gesendet — fehlerhafte Nachrichten: ${bad.map((r) => `${r.name}: ${r.problem}`).join("; ")}`);
       }
-      if (body.action === "replies" && !readLog().some((r) => needsReplyCheck(r) && (!courseId || r.kurs === courseId)))
+      if (body.action === "replies" && !(await loadLog()).some((r) => needsReplyCheck(r) && (!courseId || r.kurs === courseId)))
         throw new Error("Nichts zu prüfen: alle Angeschriebenen haben geantwortet oder sind schon eingeordnet.");
 
       startRun(body.action, max, courseId);

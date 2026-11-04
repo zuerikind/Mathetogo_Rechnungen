@@ -10,9 +10,9 @@
  * Schritt 2 (nach Pruefung der CSV und mit aktiven Kursen im Tab):
  *   npx tsx scripts/followup_group_offer.mts --send
  *   → nur status=send MIT passendem aktivem Kurs (tutor24-followup/courses.json),
- *     hoechstens 25 pro Tag, 60–180 s Pause, Protokoll in followup_log.csv
+ *     hoechstens 25 pro Tag, 60–180 s Pause, Protokoll in der Datenbank (Tutor24Lead/Tutor24Message)
  *
- * Antworten pruefen (nur lesend, nur Konversationen aus followup_log.csv):
+ * Antworten pruefen (nur lesend, nur Angeschriebene aus dem Protokoll):
  *   npx tsx scripts/followup_group_offer.mts --replies
  *
  * Vergleich fuer "Inserat nur bei Bedarf" (nur lesend, aendert die Vorschau nicht):

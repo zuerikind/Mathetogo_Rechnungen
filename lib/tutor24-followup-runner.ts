@@ -31,6 +31,7 @@ import {
   compareAnalyses,
   entryChanged,
   findReply,
+  followedUpIds,
   hasNewActivity,
   needsReplyCheck,
   isOfferLevel,
@@ -53,18 +54,14 @@ import {
   COMPARE_COLS,
   COMPARE_PATH,
   PREVIEW_PATH,
-  LOG_PATH,
   TIMING_COLS,
   TIMING_PATH,
   appendCsv,
-  appendLog,
   clearStop,
   loadCourses,
   loadListCache,
   loadSettings,
-  loggedIds,
-  offeredCourses,
-  readLog,
+  loadLog,
   readPreview,
   saveListCache,
   sendQueue,
@@ -75,6 +72,7 @@ import {
   writeStatus,
 } from "./tutor24-followup-store";
 import { acquireTutor24Lock, readTutor24Lock } from "./tutor24-lock";
+import { fromPreview, recordSend, syncPreviewLeads } from "./tutor24-leads";
 import { TUTOR24_BASE_URL, acceptTutor24Cookies, gotoTutor24, loginToTutor24, sleep } from "./tutor24-messaging";
 
 /** Abbruch ohne Umgehungsversuch: Captcha, Login-Problem, Fehlerseite, unerwarteter Aufbau, Stopp. */
@@ -367,11 +365,13 @@ const RECHECK = new Set(["juenger_als_3_tage"]);
 
 async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
   const now = new Date();
-  const logged = loggedIds();
-  const onDemand = loadSettings().listingOnDemand;
+  const logRows = await loadLog();
+  const logged = followedUpIds(logRows);
+  const settings = loadSettings();
+  const onDemand = settings.listingOnDemand;
   log(onDemand ? "Inserat nur bei Bedarf öffnen: EIN." : "Inserat wird immer geöffnet (Optimierung im Tab aus).");
   const rows = readPreview();
-  const save = () => writePreview(rows);
+  const save = () => writePreview(rows, logRows);
 
   log("Lese archivierte Konversationen …");
   const archived = new Set((await collectList(page, "archived", "preview:archived", log)).entries.map((i) => i.id));
@@ -436,6 +436,8 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
     try {
       const convo = await readConversation(page, item.id);
       if (convo.lastMineDate) row.letzte_nachricht = fmtDate(convo.lastMineDate);
+      // Auch bei Abbruchgrund: verknuepft die Konversation mit einer Person aus der Erst-Nachricht (Antworten pruefen).
+      if (convo.jobId) row.inserat_id = convo.jobId;
       const reason = conversationSkipReason(convo, now);
       if (reason) { skip(reason); log(`${tag}: ${reason}`); errorsInRow = 0; continue; }
       if (!convo.jobId) { skip("inserat_unbekannt"); log(`${tag}: inserat_unbekannt`); errorsInRow = 0; continue; }
@@ -478,6 +480,8 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
   }
   state.done = checked;
   save();
+  const synced = await syncPreviewLeads(rows, settings);
+  log(`Interessenten: ${synced.neu} neu, ${synced.geaendert} ergänzt (Datenbank).`);
   if (fromList) log(`${fromList} Konversationen direkt aus der Liste entschieden (Absage/ungelesen), ohne sie zu öffnen.`);
 
   const remaining = sent.filter((i) => !rows.some((r) => r.conversation_id === i.id)).length;
@@ -505,14 +509,14 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
   // Gespeicherte Kurse koennen aus der Zeit vor einer Pruefregel stammen: vor dem ersten Senden pruefen.
   const invalid = validateCourses(courses);
   if (invalid.length) throw new StopRun(`Kurse fehlerhaft, nichts gesendet: ${invalid.join(" ")}`);
-  const { pending, queue } = sendQueue(courses, loadSettings(), new Date(), courseId, await offeredCourses());
+  const { pending, queue } = await sendQueue(courses, loadSettings(), new Date(), courseId);
   // Alle Texte VOR der ersten Nachricht pruefen: der Lauf bricht nie mittendrin wegen eines Textes ab.
   const bad = queue.filter((r) => r.problem);
   if (bad.length)
     throw new StopRun(`Nichts gesendet — ${bad.length} Nachricht(en) fehlerhaft: ${bad.map((r) => `${r.name}: ${r.problem}`).join("; ")}`);
   log(`Alle ${queue.length} Nachrichten vorab geprüft: Anrede, Platzhalter, Nachfass-Satz, keine Links/Nummern.`);
   log(
-    `Heute schon gesendet: ${sentToday()}/25. Jetzt: ${queue.length} von ${pending.length} offenen (nur aktive Kurse).` +
+    `Heute schon gesendet: ${await sentToday()}/25. Jetzt: ${queue.length} von ${pending.length} offenen (nur aktive Kurse).` +
       (pending.length > queue.length ? " Der Rest folgt an einem späteren Tag." : "")
   );
   state.total = queue.length;
@@ -558,13 +562,16 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
       );
     }
     // Auch unbestaetigt protokollieren: lieber einmal zu wenig als doppelt nachfassen.
-    appendLog({
-      conversation_id: row.conversation_id,
+    await recordSend({
+      conversationId: row.conversation_id,
+      inseratId: row.inserat_id || null,
       name: row.name,
-      zeitstempel: new Date().toISOString(),
-      kurs: row.course.id,
+      art: "nachfassen",
+      kursId: row.course.id,
       variante: `${row.course.name}/${row.anrede}`,
+      text,
       status: confirmed ? "gesendet" : "unbestaetigt",
+      lead: fromPreview(row),
     });
     if (!confirmed) {
       await assertPageOk(page, `nach dem Senden ${row.conversation_id}`);
@@ -584,13 +591,16 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
       }
     }
   }
-  log(`══ Fertig: ${sentCount} gesendet. Protokoll: ${LOG_PATH} ══`);
+  log(`══ Fertig: ${sentCount} gesendet. Protokoll: Datenbank (Tutor24Message) ══`);
 }
 
 /** Nur lesend: kam nach meinem Nachfassen eine Antwort? Gewertet wird sie nicht — das markiere ich im Tab. */
 async function replies(page: Page, log: Log, courseId?: string): Promise<void> {
-  const open = readLog().filter((r) => needsReplyCheck(r) && (!courseId || r.kurs === courseId));
-  log(`${open.length} nachgefasste Konversationen ohne bekannte Antwort.`);
+  const all = (await loadLog()).filter((r) => needsReplyCheck(r) && (!courseId || r.kurs === courseId));
+  // Erst-Nachricht ohne bekannte Konversation: erst ein Probelauf verknuepft sie (Inserat → Konversation).
+  const open = all.filter((r) => !r.conversation_id.startsWith("inserat:"));
+  log(`${open.length} angeschriebene Konversationen ohne bekannte Antwort.`);
+  if (all.length > open.length) log(`${all.length - open.length} aus der Erst-Nachricht noch ohne Konversation — Probelauf verknüpft sie.`);
   if (!open.length) return;
   // Liste nur so weit laden, bis alle gesuchten Konversationen drin sind (oder aelter als das erste Nachfassen).
   const want = new Set(open.map((r) => r.conversation_id));
@@ -614,7 +624,7 @@ async function replies(page: Page, log: Log, courseId?: string): Promise<void> {
     const tag = `[${i + 1}/${open.length}] ${r.name || r.conversation_id}`;
     // Liste zeigt: mein Nachfassen ist weiterhin die letzte Nachricht, nichts ungelesen → keine Antwort.
     if (!hasNewActivity(byId.get(r.conversation_id))) {
-      updateLog(r.conversation_id, { geantwortet: "nein" });
+      await updateLog(r.conversation_id, { geantwortet: "nein" });
       skipped++;
       continue;
     }
@@ -623,14 +633,14 @@ async function replies(page: Page, log: Log, courseId?: string): Promise<void> {
       // Absage ueber tutor24 ist eine Systemmeldung, keine Chat-Blase: findReply saehe sie nie.
       // Vor dem Senden war sie nicht da (Senden prueft das), also kam sie nach dem Nachfassen.
       if (convo.service.some((t) => /nicht an ihrer bewerbung interessiert/i.test(t))) {
-        updateLog(r.conversation_id, { geantwortet: "ja", antwort: "Absage über tutor24 (Systemmeldung)", markierung: "Absage" });
+        await updateLog(r.conversation_id, { geantwortet: "ja", antwort: "Absage über tutor24 (Systemmeldung)", markierung: "Absage" });
         answered++;
         errorsInRow = 0;
         log(`${tag}: Absage über tutor24`);
         continue;
       }
       const reply = findReply(convo.bubbles, new Date(r.zeitstempel));
-      updateLog(
+      await updateLog(
         r.conversation_id,
         reply
           ? { geantwortet: "ja", antwort_datum: reply.date ? fmtDate(reply.date) : "", antwort: reply.text, markierung: r.markierung || "offen" }
@@ -642,7 +652,7 @@ async function replies(page: Page, log: Log, courseId?: string): Promise<void> {
     } catch (err) {
       // Nicht als "keine Antwort" speichern: "fehler: …" wird beim naechsten Lauf erneut geprueft.
       const msg = err instanceof Error ? err.message : String(err);
-      updateLog(r.conversation_id, { geantwortet: `fehler: ${msg.replace(/\s+/g, " ").slice(0, 120)}` });
+      await updateLog(r.conversation_id, { geantwortet: `fehler: ${msg.replace(/\s+/g, " ").slice(0, 120)}` });
       if (!(err instanceof ReadError)) throw err;
       log(`${tag}: ✖ Lesefehler — ${msg}`);
       if (++errorsInRow >= MAX_READ_ERRORS_IN_ROW)
@@ -659,7 +669,7 @@ async function replies(page: Page, log: Log, courseId?: string): Promise<void> {
  * gelesen hat, beide Varianten auswerten. Schreibt nur compare.csv, aendert die Vorschau nicht.
  */
 async function compare(page: Page, n: number, log: Log): Promise<void> {
-  const logged = loggedIds();
+  const logged = followedUpIds(await loadLog());
   const candidates = readPreview().filter((r) => r.kategorie && !logged.has(r.conversation_id));
   log(`Vergleiche ${Math.min(n, candidates.length)} Konversationen (von ${candidates.length} mit gelesenem Inserat).`);
   const out: Record<string, string>[] = [];

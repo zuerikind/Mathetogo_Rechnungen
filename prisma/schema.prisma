@@ -327,33 +327,77 @@ model Tutor24Contact {
   kursId     String?
 }
 
-/// Stufe erkannt, aber kein passender Kurs angeboten (Erst-Nachricht tutor24). Uebersicht auf /kurse.
-model CourseDemand {
-  id         String   @id @default(cuid())
-  /// Inserat-ID: ein Eintrag pro Inserat
-  tutor24Id  String   @unique
-  url        String
-  createdAt  DateTime @default(now())
-  fach       String
-  stufe      String
-  kategorie  String
-  kursgruppe String
-  anlass     String
-  ort        String
-  ortsname   String?
-  /// "hoch" | "mittel" (mittel = unsicher)
-  sicherheit String
-  /// kein_kurs | anmeldeschluss_vorbei | ausgebucht | nur_vor_ort | kurs_vorhanden_unsicher
-  grund      String
-  kursId     String?
-  auszug     String
+/// Eine Person auf tutor24 (ein Inserat): Analyse beim ersten Kontakt, Kursangebot, Stand.
+/// Gemeinsam fuer Erst-Nachricht und Nachfassen; Interessentenliste und Pipeline auf /kurse.
+model Tutor24Lead {
+  id               String   @id @default(cuid())
+  /// Inserat-ID (tutor24 /jobs/<id>): eine Person pro Inserat
+  inseratId        String?  @unique
+  conversationId   String?  @unique
+  name             String   @default("")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
   /// erstnachricht | nachfassen
-  quelle     String
-  /// offen | kurs_angelegt | ignoriert
-  status     String   @default("offen")
+  quelle           String
+  /// Hash des Inserats: neu analysiert wird nur bei Aenderung
+  listingHash      String   @default("")
+  /// meine Faecher aus dem Inserat, z.B. "Mathe, Physik"
+  faecher          String   @default("")
+  stufe            String   @default("")
+  kategorie        String   @default("")
+  kursgruppe       String   @default("")
+  /// hoch | mittel | tief (mittel/tief = unsicher)
+  sicherheit       String   @default("")
+  ausschluss       String   @default("")
+  anlass           String   @default("")
+  ort              String   @default("")
+  ortsname         String   @default("")
+  /// schueler | eltern | unklar
+  wer              String   @default("unklar")
+  /// du | Sie
+  anrede           String   @default("Sie")
+  /// Tochter | Sohn | Kind
+  kind             String?
+  /// de | en | fr
+  sprache          String   @default("de")
+  /// Warum (noch) kein Kurs angeboten: kein_kurs, ausgebucht, ... ("" = angeboten)
+  grund            String   @default("")
+  /// zuletzt angebotener Kurs (courses.json)
+  kursId           String?
+  /// Kurs, fuer den ich die Person freigegeben habe (ohne Freigabe kein Angebot aus der Interessentenliste)
+  freigabeKursId   String?
+  /// offen | Frage | Zusage | Bezahlt | Absage | ignoriert
+  status           String   @default("offen")
+  /// "" | ja | nein | fehler: ...
+  geantwortet      String   @default("")
+  antwortDatum     String   @default("")
+  antwort          String   @default("")
+  /// nur von Hand
+  einzelunterricht Boolean  @default(false)
+  auszug           String   @default("")
+  messages         Tutor24Message[]
 
-  @@index([kursgruppe, fach, createdAt])
-  @@map("course_demand")
+  @@index([kursgruppe, createdAt])
+  @@map("tutor24_lead")
+}
+
+/// Jede gesendete Nachricht an einen Lead, mit Text.
+model Tutor24Message {
+  id       String      @id @default(cuid())
+  leadId   String
+  lead     Tutor24Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  /// erst | nachfassen
+  art      String
+  kursId   String?
+  /// z.B. "Mathe-Vorbereitungskurs .../Sie", "erinnerung", "neuer_durchgang"
+  variante String      @default("")
+  text     String      @default("")
+  /// gesendet | unbestaetigt
+  status   String      @default("gesendet")
+  sentAt   DateTime    @default(now())
+
+  @@index([leadId])
+  @@map("tutor24_message")
 }
 
 enum AcademigoContactType {

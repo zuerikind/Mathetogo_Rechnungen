@@ -790,6 +790,8 @@ export const PREVIEW_COLS = [
 export const LOG_COLS = [
   "conversation_id", "name", "zeitstempel", "kurs", "variante", "status",
   "geantwortet", "antwort_datum", "antwort", "markierung",
+  // art: "erst" = Kurs nur in der Erst-Nachricht, "nachfassen" = nachgefasst (Quelle: Tutor24Lead/Tutor24Message)
+  "art", "inserat_id",
 ] as const;
 
 export type PreviewRow = Record<(typeof PREVIEW_COLS)[number], string>;
@@ -817,6 +819,10 @@ export const STAGE_LABEL: Record<Stage, string> = {
   bezahlt: "Bezahlt",
   abgesagt: "Abgesagt",
 };
+
+/** Schon nachgefasst (nicht: Kurs nur in der Erst-Nachricht) — die bekommen kein zweites Nachfassen. */
+export const followedUpIds = (log: Array<Partial<LogRow>>): Set<string> =>
+  new Set(log.filter((r) => r.art !== "erst").map((r) => r.conversation_id ?? ""));
 
 /** "Antworten pruefen" oeffnet nur, wer noch keine Antwort hat und noch nicht von mir eingeordnet ist. */
 export const needsReplyCheck = (r: Partial<LogRow>): boolean =>
@@ -938,6 +944,8 @@ export function effectiveStatus(
   if (!isOfferLevel(row.kategorie)) return no(`ausgeschlossen: Stufe (${row.kategorie || "?"})`);
   if (!splitList(row.faecher).some((f) => settings.mySubjects.includes(f))) return no("ausgeschlossen: Fach");
   if (!row.kursgruppe) return no("keine Kursgruppe");
+  // Vor jeder Kursgruppe, auch "offen": FMS, Fachmatura, Passerelle … bekommen auch die Stufen-Frage nicht.
+  if (row.ausschluss) return no(`ausgeschlossen: ${row.ausschluss}`);
   let course: Course | null;
   if (row.kursgruppe === "offen") {
     course = assignCourse(row, courses, settings);
