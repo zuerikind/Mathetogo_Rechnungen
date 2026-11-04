@@ -836,7 +836,7 @@ export function pickCourse(
   return { kind: "nachfrage", ...best };
 }
 
-const OFFER_LABEL: Record<string, string> = {
+export const OFFER_LABEL: Record<string, string> = {
   kein_kurs: "kein Kurs",
   anmeldeschluss_vorbei: "kein Kurs: Anmeldeschluss vorbei",
   ausgebucht: "kein Kurs: ausgebucht",

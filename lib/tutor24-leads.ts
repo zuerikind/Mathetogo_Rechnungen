@@ -7,7 +7,21 @@
  */
 import { createHash } from "node:crypto";
 import { prisma } from "./prisma";
-import { isOfferLevel, splitList, type FollowupSettings, type LeadMap, type LogRow, type PreviewRow } from "./tutor24-followup";
+import {
+  GROUP_LABEL,
+  OFFER_LABEL,
+  capacity,
+  courseStats,
+  isCourseGroup,
+  isOfferLevel,
+  pickCourse,
+  splitList,
+  type Course,
+  type FollowupSettings,
+  type LeadMap,
+  type LogRow,
+  type PreviewRow,
+} from "./tutor24-followup";
 
 export type LeadStatus = "offen" | "Frage" | "Zusage" | "Bezahlt" | "Absage" | "ignoriert";
 
@@ -153,18 +167,33 @@ export async function syncPreviewLeads(rows: PreviewRow[], settings: FollowupSet
   const wanted = rows.filter(
     (r) => isOfferLevel(r.kategorie) && !r.ausschluss && splitList(r.faecher).some((f) => settings.mySubjects.includes(f))
   );
-  const all = await prisma.tutor24Lead.findMany({ select: { id: true, conversationId: true, inseratId: true, quelle: true, listingHash: true } });
+  const all = await prisma.tutor24Lead.findMany({ select: { id: true, conversationId: true, inseratId: true, quelle: true, listingHash: true, createdAt: true } });
   const byConvo = new Map(all.filter((l) => l.conversationId).map((l) => [l.conversationId as string, l]));
   const byInserat = new Map(all.filter((l) => l.inseratId).map((l) => [l.inseratId as string, l]));
   let neu = 0;
   let geaendert = 0;
+  // Erst-Nachricht ohne bekannte Konversation: auch Zeilen mit Abbruchgrund (z.B. hat geantwortet) verknuepfen,
+  // damit "Antworten pruefen" sie oeffnen kann.
+  for (const r of rows) {
+    const l = r.inserat_id ? byInserat.get(r.inserat_id) : undefined;
+    if (l && !l.conversationId && !byConvo.has(r.conversation_id)) {
+      await prisma.tutor24Lead.update({ where: { id: l.id }, data: { conversationId: r.conversation_id } });
+      l.conversationId = r.conversation_id;
+      byConvo.set(r.conversation_id, l);
+      geaendert++;
+    }
+  }
   for (const r of wanted) {
     const fields = fromPreview(r);
     const hit = byConvo.get(r.conversation_id) ?? (r.inserat_id ? byInserat.get(r.inserat_id) : undefined);
+    // Datum der Person: meine letzte Nachricht laut Vorschau (beim Nachfassen ist das die Erst-Nachricht).
+    const contacted = previewDate(r.letzte_nachricht);
     if (!hit) {
       // Inserat-ID kann eine andere Konversation schon belegen (zwei Konversationen zum selben Inserat): nur einmal.
       const inseratId = r.inserat_id && !byInserat.has(r.inserat_id) ? r.inserat_id : null;
-      const created = await prisma.tutor24Lead.create({ data: { ...fields, conversationId: r.conversation_id, inseratId, name: r.name } });
+      const created = await prisma.tutor24Lead.create({
+        data: { ...fields, conversationId: r.conversation_id, inseratId, name: r.name, ...(contacted ? { createdAt: contacted } : {}) },
+      });
       byConvo.set(r.conversation_id, created);
       if (inseratId) byInserat.set(inseratId, created);
       neu++;
@@ -175,12 +204,21 @@ export async function syncPreviewLeads(rows: PreviewRow[], settings: FollowupSet
     if (!hit.inseratId && r.inserat_id && !byInserat.has(r.inserat_id)) data.inseratId = r.inserat_id;
     // Analyse nur neu, wenn sie aus dem Nachfassen stammt und sich das Ergebnis geaendert hat.
     if (hit.quelle === "nachfassen" && hit.listingHash !== fields.listingHash) Object.assign(data, fields);
+    if (hit.quelle === "nachfassen" && contacted && contacted < hit.createdAt) data.createdAt = contacted;
     if (Object.keys(data).length) {
       await prisma.tutor24Lead.update({ where: { id: hit.id }, data });
       geaendert++;
     }
   }
   return { neu, geaendert };
+}
+
+/** "26.10.26, 12:00" (Vorschau-Spalte letzte_nachricht) → Datum; sonst null. */
+export function previewDate(s: string): Date | null {
+  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+  if (!m) return null;
+  const y = Number(m[3]) < 100 ? 2000 + Number(m[3]) : Number(m[3]);
+  return new Date(y, Number(m[2]) - 1, Number(m[1]));
 }
 
 /** Lead-Felder aus einer Vorschau-Zeile. Die Vorschau kennt Kind und Sprache nicht: du → Schueler, sonst unklar. */
@@ -193,4 +231,133 @@ export function fromPreview(r: PreviewRow): LeadFields {
     grund: "", auszug: r.begruendung.slice(0, 300),
   };
   return { ...f, listingHash: listingHash([f.faecher, f.stufe, f.kategorie, f.kursgruppe, f.sicherheit, f.ausschluss, f.anlass, f.ort, f.anrede]) };
+}
+
+// ── Interessentenliste (/kurse) ───────────────────────────────────────────────
+
+const DAY = 24 * 60 * 60 * 1000;
+const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** Montag der Kalenderwoche, ISO-Datum: Schluessel der 8-Wochen-Uebersicht. */
+function weekStart(d: Date): string {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return isoDay(x);
+}
+
+export type InterestPerson = {
+  id: string;
+  name: string;
+  datum: string;
+  stufe: string;
+  kategorie: string;
+  anlass: string;
+  ort: string;
+  /** "du", "Sie (Eltern, Tochter)", "Sie (unklar)" */
+  anrede: string;
+  sprache: string;
+  sicher: boolean;
+  grund: string;
+  inseratUrl: string | null;
+  konversationUrl: string | null;
+  geantwortet: boolean;
+  einzelunterricht: boolean;
+  status: string;
+  quelle: string;
+  /** passender offener Kurs (pickCourse), dem ich die Person freigeben kann */
+  passtZu: string | null;
+  freigabeKursId: string | null;
+};
+
+export type InterestGroup = { key: string; kursgruppe: string; label: string; fach: string; sicher: number; unsicher: number; perWeek: number[]; people: InterestPerson[] };
+
+export type CourseFunnel = { courseId: string; angeboten: number; geantwortet: number; angemeldet: number; frei: number; passend: number; freigegeben: number };
+
+/**
+ * Wer (noch) keinen offenen Kurs angeboten bekam: gruppiert nach Kursgruppe + Fach.
+ * Ausgeschlossene Stufen und fremde Faecher fehlen; unsichere Stufe (mittel/tief) steht drin, markiert.
+ * Angeboten, angemeldet oder ignoriert → nicht in der Liste (Verlauf bleibt in der Datenbank).
+ * Kurs der Person abgesagt, pausiert oder Anmeldeschluss vorbei → sie steht wieder in der Liste.
+ */
+export async function interestList(courses: Course[], settings: FollowupSettings, log: LogRow[], now = new Date(), showIgnored = false) {
+  const leads = await prisma.tutor24Lead.findMany({ orderBy: { createdAt: "desc" } });
+  const today = isoDay(now);
+  const open = (id: string | null) => {
+    const c = id ? courses.find((x) => x.id === id) : null;
+    return !!c && c.active && (c.gruppe === "offen" || c.deadline >= today);
+  };
+  const weeks = Array.from({ length: 8 }, (_, i) => weekStart(new Date(now.getTime() - (7 - i) * 7 * DAY)));
+  const groups = new Map<string, InterestGroup>();
+  const passend = new Map<string, { passend: number; freigegeben: number }>();
+
+  for (const l of leads) {
+    if (!isOfferLevel(l.kategorie) || l.ausschluss) continue;
+    const mine = splitList(l.faecher).filter((f) => settings.mySubjects.includes(f));
+    if (!mine.length) continue;
+    if (["Frage", "Zusage", "Bezahlt", "Absage"].includes(l.status)) continue;
+    if (l.status === "ignoriert" && !showIgnored) continue;
+    if (open(l.kursId)) continue;
+
+    const offer = pickCourse(l, courses, settings, log, now);
+    const passtZu = offer.kind === "kurs" ? offer.course.id : null;
+    if (passtZu) {
+      const p = passend.get(passtZu) ?? { passend: 0, freigegeben: 0 };
+      p.passend++;
+      if (l.freigabeKursId === passtZu) p.freigegeben++;
+      passend.set(passtZu, p);
+    }
+    const kursgruppe = isCourseGroup(l.kursgruppe) ? l.kursgruppe : "offen";
+    const fach = mine[0];
+    const key = `${kursgruppe}|${fach}`;
+    const g = groups.get(key) ?? { key, kursgruppe, label: GROUP_LABEL[kursgruppe], fach, sicher: 0, unsicher: 0, perWeek: weeks.map(() => 0), people: [] };
+    const sicher = l.sicherheit === "hoch" && kursgruppe !== "offen";
+    if (sicher) g.sicher++;
+    else g.unsicher++;
+    const w = weeks.indexOf(weekStart(l.createdAt));
+    if (w > -1) g.perWeek[w]++;
+    g.people.push({
+      id: l.id,
+      name: l.name,
+      datum: isoDay(l.createdAt),
+      stufe: l.stufe,
+      kategorie: l.kategorie,
+      anlass: l.anlass,
+      ort: [l.ort, l.ortsname].filter((x) => x && x !== "unbekannt").join(", "),
+      anrede: l.anrede === "du" ? "du" : l.wer === "eltern" ? `Sie (Eltern${l.kind ? `, ${l.kind}` : ""})` : "Sie (unklar)",
+      sprache: l.sprache,
+      sicher,
+      grund:
+        offer.kind === "kurs" ? "passender Kurs offen" : offer.kind === "nachfrage" ? OFFER_LABEL[offer.grund] ?? offer.grund : offer.grund === "stufe_ohne_jahr" ? "Stufe ohne Jahr" : offer.grund,
+      inseratUrl: l.inseratId ? `https://www.tutor24.ch/de/jobs/${l.inseratId}` : null,
+      konversationUrl: l.conversationId ? `https://www.tutor24.ch/de/conversations/${l.conversationId}?tab=sent` : null,
+      geantwortet: l.geantwortet === "ja",
+      einzelunterricht: l.einzelunterricht,
+      status: l.status,
+      quelle: l.quelle,
+      passtZu,
+      freigabeKursId: l.freigabeKursId,
+    });
+    groups.set(key, g);
+  }
+
+  const funnel: CourseFunnel[] = courses
+    .filter((c) => c.gruppe !== "offen")
+    .map((c) => {
+      const st = courseStats(c, log, now);
+      const p = passend.get(c.id) ?? { passend: 0, freigegeben: 0 };
+      return { courseId: c.id, angeboten: st.angeschrieben, geantwortet: st.geantwortet, angemeldet: st.zusagen, frei: Math.max(0, capacity(c) - st.zusagen), ...p };
+    });
+  return { weeks, groups: Array.from(groups.values()).sort((a, b) => b.sicher + b.unsicher - (a.sicher + a.unsicher)), funnel };
+}
+
+/** Status-Knoepfe pro Person und pro Liste. freigabeKursId: ich gebe die Person fuer diesen Kurs frei (null = zurueck). */
+export async function updateLeads(ids: string[], patch: { status?: "offen" | "ignoriert"; einzelunterricht?: boolean; freigabeKursId?: string | null }) {
+  const data: Record<string, unknown> = {};
+  if (patch.status === "offen" || patch.status === "ignoriert") data.status = patch.status;
+  if (typeof patch.einzelunterricht === "boolean") data.einzelunterricht = patch.einzelunterricht;
+  if (patch.freigabeKursId !== undefined) data.freigabeKursId = patch.freigabeKursId;
+  if (!ids.length || !Object.keys(data).length) return 0;
+  // Nur Personen der Liste: Angemeldete/Abgesagte aendert hier niemand aus Versehen.
+  const { count } = await prisma.tutor24Lead.updateMany({ where: { id: { in: ids }, status: { in: ["offen", "ignoriert"] } }, data });
+  return count;
 }

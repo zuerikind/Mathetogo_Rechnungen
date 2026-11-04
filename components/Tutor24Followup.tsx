@@ -78,7 +78,9 @@ const pct = (x: number) => `${Math.round(x * 100)} %`;
 
 /** Effektive Status zu Filtergruppen zusammenfassen; die Gruende stehen in der Zeile. */
 const statusGroup = (label: string) =>
-  ["wird gesendet", "kein Kurs", "skip", "keine Kursgruppe", "ausgeschlossen: Fach"].includes(label) ? label : "übrige";
+  ["wird gesendet", "kein Kurs", "skip", "keine Kursgruppe", "ausgeschlossen: Fach", "wartet auf Freigabe", "angemeldet"].includes(label)
+    ? label
+    : label.startsWith("kein Kurs:") ? "kein Kurs" : label.startsWith("ausgeschlossen") ? "ausgeschlossen" : "übrige";
 
 function CourseEditor({
   course,
