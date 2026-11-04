@@ -6,20 +6,26 @@ import {
   MARK_LABEL,
   STAGES,
   STAGE_LABEL,
-  messageProblem,
+  leadFor,
   pipelineStage,
-  renderMessage,
   type Course,
+  type FollowupKind,
+  type LeadMap,
   type LevelCategory,
   type LogRow,
   type PreviewRow,
   type Stage,
 } from "@/lib/tutor24-followup";
+import { followupForm, followupMessage } from "@/lib/tutor24-course-offer";
 
 type Row = Omit<PreviewRow, "nachricht">;
+/** "Bereit"-Zeile mit der Nachfass-Art aus effectiveStatus (angebot, erinnerung, …). */
+export type ReadyRow = Row & { kind?: FollowupKind };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const chatUrl = (id: string) => `https://www.tutor24.ch/de/conversations/${id}?tab=sent`;
+// Erst-Nachricht ohne bekannte Konversation: Schluessel "inserat:<id>" → Link aufs Inserat.
+const chatUrl = (id: string) =>
+  id.startsWith("inserat:") ? `https://www.tutor24.ch/de/jobs/${id.slice(8)}` : `https://www.tutor24.ch/de/conversations/${id}?tab=sent`;
 const daysSince = (iso: string) => {
   const t = new Date(iso).getTime();
   return Number.isNaN(t) ? null : Math.floor((Date.now() - t) / DAY_MS);
@@ -62,21 +68,34 @@ function meta(r: Row | undefined): string {
 const sentAnrede = (l: LogRow) => l.variante.match(/\/(du|Sie)\b/)?.[1] ?? "";
 
 /** Anrede umschalten und genau den Text zeigen, der beim Senden rausgeht. */
+const KIND_LABEL: Record<FollowupKind, string> = {
+  angebot: "Kursangebot",
+  erinnerung: "Erinnerung (Kurs stand in der Erst-Nachricht)",
+  geaendert: "Kurs geändert seit der Erst-Nachricht",
+  neuer_durchgang: "neuer Durchgang",
+  frage: "Frage nach der Stufe",
+};
+
 function ReadyMessage({
   course,
   row,
+  leads,
+  privatePrice,
   disabled,
   onAnrede,
 }: {
   course: Course;
-  row: Row;
+  row: ReadyRow;
+  leads: LeadMap;
+  privatePrice: number;
   disabled: boolean;
   onAnrede: (id: string, anrede: "du" | "Sie") => void;
 }) {
+  const lead = leadFor(leads, row);
   const want = row.anrede === "du" ? "du" : "Sie";
-  const msg = renderMessage(course, row.name, want);
   // Dieselbe Pruefung wie vor dem Senden: so sieht man hier schon, was den Lauf blockieren wuerde.
-  const problem = messageProblem(msg.text.trim(), msg.anrede);
+  const msg = followupMessage(row.kind ?? "angebot", followupForm(lead, row.anrede), row.name, course, privatePrice);
+  const problem = msg.problem;
   return (
     <div className="mt-1.5">
       <div className="flex items-center gap-1.5">
@@ -95,7 +114,7 @@ function ReadyMessage({
           </button>
         ))}
       </div>
-      {msg.warning && <p className="mt-1 text-amber-700">{msg.warning}</p>}
+      <p className="mt-1 text-gray-500">{KIND_LABEL[row.kind ?? "angebot"]}{lead?.quelle === "erstnachricht" ? " · Anrede aus der Erst-Nachricht" : ""}</p>
       {problem && <p className="mt-1 font-semibold text-red-600">Text fehlerhaft: {problem}</p>}
       <details className="mt-1">
         <summary className="cursor-pointer text-[11px] text-[#4A7FC1]">Nachricht ansehen</summary>
@@ -111,6 +130,8 @@ export function CoursePipeline({
   ready,
   log,
   rows,
+  leads,
+  privatePrice,
   disabled,
   onMark,
   onSkip,
@@ -120,10 +141,12 @@ export function CoursePipeline({
   course: Course;
   courses: Course[];
   /** Vorschau-Zeilen, die beim naechsten Senden diesen Kurs bekommen */
-  ready: Row[];
+  ready: ReadyRow[];
   /** Protokoll-Zeilen dieses Kurses */
   log: LogRow[];
   rows: Row[];
+  leads: LeadMap;
+  privatePrice: number;
   disabled: boolean;
   onMark: (id: string, mark: string) => void;
   onSkip: (row: Row) => void;
@@ -172,7 +195,7 @@ export function CoursePipeline({
                         </button>
                       </div>
                       <p className="mt-0.5 text-gray-500">{meta(r)}</p>
-                      <ReadyMessage course={course} row={r} disabled={disabled} onAnrede={onAnrede} />
+                      <ReadyMessage course={course} row={r} leads={leads} privatePrice={privatePrice} disabled={disabled} onAnrede={onAnrede} />
                     </article>
                   ))}
 

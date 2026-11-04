@@ -82,7 +82,7 @@ export async function GET() {
 
   const settings = loadSettings();
   const courses = loadCourses();
-  const { pending, queue, budget, log } = await sendQueue(courses, settings, new Date());
+  const { pending, queue, budget, log, leads } = await sendQueue(courses, settings, new Date());
   const status = runStatus();
   return NextResponse.json({
     state: { ...status, log: status.log.slice(-40) },
@@ -92,6 +92,7 @@ export async function GET() {
     // Ohne Nachrichtentext: den rendert der Tab live aus den Kursen.
     rows: readPreview().map(({ nachricht: _omit, ...r }) => r),
     log,
+    leads,
     send: {
       limit: MAX_SENDS_PER_DAY,
       sentToday: await sentToday(),

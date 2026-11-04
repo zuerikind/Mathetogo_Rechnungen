@@ -112,14 +112,16 @@ async function translateFullMessage(
  */
 export async function generatePersonalSentence(
   listing: { title: string; schulstufe: string; description: string },
-  anrede: "du" | "eltern" | "neutral",
+  anrede: "du" | "eltern" | "neutral" | "en",
   childNom: string | null,
   pushLog: (s: string) => void
 ): Promise<string | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
   const rule =
-    anrede === "du"
+    anrede === "en"
+      ? `Write in English and address the reader as "you". Do not mention a son or daughter.`
+      : anrede === "du"
       ? `Address the student directly with "du" (informal). Never use "Sie".`
       : anrede === "eltern"
         ? `The parent wrote the listing. Use formal "Sie" and refer to the child exactly as "${childNom}". Never use "du".`
@@ -136,11 +138,13 @@ export async function generatePersonalSentence(
         {
           role: "system",
           content:
-            `You are Omid, a math and physics tutor in Switzerland. Write ONE or two sentences in Swiss standard German (use "ss", never "ß"), max 40 words, ` +
+            `You are Omid, a math and physics tutor in Switzerland. Write ONE or two sentences in ${anrede === "en" ? "English" : 'Swiss standard German (use "ss", never "ß")'}, max 40 words, ` +
             `that show you read this tutoring request and how you help with Mathematik and/or Physik specifically. ${rule} ` +
             `If a concrete goal is named (Matura, BM, Gymiprüfung, Probezeit, a test), name it. ` +
             `Do NOT mention: ETH, years of experience, number of students, platform, Google Meet, group courses, prices, the city, other subjects. ` +
-            `The message before your sentence already says "gerne unterstütze ich ... in Mathematik und Physik": do NOT start with "Ich" or "Gerne" and do NOT repeat "unterstütze ich". ` +
+            (anrede === "en"
+              ? `The message before your sentence already says "I would be happy to help with mathematics and physics": do NOT start with "I" and do NOT repeat "happy to help". `
+              : `The message before your sentence already says "gerne unterstütze ich ... in Mathematik und Physik": do NOT start with "Ich" or "Gerne" and do NOT repeat "unterstütze ich". `) +
             `No em dashes, no marketing fluff. Respond as JSON: {"satz":"..."}`,
         },
         {

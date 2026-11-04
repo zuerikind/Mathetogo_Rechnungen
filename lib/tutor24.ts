@@ -35,9 +35,9 @@ export { tutor24JobState as jobState } from "./automation-state";
 
 export const MESSAGE_TEMPLATE = TUTOR24_MESSAGE_TEMPLATE;
 
-/** Deutsche Erst-Nachricht: Analyse, Kurswahl, KI-Satz, Pruefung. Auch vom Probelauf (scripts/course-offer-dryrun.mts) genutzt. */
-export async function composeFirstMessage(info: ListingInfo, log: (s: string) => void, now = new Date()) {
-  const plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), now);
+/** Erst-Nachricht (de/en): Analyse, Kurswahl, KI-Satz, Pruefung. Auch vom Probelauf (scripts/course-offer-dryrun.mts) genutzt. */
+export async function composeFirstMessage(info: ListingInfo, log: (s: string) => void, now = new Date(), sprache: "de" | "en" = "de") {
+  const plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), now, sprache);
   const f = plan.form;
   const personal = await generatePersonalSentence(
     info,
@@ -319,9 +319,10 @@ export async function runTutor24Messaging(
             let kursId: string | null = null;
             const info = parseJobText(await page.evaluate(() => document.body.innerText), listingTitle);
             // Analyse immer (ohne KI): die Person kommt so oder so in Tutor24Lead.
-            let plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog());
-            if (language === "de" && loadSettings().newFirstMessage) {
-              const composed = await composeFirstMessage(info, tag);
+            let plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), new Date(), language);
+            // Deutsch und Englisch: fester Text mit Anrede-Fassungen und ggf. Kursblock. Franzoesisch: bisherige KI-Nachricht.
+            if ((language === "de" || language === "en") && loadSettings().newFirstMessage) {
+              const composed = await composeFirstMessage(info, tag, new Date(), language);
               plan = composed.plan;
               if (composed.problem) {
                 tag(`⚠ Nachricht nicht sendbar (${composed.problem}) — übersprungen`);

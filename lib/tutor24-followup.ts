@@ -417,6 +417,8 @@ export type FollowupSettings = {
   listingOnDemand: boolean;
   /** Erst-Nachricht (lib/tutor24.ts) mit Anrede-Fassungen, Kursangebot und Nachfrage-Erfassung. Standard aus, bis freigegeben. */
   newFirstMessage: boolean;
+  /** Mein Preis pro Lektion im Einzelunterricht: Vergleich im Kursblock beider Nachrichten. */
+  privatePricePerLesson: number;
 };
 
 export function mergeSettings(saved: Partial<FollowupSettings> | null | undefined): FollowupSettings {
@@ -425,6 +427,7 @@ export function mergeSettings(saved: Partial<FollowupSettings> | null | undefine
     recommendMin: Number(saved?.recommendMin) >= 1 ? Math.floor(Number(saved?.recommendMin)) : 20,
     listingOnDemand: saved?.listingOnDemand === true,
     newFirstMessage: saved?.newFirstMessage === true,
+    privatePricePerLesson: Number(saved?.privatePricePerLesson) > 0 ? Number(saved?.privatePricePerLesson) : DEFAULT_PRIVATE_PRICE,
   };
 }
 
@@ -498,6 +501,7 @@ const MINE_RE = new RegExp(
     "gerne biete ich nachhilfe",
     "ich unterrichte seit",
     "ich hatte mich vor einiger zeit",
+    "i got in touch with you a while ago",
     "math\\S*\\s+(and|et|und)\\s+(der\\s+|la\\s+|en\\s+|in\\s+)?ph[yi]si",
     "(teaching|taught|enseigne)\\D{0,30}12",
   ].join("|"),
@@ -576,54 +580,19 @@ export type Course = {
   minParticipants: number;
   /** Plaetze im Kurs; fehlt in aelteren courses.json → DEFAULT_MAX_PARTICIPANTS */
   maxParticipants?: number;
-  /** Sie-Form mit den PLACEHOLDERS */
-  template: string;
+  /** Frueher: eigene Nachfass-Vorlage. Nicht mehr verwendet — der Text entsteht im Code (./tutor24-course-offer). */
+  template?: string;
 };
 
 export const DEFAULT_MAX_PARTICIPANTS = 6;
 export const capacity = (c: Course) => c.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS;
 
-/** Mein Preis im Einzelunterricht, Vergleich fuer {einzeltotal}. */
-export const PRIVATE_PRICE_PER_LESSON = 89;
+/** Standard fuer settings.privatePricePerLesson (Vergleichspreis im Kursblock). */
+export const DEFAULT_PRIVATE_PRICE = 89;
 
-export const PLACEHOLDERS = [
-  "{vorname}", "{kursname}", "{fach}", "{daten}", "{uhrzeit}", "{ort}", "{preis}", "{total}", "{lektionen}", "{einzeltotal}", "{anmeldeschluss}",
-] as const;
-
-export const DEFAULT_TEMPLATE = [
-  "Hallo {vorname}",
-  "Ich hatte mich vor einiger Zeit auf Ihre Anfrage für {fach}-Nachhilfe gemeldet. Falls Sie noch suchen, habe ich ein neues, deutlich günstigeres Angebot:",
-  "Ich starte einen {kursname} in einer kleinen Gruppe (maximal 6 Teilnehmende), an 4 Samstagen ({daten}), jeweils {uhrzeit}, {ort}.",
-  // Neutral statt "Ihr Kind": Anfragen stammen von Eltern UND von Lernenden selbst.
-  "Ich unterrichte seit über 12 Jahren, mit Schwerpunkt Gymi und Matura. Der ganze Kurs mit {lektionen} Lektionen kostet CHF {total}, also CHF {preis} pro Lektion. Dieselben {lektionen} Lektionen im Einzelunterricht kosten bei mir CHF {einzeltotal}. Dazu kommt Zugang zu meiner Übungsplattform: Zwischen den Terminen wird online weitergeübt, und ich sehe genau, wo es noch hakt.",
-  'Soll ich einen Platz reservieren? Ein kurzes "Ja" hier im Chat reicht, dann schicke ich alle Details. Der Kurs findet ab 3 Anmeldungen statt; bezahlt wird erst, wenn er sicher stattfindet.',
-  "Liebe Grüsse\nOmid",
-].join("\n\n");
-
-/**
- * BM: Anfragen schreiben oft die Lernenden selbst (Lehre mit BM), oft auch Eltern —
- * darum ohne "Ihr Kind", in der Ich-Form; Pruefungsfokus statt "Gymi und Matura".
- */
-export const BM_TEMPLATE = [
-  "Hallo {vorname}",
-  "Ich hatte mich vor einiger Zeit auf Ihre Anfrage für {fach}-Nachhilfe gemeldet. Falls Sie noch suchen, habe ich ein neues, deutlich günstigeres Angebot:",
-  "Ich starte einen {kursname} in einer kleinen Gruppe (maximal 6 Teilnehmende), an 4 Samstagen ({daten}), jeweils {uhrzeit}, {ort}. Wir arbeiten gezielt auf die BM-Prüfungen hin und lösen typische Prüfungsaufgaben.",
-  "Ich unterrichte seit über 12 Jahren. Der ganze Kurs mit {lektionen} Lektionen kostet CHF {total}, also CHF {preis} pro Lektion. Dieselben {lektionen} Lektionen im Einzelunterricht kosten bei mir CHF {einzeltotal}. Dazu kommt Zugang zu meiner Übungsplattform: Zwischen den Terminen wird online weitergeübt, und ich sehe genau, wo es noch hakt.",
-  'Soll ich einen Platz reservieren? Ein kurzes "Ja" hier im Chat reicht, dann schicke ich alle Details. Der Kurs findet ab 3 Anmeldungen statt; bezahlt wird erst, wenn er sicher stattfindet.',
-  "Liebe Grüsse\nOmid",
-].join("\n\n");
-
-/** Fuer die Kursgruppe "offen": kein Kursangebot, sondern die Frage nach der genauen Stufe. */
-export const INQUIRY_TEMPLATE = [
-  "Hallo {vorname}",
-  "Ich hatte mich vor einiger Zeit auf Ihre Anfrage für {fach}-Nachhilfe gemeldet. Falls Sie noch suchen: Ich biete neu günstige {fach}-Kurse in kleinen Gruppen an (maximal 6 Teilnehmende), für verschiedene Stufen, von der Sek über die Gymi-Vorbereitung bis zur Matura und BM.",
-  "Damit ich Ihnen den passenden Kurs schicken kann: Welche Stufe und welche Klasse ist es genau (z.B. 2. Sek oder 1. Jahr Kurzgymi)?",
-  "Eine kurze Antwort hier im Chat reicht, dann schicke ich Ihnen alle Informationen.",
-  "Liebe Grüsse\nOmid",
-].join("\n\n");
-
-/** Erkennt unsere Nachfass-Nachricht in einer Konversation (Senden-Bestaetigung, Antworten). */
-export const FOLLOWUP_MARKER = "Ich hatte mich vor einiger Zeit";
+/** Erkennt meine Nachfass-Nachricht (alle Fassungen, de/en): Senden-Bestaetigung, Antworten, Liste. */
+export const FOLLOWUP_MARKER_RE = /ich hatte mich vor einiger zeit|i got in touch with you a while ago/i;
+export const hasFollowupMarker = (text: string) => FOLLOWUP_MARKER_RE.test(text);
 
 const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
@@ -652,7 +621,6 @@ export function newCourse(fach: string, gruppe: CourseGroup, now = new Date()): 
     place: "",
     deadline: sat(-1),
     minParticipants: 3,
-    template: gruppe === "offen" ? INQUIRY_TEMPLATE : gruppe === "bm" ? BM_TEMPLATE : DEFAULT_TEMPLATE,
   };
 }
 
@@ -667,20 +635,33 @@ export function formatSaturdays(dates: string[]): string {
   return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} und ${parts[parts.length - 1]}` : parts.join("");
 }
 
+export type Sprache = "de" | "en";
+
 /**
- * Sie → du fuer die Saetze der Vorlage. Bleibt danach noch eine Sie-Form uebrig
- * (eigener Text), gilt die du-Form als nicht ableitbar.
+ * Kursblock nur aus den Kursdaten, ohne du/Sie: steht WORTGLEICH in Erst-Nachricht und Nachfassen.
+ * Das Nachfassen erkennt daran auch, ob sich der Kurs seit der Erst-Nachricht geaendert hat.
  */
-const DU_REPLACEMENTS: Array<[RegExp, string]> = [
-  [/\bIhre Anfrage\b/g, "deine Anfrage"],
-  [/\bFalls Sie noch suchen\b/g, "Falls du noch suchst"],
-  [/\bIhr Kind lernt\b/g, "Du lernst"],
-  [/\bIhr Kind übt\b/g, "Du übst"],
-  [/\bwo es steht\b/g, "wo du stehst"],
-  [/\bwo jemand steht\b/g, "wo du stehst"],
-  [/\bich Ihnen\b/g, "ich dir"],
-];
-const SIE_LEFT = /\b(Sie|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihres|Ihnen|Ihr Kind)\b/;
+export function courseBlock(c: Course, privatePrice: number, sprache: Sprache = "de"): string {
+  const total = c.pricePerLesson * c.lessons;
+  if (sprache === "en") {
+    const dates = formatSaturdays(c.saturdays).replace(" und ", " and ");
+    const ort = c.mode === "online" ? "online" : `in person${c.place.trim() ? ` (${c.place.trim()})` : ""}`;
+    return (
+      `Besides one-to-one lessons, I am currently offering a ${c.name.trim()} in a small group (max. ${capacity(c)} participants): ` +
+      `on ${c.saturdays.length} Saturdays (${dates}), each ${c.time.trim().replace(/\s*Uhr$/, "")}, ${ort}. ` +
+      `The ${c.lessons} lessons cost CHF ${total} in total, i.e. CHF ${c.pricePerLesson} per lesson instead of CHF ${privatePrice} for one-to-one lessons. ` +
+      `Registration closes on ${dayMonth(c.deadline)}; the course takes place with at least ${c.minParticipants} registrations.`
+    ).replace(/ß/g, "ss");
+  }
+  const ort = c.mode === "online" ? "online" : `vor Ort${c.place.trim() ? ` (${c.place.trim()})` : ""}`;
+  return (
+    `Neben dem Einzelunterricht biete ich zurzeit einen ${c.name.trim()} in einer kleinen Gruppe an (maximal ${capacity(c)} Teilnehmende): ` +
+    `an ${c.saturdays.length} Samstagen (${formatSaturdays(c.saturdays)}), jeweils ${c.time.trim()}, ${ort}. ` +
+    `Die ${c.lessons} Lektionen kosten zusammen CHF ${total}, also CHF ${c.pricePerLesson} pro Lektion statt CHF ${privatePrice} im Einzelunterricht. ` +
+    `Anmeldeschluss ist der ${dayMonth(c.deadline)}, der Kurs findet ab ${c.minParticipants} Anmeldungen statt.`
+  ).replace(/ß/g, "ss");
+}
+
 /** du-Formen: in einer Vorlage (Sie-Form) ein Fehler, in einer Sie-Nachricht gemischte Anrede. */
 // Unicode-Grenzen statt \b: \b kennt keine Umlaute ("übst").
 const DU_FORM = new RegExp("(?<!\\p{L})(du|dich|dir|dein|deine|deinen|deinem|deiner|deines|suchst|lernst|übst|stehst)(?!\\p{L})", "iu");
@@ -688,56 +669,6 @@ export const findDuForm = (text: string): string | null => text.match(DU_FORM)?.
 /** Spricht die Eltern an: falsch, wenn die Lernenden selbst angefragt haben ("Hallo Karla … Ihr Kind"). */
 const PARENT_ADDRESS = /\b(Ihr(em|es|en)?|Ihre) (Kind|Kinder|Sohn|Tochter)\b/;
 export const findParentAddress = (text: string): string | null => text.match(PARENT_ADDRESS)?.[0] ?? null;
-
-export function toDuForm(sieText: string): { text: string; ok: boolean } {
-  let t = sieText;
-  for (const [re, rep] of DU_REPLACEMENTS) t = t.replace(re, rep);
-  return { text: t, ok: !SIE_LEFT.test(t) };
-}
-
-export type Rendered = { text: string; anrede: Anrede; warning?: string };
-
-/** Fertige Nachricht aus dem AKTUELLEN Kurs. */
-export function renderMessage(c: Course, firstName: string, wantAnrede: Anrede): Rendered {
-  const values: Record<string, string> = {
-    "{vorname}": firstName.trim(),
-    "{kursname}": c.name.trim(),
-    "{fach}": c.fach,
-    "{daten}": formatSaturdays(c.saturdays),
-    "{uhrzeit}": c.time.trim(),
-    "{ort}": c.mode === "online" ? "online" : `vor Ort${c.place.trim() ? ` (${c.place.trim()})` : ""}`,
-    "{preis}": String(c.pricePerLesson),
-    "{total}": String(c.pricePerLesson * c.lessons),
-    "{lektionen}": String(c.lessons),
-    "{einzeltotal}": String(PRIVATE_PRICE_PER_LESSON * c.lessons),
-    "{anmeldeschluss}": dayMonth(c.deadline),
-  };
-  let text = c.template;
-  for (const [k, v] of Object.entries(values)) text = text.split(k).join(v);
-  // Ohne Vorname: "Hallo" ohne Leerzeichen dahinter.
-  text = text.replace(/[ \t]+\n/g, "\n").replace(/ß/g, "ss").trim();
-  if (wantAnrede === "Sie") return { text, anrede: "Sie" };
-  const du = toDuForm(text);
-  return du.ok
-    ? { text: du.text, anrede: "du" }
-    : { text, anrede: "Sie", warning: "du-Form nicht ableitbar (eigener Text) — Sie-Form verwendet" };
-}
-
-/**
- * Pruefung einer fertigen Nachricht vor dem Senden; null = in Ordnung.
- * Der Sende-Lauf prueft damit ALLE Nachrichten, bevor er die erste schickt.
- */
-export function messageProblem(text: string, anrede: Anrede): string | null {
-  if (!text.startsWith("Hallo")) return "beginnt nicht mit „Hallo“";
-  if (!text.includes(FOLLOWUP_MARKER)) return `Satz „${FOLLOWUP_MARKER}“ fehlt`;
-  if (/\{[a-zäöü]+\}/.test(text)) return "enthält einen nicht ersetzten Platzhalter";
-  if (containsForbiddenContact(text)) return "enthält Link, E-Mail oder Telefonnummer";
-  const du = findDuForm(text);
-  if (anrede === "Sie" && du) return `mischt Sie und du („${du}“)`;
-  const parent = findParentAddress(text);
-  if (parent) return `spricht Eltern an („${parent}“), obwohl evtl. die Lernenden selbst angefragt haben`;
-  return null;
-}
 
 /** Sicherheitsnetz fuer die Regel "keine Telefonnummern, Links, E-Mails". */
 export function containsForbiddenContact(text: string): boolean {
@@ -757,18 +688,8 @@ export function validateCourses(courses: Course[]): string[] {
     ids.add(c.id);
     if (!isCourseGroup(c.gruppe)) errors.push(`${name}: unbekannte Kursgruppe.`);
     if (!c.fach.trim()) errors.push(`${name}: Fach fehlt.`);
-    if (containsForbiddenContact(`${c.template}\n${c.name}\n${c.place}`)) errors.push(`${name}: Text enthält Link, E-Mail oder Telefonnummer.`);
-    if (!c.template.trim()) errors.push(`${name}: Text ist leer.`);
-    const unknown = c.template.match(/\{[a-zäöü]+\}/g)?.filter((p) => !(PLACEHOLDERS as readonly string[]).includes(p));
-    if (unknown?.length) errors.push(`${name}: unbekannter Platzhalter ${unknown.join(", ")}.`);
-    // Eltern bekaemen sonst "deine Anfrage … Ihr Kind lernt": die du-Form entsteht automatisch.
-    const du = findDuForm(c.template);
-    if (du) errors.push(`${name}: Text bitte in der Sie-Form schreiben, die du-Form entsteht automatisch (gefunden: „${du}“).`);
-    const parent = findParentAddress(c.template);
-    if (parent)
-      errors.push(`${name}: „${parent}“ passt nicht, wenn die Lernenden selbst angefragt haben — bitte neutral formulieren (z.B. „Zwischen den Terminen wird weitergeübt“).`);
-    // Ohne den Satz erkennt der naechste Lauf das Nachfassen nicht und koennte doppelt schreiben.
-    if (!c.template.includes(FOLLOWUP_MARKER)) errors.push(`${name}: Text muss „${FOLLOWUP_MARKER}“ enthalten.`);
+    // Name und Ort stehen woertlich im Kursblock beider Nachrichten (das Nachfassen darf keine Kontaktangaben enthalten).
+    if (containsForbiddenContact(`${c.name}\n${c.place}`)) errors.push(`${name}: Name oder Ort enthält Link, E-Mail oder Telefonnummer.`);
     // Stufe nachfragen: keine Termine, kein Preis.
     if (c.gruppe === "offen") continue;
     if (!(c.pricePerLesson > 0) || !(c.lessons > 0)) errors.push(`${name}: Preis und Anzahl Lektionen müssen > 0 sein.`);
@@ -923,12 +844,42 @@ const OFFER_LABEL: Record<string, string> = {
   kurs_vorhanden_unsicher: "kein Kurs: Stufe unsicher",
 };
 
-export type Effective = { send: boolean; label: string; course: Course | null };
+/**
+ * Welche Nachfass-Nachricht (Regel 5):
+ * - angebot: bisher kein Kurs → voller Kursblock
+ * - erinnerung: derselbe Kurs stand schon in der Erst-Nachricht und ist unveraendert offen → kurze Erinnerung
+ * - geaendert: derselbe Kurs, aber Termine/Preis/Ort geaendert → aktueller Kursblock
+ * - neuer_durchgang: Kurs aus der Erst-Nachricht voll/vorbei, neuer Kurs derselben Gruppe → voller Kursblock
+ * - frage: Kursgruppe "offen" → Frage nach der Stufe
+ */
+export type FollowupKind = "angebot" | "erinnerung" | "geaendert" | "neuer_durchgang" | "frage";
+
+/** Was das Nachfassen ueber die Person aus Tutor24Lead weiss (fehlt bei aelteren Kontakten). */
+export type LeadInfo = {
+  quelle: string;
+  status: string;
+  wer: string;
+  kind: string | null;
+  anrede: string;
+  sprache: string;
+  /** Kurs aus der Erst-Nachricht und deren Text */
+  erstKursId: string | null;
+  erstText: string;
+  freigabeKursId: string | null;
+};
+
+/** Konversation zuerst, sonst Inserat ("inserat:<id>"). */
+export type LeadMap = Record<string, LeadInfo>;
+export const leadFor = (leads: LeadMap | undefined, row: Pick<PreviewRow, "conversation_id" | "inserat_id">): LeadInfo | undefined =>
+  leads?.[row.conversation_id] ?? (row.inserat_id ? leads?.[`inserat:${row.inserat_id}`] : undefined);
+
+export type Effective = { send: boolean; label: string; course: Course | null; kind?: FollowupKind };
 
 /**
  * Was mit einer Zeile passiert. Gesendet wird nur bei send = true.
  * Kursgruppe "offen" (Stufe nachfragen) ist ein Sonderfall ohne Termine: dort genuegt ein aktiver
  * Nachfrage-Kurs. Alle anderen laufen durch pickCourse, dieselbe Regel wie in der Erst-Nachricht.
+ * lead: Stand aus der Datenbank — Angemeldete bekommen nichts, Bezug auf die Erst-Nachricht.
  */
 export function effectiveStatus(
   row: PreviewRow | Omit<PreviewRow, "nachricht">,
@@ -936,28 +887,43 @@ export function effectiveStatus(
   settings: FollowupSettings,
   logged: Set<string> = new Set(),
   log: Array<Partial<LogRow>> = [],
-  now = new Date()
+  now = new Date(),
+  lead?: LeadInfo
 ): Effective {
   const no = (label: string): Effective => ({ send: false, label, course: null });
   if (logged.has(row.conversation_id)) return no("bereits nachgefasst");
+  if (lead?.status === "Zusage" || lead?.status === "Bezahlt") return no("angemeldet");
+  if (lead?.status === "Absage") return no("abgesagt");
+  if (lead?.status === "ignoriert") return no("ignoriert");
+  if (lead && lead.sprache !== "de" && lead.sprache !== "en") return no(`Sprache ${lead.sprache}: kein Nachfassen`);
   if (row.grund) return no(row.grund);
   if (!isOfferLevel(row.kategorie)) return no(`ausgeschlossen: Stufe (${row.kategorie || "?"})`);
   if (!splitList(row.faecher).some((f) => settings.mySubjects.includes(f))) return no("ausgeschlossen: Fach");
   if (!row.kursgruppe) return no("keine Kursgruppe");
   // Vor jeder Kursgruppe, auch "offen": FMS, Fachmatura, Passerelle … bekommen auch die Stufen-Frage nicht.
   if (row.ausschluss) return no(`ausgeschlossen: ${row.ausschluss}`);
-  let course: Course | null;
+  let course: Course;
+  let kind: FollowupKind;
   if (row.kursgruppe === "offen") {
-    course = assignCourse(row, courses, settings);
-    if (!course) return no("kein Kurs");
+    const c = assignCourse(row, courses, settings);
+    if (!c) return no("kein Kurs");
+    course = c;
+    kind = "frage";
   } else {
     const offer = pickCourse(row, courses, settings, log, now);
     if (offer.kind === "nichts") return no(offer.grund.startsWith("ausschluss_") ? `ausgeschlossen: ${offer.grund.slice(11)}` : offer.grund);
     if (offer.kind === "nachfrage") return no(OFFER_LABEL[offer.grund] ?? "kein Kurs");
     course = offer.course;
+    const sprache: Sprache = lead?.sprache === "en" ? "en" : "de";
+    if (lead?.erstKursId === course.id)
+      kind = lead.erstText.includes(courseBlock(course, settings.privatePricePerLesson, sprache)) ? "erinnerung" : "geaendert";
+    else if (lead?.erstKursId) kind = "neuer_durchgang";
+    // Aus der Interessentenliste (Erst-Nachricht ohne Kurs): nur mit meiner Freigabe fuer genau diesen Kurs.
+    else if (lead?.quelle === "erstnachricht" && lead.freigabeKursId !== course.id) return { send: false, label: "wartet auf Freigabe", course };
+    else kind = "angebot";
   }
-  if (row.status.trim().toLowerCase() !== "send") return { send: false, label: "skip", course };
-  return { send: true, label: "wird gesendet", course };
+  if (row.status.trim().toLowerCase() !== "send") return { send: false, label: "skip", course, kind };
+  return { send: true, label: "wird gesendet", course, kind };
 }
 
 // ── Nachfrage-Uebersicht ──────────────────────────────────────────────────────
@@ -1019,7 +985,7 @@ export type Bubble = { kind: "mine" | "theirs"; text: string };
  */
 export function findReply(bubbles: Bubble[], sentAt: Date): { date: Date | null; text: string } | null {
   let start = -1;
-  for (let i = 0; i < bubbles.length; i++) if (bubbles[i].kind === "mine" && bubbles[i].text.includes(FOLLOWUP_MARKER)) start = i;
+  for (let i = 0; i < bubbles.length; i++) if (bubbles[i].kind === "mine" && hasFollowupMarker(bubbles[i].text)) start = i;
   const after = bubbles.filter((b, i) => {
     if (b.kind !== "theirs") return false;
     if (start > -1) return i > start;

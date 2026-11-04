@@ -7,7 +7,6 @@ import {
   GROUP_LABEL,
   LEVEL_LABEL,
   MAX_ACTIVE_COURSES,
-  PLACEHOLDERS,
   SUBJECTS,
   courseStats,
   followedUpIds,
@@ -16,17 +15,19 @@ import {
   formatSaturdays,
   isCourseGroup,
   isOfferLevel,
+  leadFor,
   needsReplyCheck,
   newCourse,
-  renderMessage,
   validateCourses,
   type Course,
   type CourseGroup,
   type FollowupSettings,
+  type LeadMap,
   type LevelCategory,
   type LogRow,
   type PreviewRow,
 } from "@/lib/tutor24-followup";
+import { followupForm, followupMessage } from "@/lib/tutor24-course-offer";
 import { CoursePipeline } from "./Tutor24Pipeline";
 
 type Row = Omit<PreviewRow, "nachricht">;
@@ -50,6 +51,8 @@ type StatusResponse = {
   courses: Course[];
   rows: Row[];
   log: LogRow[];
+  /** Stand aus Tutor24Lead: Anrede, Sprache, Kurs der Erst-Nachricht */
+  leads: LeadMap;
   send: {
     limit: number;
     sentToday: number;
@@ -98,9 +101,7 @@ function CourseEditor({
 }) {
   const [previewDu, setPreviewDu] = useState(false);
   const set = <K extends keyof Course>(k: K, v: Course[K]) => onChange({ ...course, [k]: v });
-  const preview = renderMessage(course, "Lea", previewDu ? "du" : "Sie");
-  // Unabhaengig von der Vorschau: bekommen du-Empfaenger wirklich die du-Form?
-  const duWarning = renderMessage(course, "Lea", "du").warning;
+  const preview = followupMessage(course.gruppe === "offen" ? "frage" : "angebot", previewDu ? { typ: "du" } : { typ: "neutral" }, "Lea", course, settings.privatePricePerLesson);
   const st = courseStats(course, log);
   const subjects = Array.from(new Set([...settings.mySubjects, course.fach]));
   // Stufe nachfragen: nur Text, keine Termine/Preise/Zusagen.
@@ -216,24 +217,10 @@ function CourseEditor({
             </div>
             </>
             )}
-            <div>
-              <textarea
-                value={course.template}
-                disabled={disabled}
-                onChange={(e) => set("template", e.target.value)}
-                rows={14}
-                className="w-full rounded-xl border border-gray-200 p-3 font-mono text-xs leading-5 outline-none focus:border-[#4A7FC1]"
-              />
-              <p className="mt-1 text-xs text-gray-400">
-                Sie-Form schreiben, die du-Form wird automatisch abgeleitet. Platzhalter: {PLACEHOLDERS.join(" ")}
-              </p>
-              {duWarning && (
-                <p className="mt-1 rounded-lg bg-amber-50 p-2 text-xs text-amber-800">
-                  Aus diesem Text lässt sich keine du-Form ableiten: Wer „du“ bekommen sollte, erhält die Sie-Form. Die Sätze der Vorlage
-                  (z.B. „Ihre Anfrage“, „Falls Sie noch suchen“, „ich Ihnen“) werden umgewandelt, eigene Sie-Formulierungen nicht.
-                </p>
-              )}
-            </div>
+            <p className="text-xs text-gray-400">
+              Der Nachrichtentext entsteht aus den Kursdaten: derselbe Kursblock, Gruss und dieselbe Signatur wie in der Erst-Nachricht.
+              Wer den Kurs schon in der Erst-Nachricht bekam, erhält nur eine kurze Erinnerung.
+            </p>
             <button
               onClick={onDelete}
               disabled={disabled}
@@ -250,7 +237,7 @@ function CourseEditor({
                 du-Form
               </label>
             </div>
-            {preview.warning && <p className="mb-2 text-xs text-amber-700">{preview.warning}</p>}
+            {preview.problem && <p className="mb-2 text-xs font-semibold text-red-600">Text fehlerhaft: {preview.problem}</p>}
             <div className="whitespace-pre-wrap rounded-xl border border-blue-100 bg-blue-50 p-4 text-xs leading-5 text-gray-700">{preview.text}</div>
           </div>
         </div>
@@ -437,9 +424,9 @@ export function Tutor24Followup({
   // "Bereit": wer beim naechsten Senden diesen Kurs bekaeme — auch wenn er gerade pausiert ist.
   const readyFor = (c: Course) => {
     const asActive = draft.courses.map((x) => (x.id === c.id ? { ...x, active: true } : x));
-    return status.rows.filter((r) => {
-      const eff = effectiveStatus(r, asActive, draft.settings, logged, status.log);
-      return eff.send && eff.course?.id === c.id;
+    return status.rows.flatMap((r) => {
+      const eff = effectiveStatus(r, asActive, draft.settings, logged, status.log, undefined, leadFor(status.leads, r));
+      return eff.send && eff.course?.id === c.id ? [{ ...r, kind: eff.kind }] : [];
     });
   };
   // Schritt 2 und 3 beziehen sich auf den ausgewaehlten Kurs; das Tageslimit gilt fuer alle zusammen.
@@ -450,7 +437,7 @@ export function Tutor24Followup({
   // Auswahl und Anlegen mit demselben Fach: "Mathe" ist nur Startwert, falls es unter "Meine Faecher" steht.
   const fachForNew = draft.settings.mySubjects.includes(newFach) ? newFach : draft.settings.mySubjects[0] ?? "";
 
-  const withEff = status.rows.map((r) => ({ r, eff: effectiveStatus(r, draft.courses, draft.settings, logged, status.log) }));
+  const withEff = status.rows.map((r) => ({ r, eff: effectiveStatus(r, draft.courses, draft.settings, logged, status.log, undefined, leadFor(status.leads, r)) }));
   const shown = withEff.filter(({ r, eff }) => (filter === "alle" || statusGroup(eff.label) === filter) && (!onlySend || r.status === "send"));
   const groupCounts = withEff.reduce<Record<string, number>>((acc, { eff }) => {
     const g = statusGroup(eff.label);
@@ -618,6 +605,17 @@ export function Tutor24Followup({
                 />
                 Kurse in der Erst-Nachricht anbieten
               </label>
+              <label className="flex items-center gap-2 text-sm text-gray-600" title="Vergleichspreis im Kursblock beider Nachrichten: „CHF … pro Lektion statt CHF … im Einzelunterricht“">
+                Einzelunterricht CHF/Lektion
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.settings.privatePricePerLesson}
+                  disabled={running}
+                  onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, privatePricePerLesson: Number(e.target.value) } })}
+                  className={`${inputClass} w-20`}
+                />
+              </label>
               {/* Nur zum erneuten Versuch, falls das automatische Speichern fehlschlug */}
               {saveButton}
             </div>
@@ -708,6 +706,8 @@ export function Tutor24Followup({
                 ready={readyFor(selected)}
                 log={status.log.filter((r) => r.kurs === selected.id)}
                 rows={status.rows}
+                leads={status.leads}
+                privatePrice={draft.settings.privatePricePerLesson}
                 disabled={running}
                 onMark={(id, m) => void mark(id, m)}
                 onSkip={(r) => void toggleRow(r)}
@@ -923,7 +923,10 @@ export function Tutor24Followup({
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {shown.map(({ r, eff }) => {
-                  const msg = eff.course ? renderMessage(eff.course, r.name, r.anrede === "du" ? "du" : "Sie") : null;
+                  const msg =
+                    eff.course && eff.kind
+                      ? followupMessage(eff.kind, followupForm(leadFor(status.leads, r), r.anrede), r.name, eff.course, draft.settings.privatePricePerLesson)
+                      : null;
                   const details = [r.klasse && `Klasse ${r.klasse}`, r.gymi_jahr && `Gymi-Jahr ${r.gymi_jahr}`, r.anlass, r.ort !== "unbekannt" && r.ort, r.ortsname, r.zeitwunsch, r.quelle && `Quelle: ${r.quelle}`]
                     .filter(Boolean)
                     .join(" · ");
@@ -957,9 +960,9 @@ export function Tutor24Followup({
                         {msg ? (
                           <details>
                             <summary className="cursor-pointer text-[#4A7FC1]">
-                              {msg.anrede}-Form anzeigen{msg.warning ? " ⚠" : ""}
+                              {msg.anrede}-Form anzeigen{msg.problem ? " ⚠" : ""}
                             </summary>
-                            <div className="mt-1 whitespace-pre-wrap rounded-lg bg-gray-50 p-2 leading-5 text-gray-700">{msg.text}</div>
+                            <div className="mt-1 whitespace-pre-wrap rounded-lg bg-gray-50 p-2 leading-5 text-gray-700">{msg.problem && <b className="block text-red-600">{msg.problem}</b>}{msg.text}</div>
                           </details>
                         ) : (
                           <span className="text-gray-300">—</span>

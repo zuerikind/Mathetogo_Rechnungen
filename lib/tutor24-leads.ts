@@ -7,7 +7,7 @@
  */
 import { createHash } from "node:crypto";
 import { prisma } from "./prisma";
-import { isOfferLevel, splitList, type FollowupSettings, type LogRow, type PreviewRow } from "./tutor24-followup";
+import { isOfferLevel, splitList, type FollowupSettings, type LeadMap, type LogRow, type PreviewRow } from "./tutor24-followup";
 
 export type LeadStatus = "offen" | "Frage" | "Zusage" | "Bezahlt" | "Absage" | "ignoriert";
 
@@ -49,6 +49,22 @@ export async function loadLog(): Promise<LogRow[]> {
       inserat_id: l.inseratId ?? "",
     };
   });
+}
+
+/** Was das Nachfassen pro Person wissen muss (Anrede, Sprache, Kurs und Text der Erst-Nachricht, Stand). */
+export async function loadLeadInfo(): Promise<LeadMap> {
+  const leads = await prisma.tutor24Lead.findMany({ include: { messages: { where: { art: "erst" }, orderBy: { sentAt: "asc" }, take: 1 } } });
+  const out: LeadMap = {};
+  for (const l of leads) {
+    const erst = l.messages[0];
+    const info = {
+      quelle: l.quelle, status: l.status, wer: l.wer, kind: l.kind, anrede: l.anrede, sprache: l.sprache,
+      erstKursId: erst?.kursId ?? null, erstText: erst?.text ?? "", freigabeKursId: l.freigabeKursId,
+    };
+    if (l.conversationId) out[l.conversationId] = info;
+    if (l.inseratId) out[`inserat:${l.inseratId}`] = info;
+  }
+  return out;
 }
 
 /** Protokoll-Felder → Lead-Felder (geantwortet, Antwort, Markierung, Kurs). */

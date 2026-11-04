@@ -29,13 +29,9 @@ import {
   pipelineStage,
   needsReplyCheck,
   findDuForm,
-  messageProblem,
-  FOLLOWUP_MARKER,
-  renderMessage,
   scrollStop,
   snippetSig,
   toCsv,
-  toDuForm,
   validateCourses,
   type Course,
   type ListEntry,
@@ -280,55 +276,9 @@ describe("Kurse und Nachricht", () => {
     expect(validateCourses([c])).toEqual([]);
   });
 
-  it("fuellt alle Platzhalter", () => {
-    const c = course({ name: "Mathe-Repetitionskurs 2. Gymi", saturdays: ["2026-11-28", "2026-12-05", "2026-12-12", "2026-12-19"] });
-    const r = renderMessage(c, "Michael", "Sie");
-    expect(r.text.startsWith("Hallo Michael\n\nIch hatte mich vor einiger Zeit auf Ihre Anfrage für Mathe-Nachhilfe gemeldet.")).toBe(true);
-    expect(r.text).toContain("Ich starte einen Mathe-Repetitionskurs 2. Gymi in einer kleinen Gruppe (maximal 6 Teilnehmende), an 4 Samstagen (28.11., 5.12., 12.12. und 19.12.), jeweils 9:30–11:10 Uhr, online.");
-    expect(r.text).toContain("Der ganze Kurs mit 8 Lektionen kostet CHF 440, also CHF 55 pro Lektion. Dieselben 8 Lektionen im Einzelunterricht kosten bei mir CHF 712.");
-    expect(r.text).toContain("Der Kurs findet ab 3 Anmeldungen statt");
-    expect(r.text.endsWith("Liebe Grüsse\nOmid")).toBe(true);
-    const t = renderMessage(course({ template: "{fach} {total} {anmeldeschluss} {ort}", deadline: "2026-11-21", mode: "vor Ort", place: "Zürich" }), "", "Sie").text;
-    expect(t).toBe("Mathe 440 21.11. vor Ort (Zürich)");
-  });
-
-  it("du-Form fuer den Standardtext, Fallback bei eigenem Text", () => {
-    const r = renderMessage(course(), "Lea", "du");
-    expect(r.anrede).toBe("du");
-    expect(r.text).not.toMatch(/\b(Sie|Ihr|Ihre)\b/);
-    expect(r.text).toContain("deine Anfrage");
-    expect(r.text).toContain("Falls du noch suchst");
-    // neutral: passt fuer Eltern und Lernende
-    expect(renderMessage(course(), "Lea", "Sie").text).not.toMatch(/Ihr Kind/);
-    expect(toDuForm("Haben Sie Zeit?").ok).toBe(false);
-    expect(renderMessage(course({ template: "Hallo {vorname}, haben Sie Zeit?" }), "Lea", "du").warning).toBeTruthy();
-  });
-
-  it("Standardtext ohne Kontaktangaben und ohne ß", () => {
-    for (const a of ["Sie", "du"] as const) {
-      const t = renderMessage(course(), "Lea", a).text;
-      expect(containsForbiddenContact(t)).toBe(false);
-      expect(t).not.toContain("ß");
-    }
-  });
-
-  it("lehnt Links, Telefonnummern, unbekannte Platzhalter und fehlende Daten ab", () => {
-    const t = (rest: string) => `Hallo\n${FOLLOWUP_MARKER}\n${rest}`;
-    expect(validateCourses([course({ template: t("www.mathetogo.xyz") })])).toHaveLength(1);
-    expect(validateCourses([course({ template: t("079 123 45 67") })])).toHaveLength(1);
-    expect(validateCourses([course({ template: t("{name}") })])).toHaveLength(1);
-    expect(validateCourses([course({ template: "Hallo, neues Angebot" })])).toHaveLength(1);
-    // Vorlage muss Sie-Form sein: sonst bekaemen Eltern "deine Anfrage … Ihr Kind".
-    expect(validateCourses([course({ template: t("auf deine Anfrage. Ihr Kind lernt.") })])[0]).toContain("„deine“");
-    expect(validateCourses([course({ template: t("Falls du noch suchst") })])).toHaveLength(1);
-    expect(validateCourses([course({ template: t("Du übst.") })])).toHaveLength(1);
-    // "Hallo Karla … Ihr Kind lernt" passt nicht, wenn Karla selbst angefragt hat
-    expect(validateCourses([course({ template: t("Ihr Kind lernt bei mir.") })])[0]).toContain("„Ihr Kind“");
-    expect(validateCourses([course({ template: t("Ihre Tochter lernt bei mir.") })])).toHaveLength(1);
-    expect(messageProblem(`Hallo Karla\n${FOLLOWUP_MARKER} … Ihr Kind lernt`, "Sie")).toContain("Eltern");
-    expect(messageProblem(`Hallo Karla\n${FOLLOWUP_MARKER} … Falls du noch suchst`, "Sie")).toContain("mischt");
-    expect(messageProblem(`Hallo Karla\n${FOLLOWUP_MARKER} … {daten}`, "Sie")).toContain("Platzhalter");
-    expect(messageProblem(`Hallo Karla\n${FOLLOWUP_MARKER} … alles gut`, "Sie")).toBeNull();
+  it("lehnt Links im Kursnamen und fehlende Daten ab", () => {
+    expect(validateCourses([course({ name: "Kurs www.mathetogo.xyz" })])).toHaveLength(1);
+    expect(validateCourses([course({ place: "079 123 45 67" })])).toHaveLength(1);
     expect(findDuForm("Ihr Kind übt zwischen den Terminen, Dunkelheit, dirigieren")).toBeNull();
     expect(findDuForm("Du übst")).toBe("Du");
     expect(findDuForm("und übst")).toBe("übst");
@@ -336,24 +286,10 @@ describe("Kurse und Nachricht", () => {
     expect(validateCourses([course(), course()])).toHaveLength(1);
   });
 
-  it("BM-Vorlage: ohne 'Ihr Kind', du-Form ableitbar, gueltig", () => {
-    const bm = { ...newCourse("Mathe", "bm", NOW), id: "bm1" };
-    expect(validateCourses([bm])).toEqual([]);
-    const sie = renderMessage(bm, "", "Sie").text;
-    expect(sie).not.toMatch(/Ihr Kind/);
-    expect(sie).toContain("Ich starte einen Mathe-Vorbereitungskurs für die Berufsmatura in einer kleinen Gruppe");
-    expect(renderMessage(bm, "Lea", "du")).toMatchObject({ anrede: "du" });
-  });
-
-  it("Stufe nachfragen: ohne Termine gueltig, du-Form ableitbar, kein Link", () => {
+  it("Stufe nachfragen: ohne Termine gueltig", () => {
     const q = { ...newCourse("Mathe", "offen", NOW), saturdays: ["", "", "", ""] as Course["saturdays"], deadline: "" };
     expect(q.name).toBe("Mathe: Stufe nachfragen");
     expect(validateCourses([q])).toEqual([]);
-    const du = renderMessage(q, "Lea", "du");
-    expect(du.anrede).toBe("du");
-    expect(du.text).toContain("Damit ich dir den passenden Kurs");
-    expect(du.text).toContain(FOLLOWUP_MARKER);
-    expect(containsForbiddenContact(renderMessage(q, "Lea", "Sie").text)).toBe(false);
   });
 
   it("formatSaturdays", () => {
@@ -472,9 +408,10 @@ describe("Antworten", () => {
 
 describe("Einstellungen", () => {
   it("Standard: Mathe und Physik, N = 20; altes Format wird ersetzt", () => {
-    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false });
-    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false });
-    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5, listingOnDemand: false, newFirstMessage: false });
+    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false, privatePricePerLesson: 89 });
+    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false, privatePricePerLesson: 89 });
+    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5, listingOnDemand: false, newFirstMessage: false, privatePricePerLesson: 89 });
+    expect(mergeSettings({ privatePricePerLesson: 95 }).privatePricePerLesson).toBe(95);
   });
 });
 

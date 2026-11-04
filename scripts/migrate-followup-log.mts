@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 config({ path: ".env.local" });
 
-const { LOG_COLS, courseStats, effectiveStatus, followedUpIds, parseCsv, pipelineStage, renderMessage } = await import("../lib/tutor24-followup");
+const { LOG_COLS, courseStats, effectiveStatus, followedUpIds, parseCsv, pipelineStage } = await import("../lib/tutor24-followup");
 const { FOLLOWUP_DIR, LOG_PATH, loadCourses, loadSettings, readPreview } = await import("../lib/tutor24-followup-store");
 const { fromPreview, loadLog, recordSend, syncPreviewLeads, updateLead } = await import("../lib/tutor24-leads");
 const { prisma } = await import("../lib/prisma");
@@ -55,7 +55,6 @@ let neu = 0;
 for (const r of csvRows) {
   if (done.has(r.conversation_id)) continue;
   const p = preview.get(r.conversation_id);
-  const course = courses.find((c) => c.id === r.kurs);
   const anrede = r.variante.endsWith("/du") ? "du" : "Sie";
   await recordSend({
     conversationId: r.conversation_id,
@@ -64,8 +63,8 @@ for (const r of csvRows) {
     art: "nachfassen",
     kursId: r.kurs || null,
     variante: r.variante,
-    // Der damalige Text steht nicht im Protokoll: aus der Kursvorlage neu erzeugt (Vorlage seither unveraendert).
-    text: course ? renderMessage(course, r.name, anrede).text : "",
+    // Der damalige Text steht nicht im Protokoll (bei der Uebernahme am 4.11.2026 aus der Vorlage erzeugt).
+    text: "",
     status: r.status === "unbestaetigt" ? "unbestaetigt" : "gesendet",
     lead: p ? fromPreview(p) : { quelle: "nachfassen", anrede },
     sentAt: new Date(r.zeitstempel),

@@ -25,7 +25,7 @@ import { followupJobState as state } from "./automation-state";
 import {
   MAX_AGE_DAYS,
   MIN_AGE_DAYS,
-  FOLLOWUP_MARKER,
+  hasFollowupMarker,
   ageDays,
   analyzeListing,
   compareAnalyses,
@@ -61,6 +61,7 @@ import {
   loadCourses,
   loadListCache,
   loadSettings,
+  loadLeadInfo,
   loadLog,
   readPreview,
   saveListCache,
@@ -324,7 +325,7 @@ async function readConversation(page: Page, id: string): Promise<Conversation> {
     jobId: raw.jobLink?.match(/\/jobs\/(\d+)/)?.[1] ?? null,
     canWrite: raw.canWrite,
     bubbles,
-    followedUp: mineList.some((b) => b.text.includes(FOLLOWUP_MARKER)),
+    followedUp: mineList.some((b) => hasFollowupMarker(b.text)),
     listing: listingFromConversation(raw.header),
   };
 }
@@ -371,7 +372,8 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
   const onDemand = settings.listingOnDemand;
   log(onDemand ? "Inserat nur bei Bedarf öffnen: EIN." : "Inserat wird immer geöffnet (Optimierung im Tab aus).");
   const rows = readPreview();
-  const save = () => writePreview(rows, logRows);
+  const leads = await loadLeadInfo();
+  const save = () => writePreview(rows, logRows, leads);
 
   log("Lese archivierte Konversationen …");
   const archived = new Set((await collectList(page, "archived", "preview:archived", log)).entries.map((i) => i.id));
@@ -514,7 +516,7 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
   const bad = queue.filter((r) => r.problem);
   if (bad.length)
     throw new StopRun(`Nichts gesendet — ${bad.length} Nachricht(en) fehlerhaft: ${bad.map((r) => `${r.name}: ${r.problem}`).join("; ")}`);
-  log(`Alle ${queue.length} Nachrichten vorab geprüft: Anrede, Platzhalter, Nachfass-Satz, keine Links/Nummern.`);
+  log(`Alle ${queue.length} Nachrichten vorab geprüft (CHECK_RULES.nachfassen): Anrede, Gruss, Signatur, Kursblock wortgleich, Bezug auf die Erst-Nachricht, keine Links/Nummern.`);
   log(
     `Heute schon gesendet: ${await sentToday()}/25. Jetzt: ${queue.length} von ${pending.length} offenen (nur aktive Kurse).` +
       (pending.length > queue.length ? " Der Rest folgt an einem späteren Tag." : "")
@@ -548,7 +550,7 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
     await button.click();
 
     // Bestaetigung: eine zusaetzliche eigene Nachricht mit unserem Anfang.
-    const marker = (text.split("\n").find((l) => l.startsWith("Ich hatte mich")) ?? text).slice(0, 40);
+    const marker = (text.split("\n").find((l) => hasFollowupMarker(l)) ?? text).slice(0, 40);
     let confirmed = false;
     for (let t = 0; t < 30 && !confirmed; t++) {
       await sleep(500);
@@ -568,7 +570,7 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
       name: row.name,
       art: "nachfassen",
       kursId: row.course.id,
-      variante: `${row.course.name}/${row.anrede}`,
+      variante: `${row.course.name}/${row.anrede}/${row.kind}`,
       text,
       status: confirmed ? "gesendet" : "unbestaetigt",
       lead: fromPreview(row),

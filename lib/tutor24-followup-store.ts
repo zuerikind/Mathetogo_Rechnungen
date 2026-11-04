@@ -5,7 +5,8 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendVariante, loadLog, offeredCourses, sentToday, updateLead } from "./tutor24-leads";
+import { appendVariante, loadLeadInfo, loadLog, sentToday, updateLead } from "./tutor24-leads";
+import { followupForm, followupMessage } from "./tutor24-course-offer";
 import {
   MARKS,
   MAX_SENDS_PER_DAY,
@@ -14,15 +15,15 @@ import {
   effectiveStatus,
   followedUpIds,
   isOfferLevel,
+  leadFor,
   mergeSettings,
-  messageProblem,
   parseCsv,
-  renderMessage,
   toCsv,
   validateCourses,
   type Anrede,
   type Course,
   type FollowupSettings,
+  type LeadMap,
   type ListCache,
   type LogRow,
   type PreviewRow,
@@ -161,7 +162,7 @@ export async function saveConfig(input: { settings?: unknown; courses?: unknown 
   const next = JSON.stringify(courses, null, 2);
   if (existsSync(COURSES_PATH) && readFileSync(COURSES_PATH, "utf8") !== next) backupCourses();
   writeChecked(COURSES_PATH, next);
-  if (existsSync(PREVIEW_PATH)) writePreview(readPreview(), await loadLog(), courses, settings);
+  if (existsSync(PREVIEW_PATH)) writePreview(readPreview(), await loadLog(), await loadLeadInfo(), courses, settings);
   return { settings, courses };
 }
 
@@ -181,16 +182,18 @@ export function readPreview(): PreviewRow[] {
 }
 
 /** Zugeordneter Kurs und Text einer Zeile aus den AKTUELLEN Kursen; null = wird nicht gesendet. */
-export function messageFor(row: PreviewRow, courses: Course[], settings: FollowupSettings, log: LogRow[]) {
-  const eff = effectiveStatus(row, courses, settings, undefined, log);
-  if (!eff.course) return null;
-  return { course: eff.course, send: eff.send, ...renderMessage(eff.course, row.name, (row.anrede === "du" ? "du" : "Sie") as Anrede) };
+export function messageFor(row: PreviewRow, courses: Course[], settings: FollowupSettings, log: LogRow[], leads: LeadMap = {}, now = new Date()) {
+  const lead = leadFor(leads, row);
+  const eff = effectiveStatus(row, courses, settings, followedUpIds(log), log, now, lead);
+  if (!eff.course || !eff.kind) return null;
+  const m = followupMessage(eff.kind, followupForm(lead, row.anrede), row.name, eff.course, settings.privatePricePerLesson);
+  return { course: eff.course, send: eff.send, kind: eff.kind, ...m };
 }
 
 /** Schreibt die Vorschau; "kurs" und "nachricht" folgen immer den aktuellen Kursen. */
-export function writePreview(rows: PreviewRow[], log: LogRow[], courses = loadCourses(), settings = loadSettings()): void {
+export function writePreview(rows: PreviewRow[], log: LogRow[], leads: LeadMap = {}, courses = loadCourses(), settings = loadSettings()): void {
   const withText = rows.map((r) => {
-    const m = messageFor(r, courses, settings, log);
+    const m = messageFor(r, courses, settings, log, leads);
     return { ...r, kurs: m?.course.name ?? "", nachricht: m?.text ?? "" };
   });
   writeChecked(PREVIEW_PATH, toCsv(withText, PREVIEW_COLS));
@@ -202,7 +205,7 @@ export async function setRowAnrede(conversationId: string, anrede: Anrede): Prom
   const row = rows.find((r) => r.conversation_id === conversationId);
   if (!row) throw new Error(`Konversation ${conversationId} steht nicht in der Vorschau.`);
   row.anrede = anrede;
-  writePreview(rows, await loadLog());
+  writePreview(rows, await loadLog(), await loadLeadInfo());
 }
 
 export async function setRowStatus(conversationId: string, status: "send" | "skip"): Promise<void> {
@@ -210,12 +213,12 @@ export async function setRowStatus(conversationId: string, status: "send" | "ski
   const row = rows.find((r) => r.conversation_id === conversationId);
   if (!row) throw new Error(`Konversation ${conversationId} steht nicht in der Vorschau.`);
   row.status = status;
-  writePreview(rows, await loadLog());
+  writePreview(rows, await loadLog(), await loadLeadInfo());
 }
 
 // ── Protokoll: liegt in der Datenbank (Tutor24Lead/Tutor24Message), siehe ./tutor24-leads ──
 
-export { loadLog, offeredCourses, sentToday } from "./tutor24-leads";
+export { loadLeadInfo, loadLog, sentToday } from "./tutor24-leads";
 
 export async function updateLog(conversationId: string, patch: Partial<LogRow>): Promise<void> {
   await updateLead(conversationId, patch);
@@ -240,28 +243,15 @@ export async function setMark(conversationId: string, markierung: string): Promi
 /**
  * Was jetzt gesendet wuerde: effektiver Status "wird gesendet", im Tageslimit.
  * courseId: nur diesen Kurs anschreiben (Knopf beim ausgewaehlten Kurs); das Tageslimit gilt trotzdem gesamt.
- * offered: wer denselben Kurs schon in der Erst-Nachricht bekam, wird nicht nochmals angeschrieben.
+ * Wer den Kurs schon in der Erst-Nachricht bekam, erhaelt eine kurze Erinnerung statt des ganzen Angebots.
  */
-export async function sendQueue(
-  courses = loadCourses(),
-  settings = loadSettings(),
-  now = new Date(),
-  courseId?: string,
-  offered?: Map<string, string>
-) {
-  const [log, sent, offeredMap] = await Promise.all([loadLog(), sentToday(now), offered ?? offeredCourses()]);
-  const logged = followedUpIds(log);
+export async function sendQueue(courses = loadCourses(), settings = loadSettings(), now = new Date(), courseId?: string) {
+  const [log, sent, leads] = await Promise.all([loadLog(), sentToday(now), loadLeadInfo()]);
   const pending = readPreview()
-    .map((row) => ({ row, eff: effectiveStatus(row, courses, settings, logged, log, now) }))
-    .filter((x) => x.eff.send && (!courseId || x.eff.course?.id === courseId))
-    .filter((x) => !(x.row.inserat_id && offeredMap.get(x.row.inserat_id) === x.eff.course?.id))
-    .map((x) => {
-      const course = x.eff.course as Course;
-      // Fertiger Text samt Pruefung: derselbe, den Tab, API und Sende-Lauf sehen.
-      const m = renderMessage(course, x.row.name, x.row.anrede === "du" ? "du" : "Sie");
-      const text = m.text.trim();
-      return { ...x.row, course, text, anrede: m.anrede, problem: messageProblem(text, m.anrede) };
-    });
+    .map((row) => ({ row, m: messageFor(row, courses, settings, log, leads, now) }))
+    .filter((x) => x.m?.send && (!courseId || x.m.course.id === courseId))
+    // Fertiger Text samt Pruefung: derselbe, den Tab, API und Sende-Lauf sehen.
+    .map(({ row, m }) => ({ ...row, course: m!.course, kind: m!.kind, text: m!.text.trim(), anrede: m!.anrede, problem: m!.problem }));
   const budget = Math.max(0, MAX_SENDS_PER_DAY - sent);
-  return { pending, queue: pending.slice(0, budget), budget, log };
+  return { pending, queue: pending.slice(0, budget), budget, log, leads };
 }
