@@ -20,7 +20,7 @@ const O = await import("../lib/tutor24-course-offer");
 const { FOLLOWUP_DIR, loadCourses, loadSettings, loadLog, readPreview } = await import("../lib/tutor24-followup-store");
 const { buildInterestList } = await import("../lib/tutor24-leads");
 const { generatePersonalSentence } = await import("../lib/tutor24-message-prompt");
-const { resolveTargetLanguage, TUTOR24_BASE_URL } = await import("../lib/tutor24-messaging");
+const { resolveTargetLanguage, scoreTextLanguage, TUTOR24_BASE_URL } = await import("../lib/tutor24-messaging");
 const { prisma } = await import("../lib/prisma");
 type Course = import("../lib/tutor24-followup").Course;
 type LeadInfo = import("../lib/tutor24-followup").LeadInfo;
@@ -317,6 +317,17 @@ lines.push(
   `- Sprache nach der Korrektur anders als vorher: ${changedLang.length} von ${results.length}` +
     (changedLang.length ? ` — ${changedLang.map((r) => `${r.name}: ${legacyLang(r.info)} → ${r.sprache} („${r.info.title.slice(0, 50)}“)`).join("; ")}` : "")
 );
+// Grenzfaelle der Schwelle: Deutsch erkannt, aber 1–3 englische oder franzoesische Signalwoerter.
+const borderline = results
+  .filter((r) => r.sprache === "de")
+  .map((r) => ({ r, s: scoreTextLanguage(`${r.info.title} ${r.info.description}`) }))
+  .filter(({ s }) => (s.en >= 1 && s.en <= 3) || (s.fr >= 1 && s.fr <= 3));
+lines.push("", `## Grenzfälle Sprache: Deutsch, aber 1–3 englische/französische Signalwörter (${borderline.length})`, "");
+lines.push("Schwelle: en/fr erst ab 4 Signalwörtern und doppelt so vielen wie jede andere Sprache. Zahlen: Signalwörter je Sprache.", "");
+for (const { r, s } of borderline)
+  lines.push(
+    `- **${r.name}** — en ${s.en}, fr ${s.fr}, de ${s.de}${s.it ? `, it ${s.it}` : ""}${s.es ? `, es ${s.es}` : ""}: „${r.info.title.slice(0, 70)}“ — ${r.info.description.replace(/\s+/g, " ").slice(0, 180)}${r.info.description.length > 180 ? " …" : ""}`
+  );
 lines.push("", "## Die 10 schon Nachgefassten (Berufsmatura) — nur angezeigt, nicht gespeichert", "", ...bm.map((b) => `- **${b.name}**: ${b.text}`));
 lines.push("", "## Beispielpaare", "");
 for (const [i, r] of examples.entries()) {
