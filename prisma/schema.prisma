@@ -323,6 +323,37 @@ model Tutor24Contact {
   name       String
   profileUrl String?
   messagedAt DateTime @default(now())
+  /// Kurs aus courses.json, der in der Erst-Nachricht angeboten wurde — das Nachfassen bietet ihn nicht nochmals an.
+  kursId     String?
+}
+
+/// Stufe erkannt, aber kein passender Kurs angeboten (Erst-Nachricht tutor24). Uebersicht auf /kurse.
+model CourseDemand {
+  id         String   @id @default(cuid())
+  /// Inserat-ID: ein Eintrag pro Inserat
+  tutor24Id  String   @unique
+  url        String
+  createdAt  DateTime @default(now())
+  fach       String
+  stufe      String
+  kategorie  String
+  kursgruppe String
+  anlass     String
+  ort        String
+  ortsname   String?
+  /// "hoch" | "mittel" (mittel = unsicher)
+  sicherheit String
+  /// kein_kurs | anmeldeschluss_vorbei | ausgebucht | nur_vor_ort | kurs_vorhanden_unsicher
+  grund      String
+  kursId     String?
+  auszug     String
+  /// erstnachricht | nachfassen
+  quelle     String
+  /// offen | kurs_angelegt | ignoriert
+  status     String   @default("offen")
+
+  @@index([kursgruppe, fach, createdAt])
+  @@map("course_demand")
 }
 
 enum AcademigoContactType {

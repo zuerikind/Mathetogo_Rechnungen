@@ -329,17 +329,59 @@ export function extractAnlass(info: ListingInfo): string {
   return ANLASS.find(([re]) => re.test(t))?.[1] ?? "unbekannt";
 }
 
-/** "du" nur, wenn das Inserat klar vom Schueler selbst stammt; sonst immer "Sie". */
-export function detectAnrede(description: string): Anrede {
+/** Wer das Inserat geschrieben hat. kind nur, wenn die Eltern genau EIN Kind nennen. */
+export type Addressee = { wer: "schueler" | "eltern" | "unklar"; anrede: Anrede; kind: "Tochter" | "Sohn" | "Kind" | null };
+
+// Inserate sind oft englisch: "my son", "our daughter" schreiben ebenfalls Eltern.
+const PARENT_RE = new RegExp(
+  "(?<!\\p{L})(?:mein(?:e|en|em|er)?|unser(?:e|en|em|er)?|my|our)(?: [\\p{L}\\d-]+){0,3} (sohn|söhne|tochter|töchter|kind|kinder|son|sons|daughter|daughters|child|children|kid|kids)(?!\\p{L})",
+  "u"
+);
+// Unicode-Grenzen statt \b: \b kennt keine Umlaute ("möchte").
+const SELF_RE = new RegExp(
+  "(?<!\\p{L})(ich suche|ich bin \\d{2}|ich bin in der|ich bin im|ich brauche|ich gehe|ich besuche|ich besucht|ich mache|ich absolviere|absolviere|ich schreibe|ich möchte (die|meine|mich)|ich habe (mühe|probleme|schwierigkeiten)|meine (prüfung|matura|bm)|bin \\d{2} jahre)(?!\\p{L})",
+  "u"
+);
+
+/** "du" nur, wenn das Inserat klar vom Schueler selbst stammt; Eltern und Unklares: "Sie". */
+export function detectAddressee(description: string): Addressee {
   const d = description.toLowerCase();
-  // Inserate sind oft englisch: "my son", "our daughter" schreiben ebenfalls Eltern.
-  const parent = /\b(mein(e|en)?|unser(e|en)?) (sohn|söhne|tochter|töchter|kind|kinder)\b|\b(my|our) (son|sons|daughter|daughters|child|children|kid|kids)\b/;
-  if (parent.test(d)) return "Sie";
-  const self = /\b(ich suche|ich bin \d{2}|ich bin in der|ich brauche|ich gehe|ich besuche|meine (prüfung|matura|bm)|bin \d{2} jahre)\b/;
+  const p = d.match(PARENT_RE);
+  if (p) {
+    const noun = p[1];
+    const kind = /^(tochter|daughter)$/.test(noun) ? "Tochter" : /^(sohn|son)$/.test(noun) ? "Sohn" : /^(kind|child|kid)$/.test(noun) ? "Kind" : null;
+    return { wer: "eltern", anrede: "Sie", kind };
+  }
   const age = d.match(/\bich bin (\d{2})\b|\b(\d{2}) jahre alt\b/);
   const ageNum = age ? Number(age[1] ?? age[2]) : null;
-  if (ageNum !== null && ageNum < 16) return "Sie";
-  return self.test(d) ? "du" : "Sie";
+  // Unter 16: oft lesen die Eltern mit — neutral siezen.
+  if (ageNum !== null && ageNum < 16) return { wer: "unklar", anrede: "Sie", kind: null };
+  return SELF_RE.test(d) ? { wer: "schueler", anrede: "du", kind: null } : { wer: "unklar", anrede: "Sie", kind: null };
+}
+
+export const detectAnrede = (description: string): Anrede => detectAddressee(description).anrede;
+
+/** Stufen, die wie ein Kurs aussehen, aber keiner sind (FMS-Fachmatura ist nicht die gymnasiale Matura). */
+export function courseExclusion(info: ListingInfo): string | null {
+  const t = `${info.schulstufe}\n${info.title}\n${info.description}`.toLowerCase();
+  const m = t.match(/\bfms\b|fachmatur|fachmittelschule|passerelle|bachelor|erwachsen/);
+  return m ? m[0] : null;
+}
+
+/** Inseratseite (document.body.innerText) → Felder. Gemeinsam fuer Nachfassen und Erst-Nachricht. */
+export function parseJobText(t: string, pageTitle: string): ListingInfo & { active: boolean } {
+  const field = (label: string) => t.match(new RegExp(`\\n${label}\\n([^\\n]+)`))?.[1]?.trim() ?? "";
+  const inactive = /nicht mehr aktiv|nicht mehr verfügbar|deaktiviert|wurde gelöscht|existiert nicht/i.test(t);
+  const desc = t.match(/Zusätzliche Informationen\n+([\s\S]*?)\n+Gesuchte Nachhilfe/)?.[1] ?? "";
+  return {
+    active: t.includes("Gesuchte Nachhilfe") && !inactive,
+    title: pageTitle.replace(/\s*-\s*Tutor24\s*$/i, ""),
+    fach: field("Fach"),
+    schulstufe: field("Schulstufe"),
+    description: desc.trim(),
+    // ponytail: Feldname auf tutor24 nicht geprueft; fehlt er, sucht extractOrt im Freitext.
+    ort: field("Ort") || field("Unterrichtsort"),
+  };
 }
 
 /** Alles, was der Probelauf pro Inserat in die CSV schreibt (nur kurze Werte, kein Inseratstext). */
@@ -371,6 +413,8 @@ export type FollowupSettings = {
   recommendMin: number;
   /** Probelauf: Inseratseite nur oeffnen, wenn die Konversationsseite nicht reicht (needsListing). Standard aus. */
   listingOnDemand: boolean;
+  /** Erst-Nachricht (lib/tutor24.ts) mit Anrede-Fassungen, Kursangebot und Nachfrage-Erfassung. Standard aus, bis freigegeben. */
+  newFirstMessage: boolean;
 };
 
 export function mergeSettings(saved: Partial<FollowupSettings> | null | undefined): FollowupSettings {
@@ -378,6 +422,7 @@ export function mergeSettings(saved: Partial<FollowupSettings> | null | undefine
     mySubjects: Array.isArray(saved?.mySubjects) ? saved.mySubjects.map(String) : ["Mathe", "Physik"],
     recommendMin: Number(saved?.recommendMin) >= 1 ? Math.floor(Number(saved?.recommendMin)) : 20,
     listingOnDemand: saved?.listingOnDemand === true,
+    newFirstMessage: saved?.newFirstMessage === true,
   };
 }
 
@@ -512,9 +557,14 @@ export type Course = {
   /** ISO */
   deadline: string;
   minParticipants: number;
+  /** Plaetze im Kurs; fehlt in aelteren courses.json → DEFAULT_MAX_PARTICIPANTS */
+  maxParticipants?: number;
   /** Sie-Form mit den PLACEHOLDERS */
   template: string;
 };
+
+export const DEFAULT_MAX_PARTICIPANTS = 6;
+export const capacity = (c: Course) => c.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS;
 
 /** Mein Preis im Einzelunterricht, Vergleich fuer {einzeltotal}. */
 export const PRIVATE_PRICE_PER_LESSON = 89;
@@ -706,6 +756,7 @@ export function validateCourses(courses: Course[]): string[] {
     if (c.gruppe === "offen") continue;
     if (!(c.pricePerLesson > 0) || !(c.lessons > 0)) errors.push(`${name}: Preis und Anzahl Lektionen müssen > 0 sein.`);
     if (!(c.minParticipants >= 1)) errors.push(`${name}: Mindestteilnehmerzahl muss ≥ 1 sein.`);
+    if (!(capacity(c) >= c.minParticipants)) errors.push(`${name}: Plätze müssen ≥ Mindestteilnehmerzahl sein.`);
     if (c.saturdays.length !== 4 || c.saturdays.some((d) => !ISO.test(d))) errors.push(`${name}: bitte vier Termine angeben.`);
     if (!ISO.test(c.deadline)) errors.push(`${name}: Anmeldeschluss fehlt.`);
   }
@@ -717,7 +768,7 @@ export function validateCourses(courses: Course[]): string[] {
 export const PREVIEW_COLS = [
   "status", "conversation_id", "link", "name", "kategorie", "begruendung", "stufe", "fach",
   "faecher", "klasse", "gymi_jahr", "kursgruppe", "sicherheit", "ort", "ortsname", "zeitwunsch", "anlass",
-  "letzte_nachricht", "anrede", "grund", "quelle", "kurs", "nachricht",
+  "letzte_nachricht", "anrede", "grund", "quelle", "kurs", "nachricht", "inserat_id",
 ] as const;
 export const LOG_COLS = [
   "conversation_id", "name", "zeitstempel", "kurs", "variante", "status",

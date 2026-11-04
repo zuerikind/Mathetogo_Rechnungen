@@ -2,9 +2,13 @@ import { prisma } from "./prisma";
 import { assertNoAutomationRunning, tutor24JobState as jobState } from "./automation-state";
 import { acquireTutor24Lock } from "./tutor24-lock";
 import {
+  generatePersonalSentence,
   generateTutor24Message,
   TUTOR24_MESSAGE_TEMPLATE,
 } from "./tutor24-message-prompt";
+import { assembleFirstMessage, planFirstMessage } from "./tutor24-course-offer";
+import { parseJobText, type ListingInfo } from "./tutor24-followup";
+import { loadCourses, loadSettings, readLog } from "./tutor24-followup-store";
 import {
   EXISTING_CONVO_SEL,
   TUTOR24_BASE_URL,
@@ -29,6 +33,39 @@ export type { Tutor24Result } from "./tutor24-types";
 export { tutor24JobState as jobState } from "./automation-state";
 
 export const MESSAGE_TEMPLATE = TUTOR24_MESSAGE_TEMPLATE;
+
+/** Deutsche Erst-Nachricht: Analyse, Kurswahl, KI-Satz, Pruefung. Auch vom Probelauf (scripts/course-offer-dryrun.mts) genutzt. */
+export async function composeFirstMessage(info: ListingInfo, log: (s: string) => void, now = new Date()) {
+  const plan = planFirstMessage(info, loadCourses(), loadSettings(), readLog(), now);
+  const f = plan.form;
+  const personal = await generatePersonalSentence(
+    info,
+    f.typ,
+    f.typ === "eltern" ? f.nom : null,
+    log
+  );
+  const m = assembleFirstMessage(plan, personal);
+  log(
+    `Anrede=${plan.addressee.wer}${plan.addressee.kind ? `/${plan.addressee.kind}` : ""} Stufe=${plan.analysis.kategorie}/${plan.analysis.kursgruppe || "-"} ` +
+      `(${plan.analysis.sicherheit}) → ${m.course ? `Kurs „${m.course.name}“` : plan.offer.kind === "nachfrage" ? `Nachfrage: ${plan.offer.grund}` : `kein Kurs (${plan.offer.kind === "nichts" ? plan.offer.grund : "Prüfung"})`}, Satz=${m.satz}`
+  );
+  return { ...m, plan };
+}
+
+/** Stufe erkannt, kein Kurs angeboten: einmal pro Inserat in course_demand (mittel = unsicher). */
+export async function recordDemand(tutor24Id: string, url: string, info: ListingInfo, plan: ReturnType<typeof planFirstMessage>) {
+  if (plan.offer.kind !== "nachfrage") return;
+  const a = plan.analysis;
+  await prisma.courseDemand.upsert({
+    where: { tutor24Id },
+    update: {},
+    create: {
+      tutor24Id, url, fach: plan.offer.fach, stufe: info.schulstufe, kategorie: a.kategorie, kursgruppe: a.kursgruppe,
+      anlass: a.anlass, ort: a.ort, ortsname: a.ortsname || null, sicherheit: a.sicherheit, grund: plan.offer.grund,
+      kursId: plan.offer.kursId, auszug: info.description.replace(/\s+/g, " ").slice(0, 300), quelle: "erstnachricht",
+    },
+  });
+}
 
 const BASE_URL = TUTOR24_BASE_URL;
 /** Logged-in tutors land on /jobs/search (students/search redirects there). */
@@ -267,9 +304,24 @@ export async function runTutor24Messaging(
               `${ts()} [${tutor24Id}] Sprache=${language} (${source}, URL=${pageUrl.match(/\/(de|en|fr)\//)?.[1] ?? "?"}) ` +
                 `bodyText="${profile.bodyText.slice(0, 80) || "(leer)"}"`
             );
-            const message = await generateTutor24Message(profile, (s) =>
-              result.log.push(`${ts()} [${tutor24Id}] ${s}`)
-            );
+            const tag = (s: string) => result.log.push(`${ts()} [${tutor24Id}] ${s}`);
+            // Deutsch: fester Text in drei Anredeformen, ggf. mit Gruppenkurs. en/fr: bisherige KI-Nachricht.
+            let message: string;
+            let kursId: string | null = null;
+            if (language === "de" && loadSettings().newFirstMessage) {
+              const info = parseJobText(await page.evaluate(() => document.body.innerText), listingTitle);
+              const composed = await composeFirstMessage(info, tag);
+              await recordDemand(tutor24Id, href, info, composed.plan);
+              if (composed.problem) {
+                tag(`⚠ Nachricht nicht sendbar (${composed.problem}) — übersprungen`);
+                result.skipped++;
+                continue;
+              }
+              message = composed.text;
+              kursId = composed.course?.id ?? null;
+            } else {
+              message = await generateTutor24Message(profile, tag);
+            }
 
             const outcome = await sendMessageOnListing(page, message, tutor24Id, displayName, (s) =>
               result.log.push(s),
@@ -277,7 +329,7 @@ export async function runTutor24Messaging(
             );
 
             if (outcome === "sent") {
-              await prisma.tutor24Contact.create({ data: { tutor24Id, name: displayName, profileUrl: href } });
+              await prisma.tutor24Contact.create({ data: { tutor24Id, name: displayName, profileUrl: href, kursId } });
               result.messaged++;
               result.newContacts.push({ name: displayName, tutor24Id, profileUrl: href });
               await sleep(1500);

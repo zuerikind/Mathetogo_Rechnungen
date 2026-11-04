@@ -105,6 +105,59 @@ async function translateFullMessage(
   return resp.choices[0]?.message?.content?.trim() ?? message;
 }
 
+/**
+ * Nur der persoenliche Satz fuer die deutsche Erst-Nachricht (lib/tutor24-course-offer.ts).
+ * Der Rest der Nachricht ist fester Text; der Aufrufer prueft den Satz und faellt sonst zurueck.
+ * null = kein Schluessel oder Fehler.
+ */
+export async function generatePersonalSentence(
+  listing: { title: string; schulstufe: string; description: string },
+  anrede: "du" | "eltern" | "neutral",
+  childNom: string | null,
+  pushLog: (s: string) => void
+): Promise<string | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  const rule =
+    anrede === "du"
+      ? `Address the student directly with "du" (informal). Never use "Sie".`
+      : anrede === "eltern"
+        ? `The parent wrote the listing. Use formal "Sie" and refer to the child exactly as "${childNom}". Never use "du".`
+        : `It is unclear who wrote it. Use formal "Sie" but do NOT address or mention a child, son or daughter. Never use "du". Prefer impersonal phrasing.`;
+  try {
+    const { default: OpenAI } = await import("openai");
+    const client = new OpenAI({ apiKey });
+    const resp = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 200,
+      temperature: 0.4,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            `You are Omid, a math and physics tutor in Switzerland. Write ONE or two sentences in Swiss standard German (use "ss", never "ß"), max 40 words, ` +
+            `that show you read this tutoring request and how you help with Mathematik and/or Physik specifically. ${rule} ` +
+            `If a concrete goal is named (Matura, BM, Gymiprüfung, Probezeit, a test), name it. ` +
+            `Do NOT mention: ETH, years of experience, number of students, platform, Google Meet, group courses, prices, the city, other subjects. ` +
+            `The message before your sentence already says "gerne unterstütze ich ... in Mathematik und Physik": do NOT start with "Ich" or "Gerne" and do NOT repeat "unterstütze ich". ` +
+            `No em dashes, no marketing fluff. Respond as JSON: {"satz":"..."}`,
+        },
+        {
+          role: "user",
+          content: `Titel: ${listing.title}\nSchulstufe: ${listing.schulstufe}\nBeschreibung: ${listing.description.slice(0, 600)}`,
+        },
+      ],
+    });
+    const raw = resp.choices[0]?.message?.content ?? "";
+    const satz = (JSON.parse(raw) as { satz?: unknown }).satz;
+    return typeof satz === "string" ? satz.replace(/ß/g, "ss").trim() : null;
+  } catch (err) {
+    pushLog(`⚠ OpenAI (persönlicher Satz): ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 /** Original Tutor24 personalisation — Schüler-Gesuche, Mathe/Physik. */
 export async function generateTutor24Message(
   profile: ListingProfile,

@@ -30,6 +30,8 @@ config({ path: ".env.local" });
 
 const SEND = process.argv.includes("--send");
 const compareArg = process.argv.indexOf("--compare");
+// --course <id>: Senden/Antworten prüfen nur für diesen Kurs
+const courseArg = process.argv.indexOf("--course");
 const maxArg = compareArg > -1 ? compareArg : process.argv.indexOf("--max");
 const maxChecks = maxArg > -1 ? Number(process.argv[maxArg + 1]) : 150;
 if (!Number.isInteger(maxChecks) || maxChecks < 1) {
@@ -41,6 +43,7 @@ try {
   await runFollowup({
     mode: SEND ? "send" : process.argv.includes("--replies") ? "replies" : compareArg > -1 ? "compare" : "preview",
     maxChecks,
+    courseId: courseArg > -1 ? process.argv[courseArg + 1] : undefined,
     headless: !process.argv.includes("--headed"),
     onLog: (line) => console.log(line),
   });

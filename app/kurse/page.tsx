@@ -4,12 +4,18 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { DashboardShell } from "@/components/DashboardShell";
 import { Tutor24Followup } from "@/components/Tutor24Followup";
+import { CourseDemandOverview } from "@/components/CourseDemandOverview";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 
 /** ?course=<id>: "Kurs anlegen" im Nachfassen-Tab springt mit dem neuen Kurs ausgewaehlt hierher. */
 function Courses() {
   const course = useSearchParams()?.get("course") ?? null;
-  return <Tutor24Followup key={course ?? "kurse"} view="kurse" focusCourse={course} />;
+  return (
+    <div className="space-y-4">
+      <Tutor24Followup key={course ?? "kurse"} view="kurse" focusCourse={course} />
+      <CourseDemandOverview />
+    </div>
+  );
 }
 
 export default function KursePage() {

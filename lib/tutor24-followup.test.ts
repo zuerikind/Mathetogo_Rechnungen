@@ -364,7 +364,7 @@ describe("Kurse und Nachricht", () => {
 const row = (p: Partial<PreviewRow>): PreviewRow => ({
   status: "send", conversation_id: "1", link: "", name: "Lea", kategorie: "gymi", begruendung: "", stufe: "", fach: "",
   faecher: "Mathe", klasse: "", gymi_jahr: "", kursgruppe: "gymi_unter", sicherheit: "hoch", ort: "unbekannt", ortsname: "",
-  zeitwunsch: "", anlass: "unbekannt", letzte_nachricht: "", anrede: "Sie", grund: "", quelle: "", kurs: "", nachricht: "",
+  zeitwunsch: "", anlass: "unbekannt", letzte_nachricht: "", anrede: "Sie", grund: "", quelle: "", kurs: "", nachricht: "", inserat_id: "",
   ...p,
 });
 
@@ -472,9 +472,9 @@ describe("Antworten", () => {
 
 describe("Einstellungen", () => {
   it("Standard: Mathe und Physik, N = 20; altes Format wird ersetzt", () => {
-    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false });
-    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false });
-    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5, listingOnDemand: false });
+    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false });
+    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false });
+    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5, listingOnDemand: false, newFirstMessage: false });
   });
 });
 

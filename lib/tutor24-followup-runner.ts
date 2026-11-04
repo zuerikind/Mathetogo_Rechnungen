@@ -38,6 +38,7 @@ import {
   listSkipReason,
   listingFromConversation,
   needsListing,
+  parseJobText,
   parseTutor24Date,
   scrollStop,
   snippetSig,
@@ -62,6 +63,7 @@ import {
   loadListCache,
   loadSettings,
   loggedIds,
+  offeredCourses,
   readLog,
   readPreview,
   saveListCache,
@@ -145,7 +147,7 @@ function checkStop() {
   if (state.shouldStop || stopRequested()) throw new StopRun("Vom Benutzer gestoppt.");
 }
 
-async function assertPageOk(page: Page, what: string): Promise<void> {
+export async function assertPageOk(page: Page, what: string): Promise<void> {
   const url = page.url();
   if (/sign_in/.test(url)) throw new StopRun(`Login-Problem: auf Anmeldeseite umgeleitet (${what}).`);
   if (/captcha|challenge|verification/i.test(url)) throw new StopRun(`Captcha/Prüfung erkannt (${what}): ${url}`);
@@ -357,18 +359,7 @@ async function readJob(page: Page, jobId: string): Promise<ListingInfo & { activ
   await assertPageOk(page, `Inserat ${jobId}`);
   // Nur Text holen, auswerten in Node (siehe __name oben).
   const [t, title] = await Promise.all([page.evaluate(() => document.body.innerText), page.title()]);
-  const field = (label: string) => t.match(new RegExp(`\\n${label}\\n([^\\n]+)`))?.[1]?.trim() ?? "";
-  const inactive = /nicht mehr aktiv|nicht mehr verfügbar|deaktiviert|wurde gelöscht|existiert nicht/i.test(t);
-  const desc = t.match(/Zusätzliche Informationen\n+([\s\S]*?)\n+Gesuchte Nachhilfe/)?.[1] ?? "";
-  return {
-    active: t.includes("Gesuchte Nachhilfe") && !inactive,
-    title: title.replace(/\s*-\s*Tutor24\s*$/i, ""),
-    fach: field("Fach"),
-    schulstufe: field("Schulstufe"),
-    description: desc.trim(),
-    // ponytail: Feldname auf tutor24 nicht geprueft; fehlt er, sucht extractOrt im Freitext.
-    ort: field("Ort") || field("Unterrichtsort"),
-  };
+  return parseJobText(t, title);
 }
 
 /** Nur diese Gruende haengen vom Datum ab und werden bei jedem Lauf neu geprueft. */
@@ -415,7 +406,7 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
       status: "skip", conversation_id: item.id, link: convoUrl(item.id), name: item.name,
       kategorie: "", begruendung: "", stufe: "", fach: "",
       faecher: "", klasse: "", gymi_jahr: "", kursgruppe: "", sicherheit: "", ort: "", ortsname: "", zeitwunsch: "", anlass: "",
-      letzte_nachricht: date ? fmtDate(date) : "", anrede: "", grund: "", quelle: "", kurs: "", nachricht: "",
+      letzte_nachricht: date ? fmtDate(date) : "", anrede: "", grund: "", quelle: "", kurs: "", nachricht: "", inserat_id: "",
     };
     const existing = rows.findIndex((r) => r.conversation_id === item.id);
     if (existing > -1) rows[existing] = row;
@@ -448,6 +439,7 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
       const reason = conversationSkipReason(convo, now);
       if (reason) { skip(reason); log(`${tag}: ${reason}`); errorsInRow = 0; continue; }
       if (!convo.jobId) { skip("inserat_unbekannt"); log(`${tag}: inserat_unbekannt`); errorsInRow = 0; continue; }
+      row.inserat_id = convo.jobId;
 
       // Analysiert wird immer, unabhaengig von Kursen und Faechern — beides laesst sich spaeter ohne neuen Lauf aendern.
       let a = await timed("auswertung", async () => analyzeListing(convo.listing));
@@ -508,12 +500,12 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
   log(`Vorschau: ${PREVIEW_PATH}`);
 }
 
-async function send(page: Page, log: Log): Promise<void> {
+async function send(page: Page, log: Log, courseId?: string): Promise<void> {
   const courses = loadCourses();
   // Gespeicherte Kurse koennen aus der Zeit vor einer Pruefregel stammen: vor dem ersten Senden pruefen.
   const invalid = validateCourses(courses);
   if (invalid.length) throw new StopRun(`Kurse fehlerhaft, nichts gesendet: ${invalid.join(" ")}`);
-  const { pending, queue } = sendQueue(courses, loadSettings());
+  const { pending, queue } = sendQueue(courses, loadSettings(), new Date(), courseId, await offeredCourses());
   // Alle Texte VOR der ersten Nachricht pruefen: der Lauf bricht nie mittendrin wegen eines Textes ab.
   const bad = queue.filter((r) => r.problem);
   if (bad.length)
@@ -596,8 +588,8 @@ async function send(page: Page, log: Log): Promise<void> {
 }
 
 /** Nur lesend: kam nach meinem Nachfassen eine Antwort? Gewertet wird sie nicht — das markiere ich im Tab. */
-async function replies(page: Page, log: Log): Promise<void> {
-  const open = readLog().filter(needsReplyCheck);
+async function replies(page: Page, log: Log, courseId?: string): Promise<void> {
+  const open = readLog().filter((r) => needsReplyCheck(r) && (!courseId || r.kurs === courseId));
   log(`${open.length} nachgefasste Konversationen ohne bekannte Antwort.`);
   if (!open.length) return;
   // Liste nur so weit laden, bis alle gesuchten Konversationen drin sind (oder aelter als das erste Nachfassen).
@@ -725,12 +717,14 @@ export type FollowupRunOptions = {
   mode: "preview" | "send" | "replies" | "compare";
   /** Probelauf: hoechstens so viele Konversationen oeffnen; Vergleich: so viele vergleichen */
   maxChecks?: number;
+  /** Senden/Antworten prüfen: nur dieser Kurs; ohne Angabe alle */
+  courseId?: string;
   headless?: boolean;
   /** zusaetzliche Ausgabe, z.B. console.log fuer die Kommandozeile */
   onLog?: Log;
 };
 
-const BLOCKED_URLS = [
+export const BLOCKED_URLS = [
   "*.png*", "*.jpg*", "*.jpeg*", "*.gif*", "*.webp*", "*.svg*", "*.ico*", "*.avif*",
   "*.woff*", "*.ttf*", "*.otf*", "*.eot*",
   "*.mp4*", "*.webm*", "*.mp3*",
@@ -816,8 +810,8 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
     await acceptTutor24Cookies(page, () => {});
     await assertPageOk(page, "nach dem Login");
     log("Angemeldet.");
-    if (opts.mode === "send") await send(page, log);
-    else if (opts.mode === "replies") await replies(page, log);
+    if (opts.mode === "send") await send(page, log, opts.courseId);
+    else if (opts.mode === "replies") await replies(page, log, opts.courseId);
     else if (opts.mode === "compare") await compare(page, opts.maxChecks ?? 20, log);
     else await preview(page, opts.maxChecks ?? 150, log);
   } catch (err) {

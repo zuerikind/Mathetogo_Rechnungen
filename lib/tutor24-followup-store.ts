@@ -3,8 +3,9 @@
  * Alles unter tutor24-followup/ im Projektordner — dort, wo Kommandozeile und
  * App-Server gleichermassen hinschauen. Der Ordner ist gitignored (Namen).
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { prisma } from "./prisma";
 import {
   LOG_COLS,
   MARKS,
@@ -128,6 +129,26 @@ export function loadCourses(): Course[] {
   return Array.isArray(raw) ? (raw as Course[]) : [];
 }
 
+export const BACKUP_DIR = join(FOLLOWUP_DIR, "backups");
+const KEEP_BACKUPS = 20;
+
+/**
+ * courses.json ist nicht im Git: vor dem Ueberschreiben eine Kopie mit Zeitstempel.
+ * /kurse speichert automatisch bei jeder Aenderung — darum hoechstens eine Kopie pro Stunde,
+ * sonst waeren 20 Kopien nach wenigen Minuten Tippen nur noch Zwischenstaende.
+ * Gesichert wird der Stand VOR der ersten Aenderung der Stunde.
+ */
+function backupCourses(now = new Date()): void {
+  mkdirSync(BACKUP_DIR, { recursive: true });
+  const files = readdirSync(BACKUP_DIR).filter((f) => /^courses-.*\.json$/.test(f)).sort();
+  const newest = files.at(-1);
+  if (newest && now.getTime() - statSync(join(BACKUP_DIR, newest)).mtimeMs < 60 * 60 * 1000) return;
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  // writeFileSync statt copyFileSync: copyFile uebernimmt unter Windows das alte Aenderungsdatum.
+  writeFileSync(join(BACKUP_DIR, `courses-${stamp}.json`), readFileSync(COURSES_PATH));
+  for (const old of [...files, `courses-${stamp}.json`].slice(0, -KEEP_BACKUPS)) rmSync(join(BACKUP_DIR, old), { force: true });
+}
+
 /** Speichert Faecher + Kurse nach Pruefung und frischt Kurs und Nachricht in der Vorschau-CSV auf. */
 export function saveConfig(input: { settings?: unknown; courses?: unknown }): { settings: FollowupSettings; courses: Course[] } {
   const settings = mergeSettings(input.settings as Partial<FollowupSettings> | null);
@@ -135,7 +156,9 @@ export function saveConfig(input: { settings?: unknown; courses?: unknown }): { 
   const errors = validateCourses(courses);
   if (errors.length) throw new Error(errors.join(" "));
   writeChecked(SETTINGS_PATH, JSON.stringify(settings, null, 2));
-  writeChecked(COURSES_PATH, JSON.stringify(courses, null, 2));
+  const next = JSON.stringify(courses, null, 2);
+  if (existsSync(COURSES_PATH) && readFileSync(COURSES_PATH, "utf8") !== next) backupCourses();
+  writeChecked(COURSES_PATH, next);
   if (existsSync(PREVIEW_PATH)) writePreview(readPreview(), courses, settings);
   return { settings, courses };
 }
@@ -237,11 +260,28 @@ export function sentToday(now = new Date()): number {
 }
 
 /** Was jetzt gesendet wuerde: effektiver Status "wird gesendet", im Tageslimit. */
-export function sendQueue(courses = loadCourses(), settings = loadSettings(), now = new Date()) {
+/** Inserat-ID → Kurs, der schon in der Erst-Nachricht angeboten wurde (Tutor24Contact.kursId). */
+export async function offeredCourses(): Promise<Map<string, string>> {
+  const rows = await prisma.tutor24Contact.findMany({ where: { kursId: { not: null } }, select: { tutor24Id: true, kursId: true } });
+  return new Map(rows.map((r) => [r.tutor24Id, r.kursId as string]));
+}
+
+/**
+ * courseId: nur diesen Kurs anschreiben (Knopf beim ausgewaehlten Kurs); das Tageslimit gilt trotzdem gesamt.
+ * offered: wer denselben Kurs schon in der Erst-Nachricht bekam, wird nicht nochmals angeschrieben.
+ */
+export function sendQueue(
+  courses = loadCourses(),
+  settings = loadSettings(),
+  now = new Date(),
+  courseId?: string,
+  offered: Map<string, string> = new Map()
+) {
   const logged = loggedIds();
   const pending = readPreview()
     .map((row) => ({ row, eff: effectiveStatus(row, courses, settings, logged) }))
-    .filter((x) => x.eff.send)
+    .filter((x) => x.eff.send && (!courseId || x.eff.course?.id === courseId))
+    .filter((x) => !(x.row.inserat_id && offered.get(x.row.inserat_id) === x.eff.course?.id))
     .map((x) => {
       const course = x.eff.course as Course;
       // Fertiger Text samt Pruefung: derselbe, den Tab, API und Sende-Lauf sehen.

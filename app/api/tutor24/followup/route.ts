@@ -14,6 +14,7 @@ import {
   readStatus,
   requestStop,
   saveConfig,
+  offeredCourses,
   sendQueue,
   sentToday,
   setMark,
@@ -53,12 +54,15 @@ function blocker(status: RunStatus): string | null {
 }
 
 /** Startet scripts/followup_group_offer.mts als eigenen, abgekoppelten Prozess. */
-function startRun(mode: "preview" | "send" | "replies", max?: number): void {
-  const flag = mode === "send" ? "--send" : mode === "replies" ? "--replies" : `--max ${Math.floor(Number(max))}`;
+function startRun(mode: "preview" | "send" | "replies", max?: number, courseId?: string): void {
+  const flag =
+    (mode === "send" ? "--send" : mode === "replies" ? "--replies" : `--max ${Math.floor(Number(max))}`) +
+    (courseId ? ` --course ${courseId}` : "");
   mkdirSync(FOLLOWUP_DIR, { recursive: true });
   // Faengt Startfehler von npx ab; die Lauf-Meldungen selbst stehen in status.json.
   const out = openSync(RUN_LOG_PATH, "w");
-  // Shell fuer npx.cmd unter Windows; der Befehl besteht nur aus festen Teilen und einer geprueften Zahl.
+  // Shell fuer npx.cmd unter Windows; der Befehl besteht nur aus festen Teilen, einer geprueften Zahl
+  // und einer Kurs-ID, die in courses.json steht und nur [A-Za-z0-9_-] enthaelt (siehe POST).
   const child = spawn(`npx tsx scripts/followup_group_offer.mts ${flag}`, {
     cwd: process.cwd(),
     detached: true,
@@ -79,7 +83,7 @@ export async function GET() {
 
   const settings = loadSettings();
   const courses = loadCourses();
-  const { pending, queue, budget } = sendQueue(courses, settings);
+  const { pending, queue, budget } = sendQueue(courses, settings, new Date(), undefined, await offeredCourses());
   const status = runStatus();
   return NextResponse.json({
     state: { ...status, log: status.log.slice(-40) },
@@ -95,15 +99,16 @@ export async function GET() {
       budget,
       pending: pending.length,
       queue: queue.length,
-      recipients: queue.map((r) => ({ id: r.conversation_id, name: r.name, kurs: r.course.name, anrede: r.anrede, problem: r.problem, text: r.text })),
+      // Alle offenen, nicht nur das Tageskontingent: der Tab rechnet pro ausgewaehltem Kurs.
+      recipients: pending.map((r) => ({ id: r.conversation_id, name: r.name, kurs: r.course.name, courseId: r.course.id, anrede: r.anrede, problem: r.problem, text: r.text })),
     },
   });
 }
 
 type PostBody =
   | { action: "preview"; max?: number }
-  | { action: "send" }
-  | { action: "replies" }
+  | { action: "send"; courseId?: string }
+  | { action: "replies"; courseId?: string }
   | { action: "config"; settings: unknown; courses: unknown }
   | { action: "status"; id: string; status: "send" | "skip" }
   | { action: "mark"; id: string; markierung: string }
@@ -147,18 +152,21 @@ export async function POST(req: NextRequest) {
       if (blocked) return NextResponse.json({ error: `tutor24 ist belegt: ${blocked}` }, { status: 409 });
       const max = body.action === "preview" ? Math.floor(Number(body.max ?? 150)) : undefined;
       if (max !== undefined && !(max >= 1)) throw new Error("max. Konversationen muss ≥ 1 sein.");
+      const courseId = body.action === "preview" ? undefined : body.courseId ? String(body.courseId) : undefined;
+      if (courseId && (!/^[\w-]+$/.test(courseId) || !loadCourses().some((c) => c.id === courseId)))
+        throw new Error("Unbekannter Kurs.");
       const invalid = body.action === "send" ? validateCourses(loadCourses()) : [];
       if (invalid.length) throw new Error(`Bitte zuerst die Kurse korrigieren: ${invalid.join(" ")}`);
       if (body.action === "send") {
-        const { queue } = sendQueue();
+        const { queue } = sendQueue(undefined, undefined, undefined, courseId, await offeredCourses());
         if (queue.length === 0) throw new Error("Nichts zu senden: keine Zeile mit aktivem passendem Kurs und status=send, oder Tageslimit erreicht.");
         const bad = queue.filter((r) => r.problem);
         if (bad.length) throw new Error(`Nichts gesendet — fehlerhafte Nachrichten: ${bad.map((r) => `${r.name}: ${r.problem}`).join("; ")}`);
       }
-      if (body.action === "replies" && !readLog().some(needsReplyCheck))
+      if (body.action === "replies" && !readLog().some((r) => needsReplyCheck(r) && (!courseId || r.kurs === courseId)))
         throw new Error("Nichts zu prüfen: alle Angeschriebenen haben geantwortet oder sind schon eingeordnet.");
 
-      startRun(body.action, max);
+      startRun(body.action, max, courseId);
       return NextResponse.json({ started: true });
     }
     return NextResponse.json({ error: "Unbekannte Aktion." }, { status: 400 });

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   COURSE_GROUPS,
+  capacity,
   GROUP_LABEL,
   LEVEL_LABEL,
   MAX_ACTIVE_COURSES,
@@ -55,7 +56,7 @@ type StatusResponse = {
     pending: number;
     queue: number;
     /** fertig geprueft: problem = null heisst "so geht es raus" */
-    recipients: Array<{ id: string; name: string; kurs: string; anrede: "du" | "Sie"; problem: string | null; text: string }>;
+    recipients: Array<{ id: string; name: string; kurs: string; courseId: string; anrede: "du" | "Sie"; problem: string | null; text: string }>;
   };
 };
 
@@ -206,6 +207,10 @@ function CourseEditor({
               <label className="flex items-center gap-2">
                 min. Teilnehmende
                 <input type="number" min={1} value={course.minParticipants} disabled={disabled} onChange={(e) => set("minParticipants", Number(e.target.value))} className={`${inputClass} w-16`} />
+              </label>
+              <label className="flex items-center gap-2" title="Voll, sobald so viele zugesagt oder bezahlt haben: dann bietet die Erst-Nachricht den Kurs nicht mehr an.">
+                Plätze
+                <input type="number" min={1} value={capacity(course)} disabled={disabled} onChange={(e) => set("maxParticipants", Number(e.target.value))} className={`${inputClass} w-16`} />
               </label>
             </div>
             </>
@@ -371,7 +376,9 @@ export function Tutor24Followup({
     // Kein Bestaetigungsfenster: die gepruefte Liste steht beim Knopf, der Lauf geht dann ohne Rueckfrage durch.
     setBusy(true);
     try {
-      if (await post({ action, max: maxChecks })) await fetchStatus();
+      // Senden und Antworten prüfen gelten nur fuer den ausgewaehlten Kurs; Kandidaten suchen liest alle Konversationen.
+      const courseId = action === "send" || action === "replies" ? selected?.id : undefined;
+      if (await post({ action, max: maxChecks, courseId })) await fetchStatus();
     } finally {
       setBusy(false);
     }
@@ -434,8 +441,11 @@ export function Tutor24Followup({
       return eff.send && eff.course?.id === c.id;
     });
   };
-  const waiting = status.log.filter(needsReplyCheck).length;
-  const badRecipients = send.recipients.filter((r) => r.problem);
+  // Schritt 2 und 3 beziehen sich auf den ausgewaehlten Kurs; das Tageslimit gilt fuer alle zusammen.
+  const waiting = status.log.filter((r) => needsReplyCheck(r) && r.kurs === selected?.id).length;
+  const coursePending = send.recipients.filter((r) => r.courseId === selected?.id);
+  const courseQueue = coursePending.slice(0, send.budget);
+  const badRecipients = courseQueue.filter((r) => r.problem);
   // Auswahl und Anlegen mit demselben Fach: "Mathe" ist nur Startwert, falls es unter "Meine Faecher" steht.
   const fachForNew = draft.settings.mySubjects.includes(newFach) ? newFach : draft.settings.mySubjects[0] ?? "";
 
@@ -507,7 +517,7 @@ export function Tutor24Followup({
               )}
             </div>
             <p className="mb-4 text-sm text-gray-500">
-              Drei Schritte, von links nach rechts. Jeder läuft im Hintergrund weiter, auch wenn du die Seite neu lädst; es läuft immer nur einer gleichzeitig.
+              Drei Schritte, von links nach rechts. Jeder läuft im Hintergrund weiter, auch wenn du die Seite neu lädst; es läuft immer nur einer gleichzeitig. Schritt 2 und 3 gelten für den unten ausgewählten Kurs.
             </p>
             <div className="grid gap-3 md:grid-cols-3">
               <div className="flex flex-col rounded-xl border border-gray-100 p-4">
@@ -530,19 +540,19 @@ export function Tutor24Followup({
                 <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 2</p>
                 <h3 className="font-semibold text-gray-900">Kursangebot senden</h3>
                 <p className="mt-1 flex-1 text-sm text-gray-500">
-                  Schickt das Angebot an alle in „Bereit“ der <b>aktiven</b> Kurse. Höchstens {send.limit} pro Tag (heute noch {send.budget}), 1–3 Minuten
+                  Schickt das Angebot an alle in „Bereit“ von <b>{selected?.name || "—"}</b>{selected && !selected.active && " (pausiert — erst Häkchen setzen)"}. Höchstens {send.limit} pro Tag (heute noch {send.budget}), 1–3 Minuten
                   Pause dazwischen. Alle Texte werden vorher geprüft; danach läuft es ohne Rückfrage durch.
-                  {send.pending > send.queue && ` ${send.pending - send.queue} weitere folgen an einem späteren Tag.`}
+                  {coursePending.length > courseQueue.length && ` ${coursePending.length - courseQueue.length} weitere folgen an einem späteren Tag.`}
                 </p>
-                {send.queue > 0 && (
+                {courseQueue.length > 0 && (
                   <details className="mt-2 text-xs" open={badRecipients.length > 0}>
                     <summary className={`cursor-pointer font-semibold ${badRecipients.length ? "text-red-600" : "text-green-700"}`}>
                       {badRecipients.length
-                        ? `${badRecipients.length} von ${send.queue} Nachrichten fehlerhaft — so wird nichts gesendet`
-                        : `✓ ${send.queue} Nachrichten geprüft — Liste ansehen`}
+                        ? `${badRecipients.length} von ${courseQueue.length} Nachrichten fehlerhaft — so wird nichts gesendet`
+                        : `✓ ${courseQueue.length} Nachrichten geprüft — Liste ansehen`}
                     </summary>
                     <ul className="mt-1 max-h-56 space-y-1 overflow-y-auto">
-                      {send.recipients.map((r) => (
+                      {courseQueue.map((r) => (
                         <li key={r.id} className="rounded-md bg-gray-50 p-1.5">
                           <span className="font-semibold text-gray-800">{r.name || r.id}</span>
                           <span className="text-gray-500"> · {r.kurs} · {r.anrede}</span>
@@ -559,10 +569,10 @@ export function Tutor24Followup({
                 <div className="mt-3">
                   <button
                     onClick={() => void start("send")}
-                    disabled={blocked || busy || dirty || errors.length > 0 || badRecipients.length > 0 || send.queue === 0}
+                    disabled={blocked || busy || dirty || errors.length > 0 || badRecipients.length > 0 || courseQueue.length === 0}
                     className="rounded-xl bg-green-600 px-5 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
                   >
-                    {send.queue > 0 ? `${send.queue} ${send.queue === 1 ? "Person" : "Personen"} anschreiben` : "Niemand bereit"}
+                    {courseQueue.length > 0 ? `${courseQueue.length} ${courseQueue.length === 1 ? "Person" : "Personen"} anschreiben` : "Niemand bereit"}
                   </button>
                 </div>
               </div>
@@ -570,7 +580,7 @@ export function Tutor24Followup({
                 <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 3</p>
                 <h3 className="font-semibold text-gray-900">Antworten prüfen</h3>
                 <p className="mt-1 flex-1 text-sm text-gray-500">
-                  Schaut in den Chats der Angeschriebenen nach Antworten. Neue erscheinen in der Pipeline unter „Antwort erhalten“. Sendet nichts.
+                  Schaut in den Chats der Angeschriebenen von <b>{selected?.name || "—"}</b> nach Antworten. Neue erscheinen in der Pipeline unter „Antwort erhalten“. Sendet nichts.
                 </p>
                 <div className="mt-3">
                   <button
@@ -580,7 +590,7 @@ export function Tutor24Followup({
                   >
                     {waiting > 0
                       ? `${waiting} ${waiting === 1 ? "Chat" : "Chats"} prüfen`
-                      : status.log.length === 0
+                      : !status.log.some((r) => r.kurs === selected?.id)
                         ? "Noch niemand angeschrieben"
                         : "Alle haben geantwortet oder sind eingeordnet"}
                   </button>
@@ -594,6 +604,19 @@ export function Tutor24Followup({
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h2 className="font-semibold text-gray-900">Kurse</h2>
               <p className="text-xs text-gray-500">Kurs anklicken, um seine Pipeline zu sehen. Gespeichert wird automatisch.</p>
+              <label
+                className="flex items-center gap-1.5 text-xs text-gray-600"
+                title="Erst-Nachricht auf tutor24: Anrede je nach Schüler/Eltern, passender aktiver Kurs, Nachfrage ohne Kurs wird erfasst. Aus = bisherige Nachricht."
+              >
+                <input
+                  type="checkbox"
+                  checked={draft.settings.newFirstMessage}
+                  disabled={running}
+                  onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, newFirstMessage: e.target.checked } })}
+                  className="accent-[#4A7FC1]"
+                />
+                Kurse in der Erst-Nachricht anbieten
+              </label>
               {/* Nur zum erneuten Versuch, falls das automatische Speichern fehlschlug */}
               {saveButton}
             </div>
