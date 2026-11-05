@@ -386,7 +386,7 @@ const LANG_WORDS: Record<"de" | "en" | "fr" | "it" | "es", string[]> = {
     "son", "daughter", "child", "lessons", "improve", "grades", "year old", "who", "this", "that", "to", "of", "in the", "help with",
   ],
   fr: [
-    "le", "les", "des", "du", "je", "nous", "notre", "nos", "cherche", "cherchons", "recherche", "recherché", "recherchés", "élève", "cours",
+    "le", "les", "des", "du", "nous", "notre", "nos", "cherche", "cherchons", "recherche", "recherché", "recherchés", "élève", "cours",
     "pour", "avec", "est", "une", "et", "enfant", "fils", "fille", "mathématiques", "particuliers", "besoin", "aide", "sont", "dans",
   ],
   it: [

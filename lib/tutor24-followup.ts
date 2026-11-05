@@ -23,6 +23,9 @@ export const LEVEL_LABEL: Record<LevelCategory, string> = {
 };
 
 export const isOfferLevel = (c: string): c is OfferLevel => (OFFER_LEVELS as readonly string[]).includes(c);
+/** Ausgeschlossene Primar-Faelle: nur gezaehlt (Nachfrage pro Stufe und Woche), kein Kurs, keine Nachricht. */
+export const isPrimar = (kategorie: string, stufe: string, begruendung = "") =>
+  kategorie === "ausgeschlossen" && /primar/i.test(`${stufe} ${begruendung}`);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const MIN_AGE_DAYS = 3;
@@ -140,8 +143,10 @@ export function classifyListing(info: ListingInfo): Classification {
   const text = `${info.title}\n${info.description}`;
   const field = `Schulstufe: ${info.schulstufe}`;
   const rules: Array<{ category: LevelCategory; re: RegExp; onField?: boolean; when?: RegExp }> = [
+    // BM vor "Erwachsene": die BM2 richtet sich an Erwachsene nach der Lehre (Schulstufe oft "… und Erwachsenenbildung").
+    { category: "bm", re: /berufsmatur|\bbms\b|\bbm\b|\bbm-|\bbm\d\b|lehre mit (der )?bm|bm[- ]?aufnahme/i },
+    // Erwachsene/Erwachsenenbildung: ausgeschlossen fuer die Schulkurse (Gymi, Sek, Matura).
     { category: "ausgeschlossen", re: /erwachsen/i },
-    { category: "bm", re: /berufsmatur|\bbms\b|\bbm\b|\bbm-|lehre mit (der )?bm|bm[- ]?aufnahme/i },
     {
       category: "gymivorbereitung",
       re: /aufnahmepr[üu]fung|\bzap\b|gymi-?pr[üu]fung|(ins|ans|aufs) (gymi|gymnasium|kanti|langgymi|kurzgymi)|vorbereitung (auf|f[üu]r) (das |die |den )?(gymi|gymnasium|kanti|lang|kurz)|(lang|kurz)zeit-?gymi(nasium)?[- ]?(pr[üu]fung|vorbereitung)/i,
@@ -362,9 +367,11 @@ export function detectAddressee(description: string): Addressee {
 export const detectAnrede = (description: string): Anrede => detectAddressee(description).anrede;
 
 /** Stufen, die wie ein Kurs aussehen, aber keiner sind (FMS-Fachmatura ist nicht die gymnasiale Matura). */
-export function courseExclusion(info: ListingInfo): string | null {
+export function courseExclusion(info: ListingInfo, category?: string): string | null {
   const t = `${info.schulstufe}\n${info.title}\n${info.description}`.toLowerCase();
-  const m = t.match(/\bfms\b|fachmatur|fachmittelschule|passerelle|bachelor|erwachsen/);
+  // "Erwachsene" schliesst nur die Schulkurse aus, nicht die BM (BM2 nach der Lehre).
+  const re = category === "bm" ? /\bfms\b|fachmatur|fachmittelschule|passerelle|bachelor/ : /\bfms\b|fachmatur|fachmittelschule|passerelle|bachelor|erwachsen/;
+  const m = t.match(re);
   return m ? m[0] : null;
 }
 
@@ -402,7 +409,7 @@ export function analyzeListing(info: ListingInfo) {
     anlass: extractAnlass(info),
     anrede: detectAnrede(info.description),
     /** FMS, Fachmatura, Passerelle, Bachelor, Erwachsene: nie ein Kurs. "" = kein Ausschluss. */
-    ausschluss: courseExclusion(info) ?? "",
+    ausschluss: courseExclusion(info, c.category) ?? "",
   };
 }
 

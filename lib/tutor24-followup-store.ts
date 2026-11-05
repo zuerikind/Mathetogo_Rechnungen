@@ -5,7 +5,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendVariante, loadLeadInfo, loadLog, sentToday, updateLead } from "./tutor24-leads";
+import { appendVariante, loadLeadInfo, loadLog, sentToday, setLeadAnrede, updateLead } from "./tutor24-leads";
 import { followupForm, followupMessage } from "./tutor24-course-offer";
 import {
   MARKS,
@@ -177,7 +177,7 @@ export function readPreview(): PreviewRow[] {
     // Vor der Ausschluss-Spalte gespeichert: so gut es geht aus Stufe und Fundstelle nachholen.
     // Der naechste Probelauf ueberschreibt das mit der Analyse des ganzen Inserats.
     if (!("ausschluss" in r))
-      row.ausschluss = courseExclusion({ title: "", fach: row.fach, schulstufe: row.stufe, description: row.begruendung }) ?? "";
+      row.ausschluss = courseExclusion({ title: "", fach: row.fach, schulstufe: row.stufe, description: row.begruendung }, row.kategorie) ?? "";
     return row;
   });
 }
@@ -206,6 +206,8 @@ export async function setRowAnrede(conversationId: string, anrede: Anrede): Prom
   const row = rows.find((r) => r.conversation_id === conversationId);
   if (!row) throw new Error(`Konversation ${conversationId} steht nicht in der Vorschau.`);
   row.anrede = anrede;
+  // Korrektur von Hand gilt auch fuer die Person (das Nachfassen nimmt die gespeicherte Anrede).
+  await setLeadAnrede(conversationId, anrede);
   writePreview(rows, await loadLog(), await loadLeadInfo());
 }
 

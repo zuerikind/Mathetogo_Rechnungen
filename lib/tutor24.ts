@@ -2,7 +2,7 @@ import { prisma } from "./prisma";
 import { assertNoAutomationRunning, tutor24JobState as jobState } from "./automation-state";
 import { acquireTutor24Lock } from "./tutor24-lock";
 import {
-  generatePersonalSentence,
+  personalSentenceChecked,
   generateTutor24Message,
   TUTOR24_MESSAGE_TEMPLATE,
 } from "./tutor24-message-prompt";
@@ -39,12 +39,10 @@ export const MESSAGE_TEMPLATE = TUTOR24_MESSAGE_TEMPLATE;
 export async function composeFirstMessage(info: ListingInfo, log: (s: string) => void, now = new Date(), sprache: "de" | "en" = "de") {
   const plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), now, sprache);
   const f = plan.form;
-  const personal = await generatePersonalSentence(
-    info,
-    f.typ === "fr" ? "neutral" : f.typ,
-    f.typ === "eltern" ? f.nom : null,
-    log
-  );
+  // Abgelehnt → zweiter Versuch mit dem Grund; erst danach der Ersatzsatz.
+  const ki = await personalSentenceChecked(info, f, log);
+  const personal = ki.satz;
+  if (ki.gruende.length) log(`KI-Satz: ${ki.versuche} Versuch(e), abgelehnt: ${ki.gruende.join("; ")}`);
   const m = assembleFirstMessage(plan, personal);
   log(
     `Anrede=${plan.addressee.wer}${plan.addressee.kind ? `/${plan.addressee.kind}` : ""} Stufe=${plan.analysis.kategorie}/${plan.analysis.kursgruppe || "-"} ` +

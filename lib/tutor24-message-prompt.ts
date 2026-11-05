@@ -4,6 +4,7 @@
  */
 
 import type { ListingProfile } from "./tutor24-messaging";
+import { listingText, sentenceProblem, type Form } from "./tutor24-course-offer";
 
 /** Fixed intro — always before {{LEVEL_INSERT}}; do not personalize this block. */
 export const TUTOR24_CREDENTIALS_BLOCK = `gerne unterstütze ich dich in Mathematik und der Physik, entweder online oder in Zürich, auf Deutsch oder Englisch. Ich unterrichte seit über 12 Jahren, habe an der ETH studiert und begleite aktuell mehr als 30 aktive Schüler, die meisten auf Gymi- oder Universitätsniveau. Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.`;
@@ -114,10 +115,21 @@ export async function generatePersonalSentence(
   listing: { title: string; schulstufe: string; description: string },
   anrede: "du" | "eltern" | "neutral" | "en",
   childNom: string | null,
-  pushLog: (s: string) => void
+  pushLog: (s: string) => void,
+  /** zweiter Versuch: der abgelehnte Satz und der konkrete Grund aus sentenceProblem */
+  retry?: { satz: string; grund: string }
 ): Promise<string | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
+  // Gute Satzanfaenge pro Anrede: der Satz folgt auf "gerne unterstütze ich …" und darf nicht mit Ich/Gerne beginnen.
+  const starts =
+    anrede === "en"
+      ? `"Since you [what the listing says], …", "For [the exam or level named in the listing], …", "Especially with [the topic from the listing], …"`
+      : anrede === "du"
+        ? `"Da du [was im Inserat steht], …", "Für [die Prüfung oder Stufe aus dem Inserat] …", "Gerade bei [dem Thema aus dem Inserat] …"`
+        : anrede === "eltern"
+          ? `"Da ${childNom} [was im Inserat steht], …", "Für [die Prüfung oder Stufe aus dem Inserat] …", "Gerade bei [dem Thema aus dem Inserat] …"`
+          : `"Für [die Prüfung oder Stufe aus dem Inserat] …", "Gerade bei [dem Thema aus dem Inserat] …", "Mit gezielten Übungen zu [dem Stoff aus dem Inserat] …"`;
   const rule =
     anrede === "en"
       ? `Write in English and address the reader as "you". Do not mention a son or daughter.`
@@ -140,17 +152,28 @@ export async function generatePersonalSentence(
           content:
             `You are Omid, a math and physics tutor in Switzerland. Write ONE or two sentences in ${anrede === "en" ? "English" : 'Swiss standard German (use "ss", never "ß")'}, max 40 words, ` +
             `that show you read this tutoring request and how you help with Mathematik and/or Physik specifically. ${rule} ` +
-            `If a concrete goal is named (Matura, BM, Gymiprüfung, Probezeit, a test), name it. ` +
+            `If a concrete goal is named in the listing (Matura, BM, Gymiprüfung, Probezeit, a test), name it. ` +
+            `NEVER name a goal, exam or school level that is not in the listing (no Matura, BM or Gymiprüfung unless the listing says so). ` +
             `Do NOT mention: ETH, years of experience, number of students, platform, Google Meet, group courses, prices, the city, other subjects. ` +
             (anrede === "en"
               ? `The message before your sentence already says "I would be happy to help with mathematics and physics": do NOT start with "I" and do NOT repeat "happy to help". `
               : `The message before your sentence already says "gerne unterstütze ich ... in Mathematik und Physik": do NOT start with "Ich" or "Gerne" and do NOT repeat "unterstütze ich". `) +
+            `Good ways to start (replace the [brackets] with what the listing actually says): ${starts} ` +
             `No em dashes, no marketing fluff. Respond as JSON: {"satz":"..."}`,
         },
         {
           role: "user",
           content: `Titel: ${listing.title}\nSchulstufe: ${listing.schulstufe}\nBeschreibung: ${listing.description.slice(0, 600)}`,
         },
+        ...(retry
+          ? [
+              { role: "assistant" as const, content: JSON.stringify({ satz: retry.satz }) },
+              {
+                role: "user" as const,
+                content: `This sentence was rejected: ${retry.grund}. Write a new one that fixes exactly this, following all rules above. Start like one of these: ${starts}`,
+              },
+            ]
+          : []),
       ],
     });
     const raw = resp.choices[0]?.message?.content ?? "";
@@ -256,4 +279,28 @@ export async function generateTutor24Message(
     }
     return message;
   }
+}
+
+/**
+ * Persoenlicher Satz mit Pruefung: abgelehnt → ein zweiter Versuch mit dem konkreten Grund im Prompt.
+ * Erst wenn auch der scheitert, nimmt der Aufrufer den Ersatzsatz (satz = null).
+ */
+export async function personalSentenceChecked(
+  listing: { title: string; schulstufe: string; description: string },
+  form: Form,
+  pushLog: (s: string) => void
+): Promise<{ satz: string | null; versuche: number; gruende: string[] }> {
+  const anrede = form.typ === "fr" ? "neutral" : form.typ;
+  const child = form.typ === "eltern" ? form.nom : null;
+  const gruende: string[] = [];
+  let last: { satz: string; grund: string } | undefined;
+  for (let versuch = 1; versuch <= 2; versuch++) {
+    const satz = await generatePersonalSentence(listing, anrede, child, pushLog, last);
+    if (!satz) return { satz: null, versuche: versuch, gruende: [...gruende, "KI lieferte nichts"] };
+    const grund = sentenceProblem(satz, form, listingText(listing));
+    if (!grund) return { satz, versuche: versuch, gruende };
+    gruende.push(grund);
+    last = { satz, grund };
+  }
+  return { satz: null, versuche: 2, gruende };
 }

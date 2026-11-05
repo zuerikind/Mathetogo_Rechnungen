@@ -19,7 +19,7 @@ const F = await import("../lib/tutor24-followup");
 const O = await import("../lib/tutor24-course-offer");
 const { FOLLOWUP_DIR, loadCourses, loadSettings, loadLog, readPreview } = await import("../lib/tutor24-followup-store");
 const { buildInterestList } = await import("../lib/tutor24-leads");
-const { generatePersonalSentence } = await import("../lib/tutor24-message-prompt");
+const { personalSentenceChecked } = await import("../lib/tutor24-message-prompt");
 const { resolveTargetLanguage, scoreTextLanguage, TUTOR24_BASE_URL } = await import("../lib/tutor24-messaging");
 const { prisma } = await import("../lib/prisma");
 type Course = import("../lib/tutor24-followup").Course;
@@ -45,8 +45,9 @@ const courses: Course[] = loadCourses().map((c) => ({ ...c, active: true }));
 const log = await loadLog();
 type Cached = { jobId: string | null; info: (ListingInfo & { active: boolean }) | null; error?: string };
 const cache: Record<string, Cached> = JSON.parse(readFileSync(join(FOLLOWUP_DIR, "course_offer_listings.json"), "utf8"));
-const KI_CACHE = join(FOLLOWUP_DIR, "schritt7_ki_saetze.json");
-const kiCache: Record<string, string | null> = existsSync(KI_CACHE) ? JSON.parse(readFileSync(KI_CACHE, "utf8")) : {};
+// v3: Beispiele mit Platzhaltern, Ziel-Pruefung, zweiter Versuch (v1 = ohne Beispiele, v2 = Beispiele mit festen Zielen).
+const KI_CACHE = join(FOLLOWUP_DIR, "schritt7_ki_v3.json");
+const kiCache: Record<string, { satz: string | null; versuche: number; gruende: string[] }> = existsSync(KI_CACHE) ? JSON.parse(readFileSync(KI_CACHE, "utf8")) : {};
 const preview = readPreview();
 const byConvo = new Map(preview.map((r) => [r.conversation_id, r]));
 const batch = preview.filter((r) => r.stufe || r.fach).slice(offset, offset + limit);
@@ -121,7 +122,7 @@ function placement(lead: LeadRow, cs: Course[], lg = log, now = NOW): string {
 
 type Result = {
   id: string; name: string; sprache: string; wer: string; kind: string; kategorie: string; kursgruppe: string; sicherheit: string;
-  ausschluss: string; ergebnis: string; kurs: string; grund: string; satz: string; kiGrund: string; problem: string; erst: string;
+  ausschluss: string; ergebnis: string; kurs: string; grund: string; satz: string; kiGrund: string; kiVersuche: number; problem: string; erst: string;
   nachfassen: string; nachfassenArt: string; nachfassenProblem: string; kurse: string; info: ListingInfo;
   plan: ReturnType<typeof O.planFirstMessage>; lead: LeadRow; leadInfo: LeadInfo; row: PreviewRow;
 };
@@ -133,19 +134,29 @@ async function simulate(id: string, name: string, info: ListingInfo, jobId: stri
   let course: Course | null = null;
   let satz = "";
   let kiGrund = "";
+  let kiVersuche = 0;
   let problem = "";
   if (sprache === "fr") {
     erst = "(Französisch: bisherige KI-Nachricht ohne Kurs — im Test nicht erzeugt)";
   } else {
     const f = plan.form;
     // KI-Saetze zwischenspeichern: ein zweiter Lauf fragt die KI nicht nochmals (gleiche Saetze, vergleichbar).
+    // Wie die Live-Automation: Beispiele im Prompt, bei Ablehnung ein zweiter Versuch mit dem Grund.
     const key = `${id}|${f.typ}`;
-    if (withAi && !(key in kiCache)) {
-      kiCache[key] = await generatePersonalSentence(info, f.typ === "fr" ? "neutral" : f.typ, f.typ === "eltern" ? f.nom : null, () => {});
-      writeFileSync(KI_CACHE, JSON.stringify(kiCache, null, 1));
+    let ki = withAi ? kiCache[key] ?? null : null;
+    if (withAi && !ki) {
+      ki = await personalSentenceChecked(info, f, (s) => console.log(`${id}: ${s}`));
+      // kurze Pause: der erste Lauf lief nach ~400 Aufrufen in Folge ins Ratenlimit der KI
+      await new Promise((r) => setTimeout(r, 400));
+      // KI nicht erreichbar (z.B. Ratenlimit): nicht zwischenspeichern, damit ein neuer Lauf es nochmals versucht.
+      if (!ki.gruende.includes("KI lieferte nichts")) {
+        kiCache[key] = ki;
+        writeFileSync(KI_CACHE, JSON.stringify(kiCache, null, 1));
+      }
     }
-    const personal = withAi ? kiCache[key] : null;
-    kiGrund = personal ? O.sentenceProblem(personal, f) ?? "" : withAi ? "KI lieferte nichts" : "";
+    const personal = ki?.satz ?? null;
+    kiGrund = ki?.gruende.join(" | ") ?? "";
+    kiVersuche = ki?.versuche ?? 0;
     const m = O.assembleFirstMessage(plan, personal);
     erst = m.text;
     course = m.course;
@@ -163,7 +174,7 @@ async function simulate(id: string, name: string, info: ListingInfo, jobId: stri
     id, name, sprache, wer: plan.addressee.wer, kind: plan.addressee.kind ?? "", kategorie: plan.analysis.kategorie,
     kursgruppe: plan.analysis.kursgruppe, sicherheit: plan.analysis.sicherheit, ausschluss: plan.analysis.ausschluss,
     ergebnis: course ? "kurs" : plan.offer.kind, kurs: course?.name ?? "", grund: plan.offer.kind === "kurs" ? (course ? "" : "prüfung") : plan.offer.grund,
-    satz, kiGrund, problem, erst, nachfassen: fu.text, nachfassenArt: fu.label, nachfassenProblem: fu.problem, kurse: placement(lead, cs, lg), info, plan, lead, leadInfo, row,
+    satz, kiGrund, kiVersuche, problem, erst, nachfassen: fu.text, nachfassenArt: fu.label, nachfassenProblem: fu.problem, kurse: placement(lead, cs, lg), info, plan, lead, leadInfo, row,
   };
 }
 
@@ -328,7 +339,16 @@ lines.push(`- Kurs angeboten: ${count(results.filter((r) => r.kurs).map((r) => r
 lines.push(`- Anrede: ${count(results.map((r) => r.wer + (r.kind ? `/${r.kind}` : "")))}`);
 lines.push(`- Sprache: ${count(results.map((r) => r.sprache))}`);
 lines.push(`- Persönlicher Satz: ${count(results.map((r) => r.satz))}`);
-lines.push(`- Warum der KI-Satz abgelehnt wurde (→ Ersatzsatz): ${count(results.filter((r) => r.kiGrund).map((r) => r.kiGrund.replace(/„.*“/, "„…“")))}`);
+{
+  const withKi = results.filter((r) => r.kiVersuche > 0);
+  const fallback = withKi.filter((r) => r.satz === "fallback").length;
+  const second = withKi.filter((r) => r.kiVersuche === 2 && r.satz === "ki").length;
+  lines.push(
+    `- KI-Satz mit Beispielen und zweitem Versuch: im 1. Versuch ok ${withKi.filter((r) => r.kiVersuche === 1 && r.satz === "ki").length}, ` +
+      `im 2. Versuch ok ${second}, Ersatzsatz ${fallback} von ${withKi.length} (${((100 * fallback) / Math.max(1, withKi.length)).toFixed(1)} %)`
+  );
+  lines.push(`- Ablehnungsgründe (alle Versuche): ${count(withKi.flatMap((r) => (r.kiGrund ? r.kiGrund.split(" | ") : [])).map((g) => g.replace(/„.*“/, "„…“")))}`);
+}
 lines.push(`- Prüfung Erst-Nachricht fehlgeschlagen: ${results.filter((r) => r.problem).length}${results.filter((r) => r.problem).map((r) => ` (${r.name}: ${r.problem})`).join("")}`);
 lines.push(`- Nachfassen: ${count(results.map((r) => r.nachfassenArt.replace(/\(stufe_\w+\)/, "(Stufe ausgeschlossen)")))}`);
 lines.push(`- Prüfung Nachfassen fehlgeschlagen: ${results.filter((r) => r.nachfassenProblem).length}${results.filter((r) => r.nachfassenProblem).map((r) => ` (${r.name}: ${r.nachfassenProblem})`).join("")}`);

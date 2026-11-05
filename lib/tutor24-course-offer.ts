@@ -61,7 +61,9 @@ export function followupForm(lead: LeadInfo | undefined, previewAnrede: string):
     return formFor({ wer: lead.wer as Addressee["wer"], anrede: lead.anrede === "du" ? "du" : "Sie", kind }, lead.sprache);
   }
   if (lead?.sprache === "en") return { typ: "en" };
-  return previewAnrede === "du" ? { typ: "du" } : { typ: "neutral" };
+  // Anrede wie in der ersten Nachricht an die Person (gespeichert); die Vorschau-Analyse nur, wenn nichts gespeichert ist.
+  const anrede = lead?.anrede || previewAnrede;
+  return anrede === "du" ? { typ: "du" } : { typ: "neutral" };
 }
 
 const sprache = (f: Form): Sprache => (f.typ === "en" ? "en" : "de");
@@ -192,7 +194,9 @@ const FACH_EN: Record<string, string> = { Mathe: "maths", Physik: "physics", Che
  * auf die Erst-Nachricht, statt ein "neues Angebot" zu behaupten.
  */
 export function buildFollowup(kind: FollowupKind, f: Form, name: string, course: Course | null, privatePrice: number): string {
-  const hello = `${greeting(f)}${name.trim() ? ` ${name.trim()}` : ""},`;
+  // Name nur in der du-Fassung: bei Eltern/unklar ist der Kontoname oft das Kind ("Guten Tag Alen, … für Ihren Sohn").
+  // Englisch/Franzoesisch kennen die Unterscheidung nicht → ohne Name, wie die Erst-Nachricht.
+  const hello = `${greeting(f)}${f.typ === "du" && name.trim() ? ` ${name.trim()}` : ""},`;
   // Franzoesisch (und jede Art ohne Kurs): einfaches Nachfassen, vous-Form wie die Erst-Nachricht.
   if (f.typ === "fr" || kind === "einfach" || !course) {
     const body =
@@ -274,7 +278,19 @@ const SIE_FORM = new RegExp("(?<!\\p{L})(Sie|Ihnen|Ihr|Ihre|Ihren|Ihrem|Ihrer)(?
 const CHILD_NOUN = new RegExp("(?<!\\p{L})(Ihr(?:e|en|em|er)?) (Kind|Kinder|Sohn|Tochter)(?!\\p{L})", "gu");
 
 /** Pruefung des persoenlichen KI-Satzes; null = in Ordnung. */
-export function sentenceProblem(s: string, f: Form): string | null {
+/**
+ * Ziele, die der Satz nur nennen darf, wenn das Inserat sie nennt (sonst erfindet die KI z.B. "Matura" bei Sek-Inseraten).
+ * satz: woran der Satz das Ziel nennt; inserat: woran das Inserat es nennt.
+ */
+const GOALS: Array<{ name: string; satz: RegExp; inserat: RegExp }> = [
+  { name: "Matura", satz: /matur/i, inserat: /matur/i },
+  { name: "BM", satz: new RegExp("(?<!\\p{L})bm(?!\\p{L})|berufsmatur", "iu"), inserat: new RegExp("(?<!\\p{L})bms?\\d?(?!\\p{L})|berufsmatur", "iu") },
+  { name: "Gymiprüfung", satz: /gymipr|aufnahmepr|entrance exam/i, inserat: /gymipr|aufnahmepr|\bzap\b|entrance exam|(ins|ans|aufs) (gymi|gymnasium|kanti|langgymi|kurzgymi)|kanti-?pr/i },
+  { name: "Probezeit", satz: /probezeit|probation/i, inserat: /probezeit|probation/i },
+];
+
+/** Pruefung des persoenlichen KI-Satzes; null = in Ordnung. inserat: Titel, Stufe und Text (fuer erfundene Ziele). */
+export function sentenceProblem(s: string, f: Form, inserat?: string): string | null {
   const t = s.trim();
   if (!t) return "leer";
   if (t.split(/\s+/).length > 45) return "zu lang";
@@ -282,8 +298,15 @@ export function sentenceProblem(s: string, f: Form): string | null {
   if (/\b(ETH|12 Jahre|12 years|Plattform|platform|Mathetogo|Google Meet|Gruppe|group|Kurs|course|CHF|Preis|price)\b/i.test(t)) return "wiederholt festen Text oder Kurs";
   // Der feste Text davor beginnt schon mit "gerne unterstütze ich …" / "I would be happy to help".
   if (/^(gerne|ich|i would|i'd)\b|unterstütze ich|happy to help/i.test(t)) return "wiederholt den Anfang";
+  if (inserat !== undefined) {
+    const invented = GOALS.find((g) => g.satz.test(t) && !g.inserat.test(inserat));
+    if (invented) return `nennt „${invented.name}“, das Inserat aber nicht`;
+  }
   return anredeProblem(t, f);
 }
+
+/** Text des Inserats fuer die Ziel-Pruefung. */
+export const listingText = (l: { title: string; schulstufe: string; description: string }) => `${l.title}\n${l.schulstufe}\n${l.description}`;
 
 function anredeProblem(text: string, f: Form): string | null {
   // Englisch/Franzoesisch: keine du/Sie-Pruefung (franzoesisch "du" ist ein Artikel).
@@ -352,13 +375,16 @@ export function planFirstMessage(
   const addressee = detectAddressee(info.description);
   const form = formFor(addressee, spracheListing);
   const offer = pickCourse(analysis, courses, settings, log, now);
-  return { analysis, addressee, form, offer, course: offer.kind === "kurs" ? offer.course : null, privatePrice: settings.privatePricePerLesson };
+  return {
+    analysis, addressee, form, offer, course: offer.kind === "kurs" ? offer.course : null,
+    privatePrice: settings.privatePricePerLesson, inserat: listingText(info),
+  };
 }
 
 /** Text zusammensetzen; besteht er die Pruefung mit Kurs nicht, ohne Kurs, sonst mit Rueckfall-Satz. */
 export function assembleFirstMessage(plan: ReturnType<typeof planFirstMessage>, personal: string | null) {
   const fallback = fallbackSentence(plan.analysis, plan.form);
-  const kiOk = personal && !sentenceProblem(personal, plan.form);
+  const kiOk = personal && !sentenceProblem(personal, plan.form, plan.inserat);
   const sentence = kiOk ? personal! : fallback;
   for (const course of plan.course ? [plan.course, null] : [null]) {
     for (const s of kiOk ? [sentence, fallback] : [fallback]) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectLanguageFromText, resolveTargetLanguage } from "./tutor24-messaging";
+import { detectLanguageFromText, resolveTargetLanguage, scoreTextLanguage } from "./tutor24-messaging";
 
 const URL_DE = "https://www.tutor24.ch/de/jobs/1";
 const lang = (title: string, body: string) => resolveTargetLanguage(URL_DE, "de", title, body).language;
@@ -41,5 +41,11 @@ describe("Spracherkennung: nur de, en, fr — im Zweifel Deutsch", () => {
   it("ohne Text entscheidet die URL", () => {
     expect(detectLanguageFromText("", "")).toBeNull();
     expect(resolveTargetLanguage("https://www.tutor24.ch/fr/jobs/1", "de", "", "").language).toBe("fr");
+  });
+});
+
+describe("Signalwoerter", () => {
+  it("'je nach Bedarf' zaehlt nicht als Franzoesisch", () => {
+    expect(scoreTextLanguage("Gelegentlich, je nach Bedarf. Wir suchen Nachhilfe.").fr).toBe(0);
   });
 });

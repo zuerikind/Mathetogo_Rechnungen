@@ -14,6 +14,7 @@ import {
   courseStats,
   isCourseGroup,
   isOfferLevel,
+  isPrimar,
   pickCourse,
   splitList,
   type Course,
@@ -84,6 +85,14 @@ export async function loadLeadInfo(): Promise<LeadMap> {
     if (l.inseratId) out[`inserat:${l.inseratId}`] = info;
   }
   return out;
+}
+
+/** Anrede von Hand korrigiert (Vorschau/Pipeline): auch bei der Person speichern. */
+export async function setLeadAnrede(conversationId: string, anrede: "du" | "Sie"): Promise<void> {
+  const lead = await prisma.tutor24Lead.findUnique({ where: { conversationId } });
+  if (!lead) return;
+  const wer = anrede === "du" ? "schueler" : lead.wer === "schueler" ? "unklar" : lead.wer;
+  await prisma.tutor24Lead.update({ where: { id: lead.id }, data: { anrede, wer } });
 }
 
 /** Protokoll-Felder → Lead-Felder (geantwortet, Antwort, Markierung, Kurs). */
@@ -174,8 +183,11 @@ export async function appendVariante(key: string, suffix: string): Promise<void>
  * Wer schon da ist (z.B. aus der Erst-Nachricht), behaelt seine Analyse; ergaenzt wird nur die Konversation.
  */
 export async function syncPreviewLeads(rows: PreviewRow[], settings: FollowupSettings): Promise<{ neu: number; geaendert: number }> {
+  // Dazu die ausgeschlossenen Primar-Faelle (nur fuer die Zaehlung auf /kurse, nie Liste oder Nachricht).
   const wanted = rows.filter(
-    (r) => isOfferLevel(r.kategorie) && !r.ausschluss && splitList(r.faecher).some((f) => settings.mySubjects.includes(f))
+    (r) =>
+      (isOfferLevel(r.kategorie) && !r.ausschluss && splitList(r.faecher).some((f) => settings.mySubjects.includes(f))) ||
+      isPrimar(r.kategorie, r.stufe, r.begruendung)
   );
   const all = await prisma.tutor24Lead.findMany({ select: { id: true, conversationId: true, inseratId: true, quelle: true, listingHash: true, createdAt: true } });
   const byConvo = new Map(all.filter((l) => l.conversationId).map((l) => [l.conversationId as string, l]));
@@ -213,7 +225,11 @@ export async function syncPreviewLeads(rows: PreviewRow[], settings: FollowupSet
     if (!hit.conversationId && !byConvo.has(r.conversation_id)) data.conversationId = r.conversation_id;
     if (!hit.inseratId && r.inserat_id && !byInserat.has(r.inserat_id)) data.inseratId = r.inserat_id;
     // Analyse nur neu, wenn sie aus dem Nachfassen stammt und sich das Ergebnis geaendert hat.
-    if (hit.quelle === "nachfassen" && hit.listingHash !== fields.listingHash) Object.assign(data, fields);
+    // Anrede, Sprache, Wer und Kind bleiben wie in der ersten Nachricht an die Person — nie ueberschreiben.
+    if (hit.quelle === "nachfassen" && hit.listingHash !== fields.listingHash) {
+      const { wer: _w, anrede: _a, kind: _k, sprache: _s, ...rest } = fields;
+      Object.assign(data, rest);
+    }
     if (hit.quelle === "nachfassen" && contacted && contacted < hit.createdAt) data.createdAt = contacted;
     if (Object.keys(data).length) {
       await prisma.tutor24Lead.update({ where: { id: hit.id }, data });
@@ -304,7 +320,7 @@ export type LeadRow = {
   id: string; name: string; createdAt: Date; inseratId: string | null; conversationId: string | null; quelle: string;
   stufe: string; kategorie: string; kursgruppe: string; sicherheit: string; ausschluss: string; faecher: string; anlass: string;
   ort: string; ortsname: string; wer: string; anrede: string; kind: string | null; sprache: string; kursId: string | null;
-  freigabeKursId: string | null; status: string; geantwortet: string; einzelunterricht: boolean;
+  freigabeKursId: string | null; status: string; geantwortet: string; einzelunterricht: boolean; auszug?: string;
 };
 
 /** Reine Rechnung der Interessentenliste aus Lead-Zeilen. */
@@ -318,7 +334,16 @@ export function buildInterestList(leads: LeadRow[], courses: Course[], settings:
   const groups = new Map<string, InterestGroup>();
   const passend = new Map<string, { passend: number; freigegeben: number }>();
 
+  const primar = new Map<string, number[]>();
   for (const l of leads) {
+    if (isPrimar(l.kategorie, l.stufe, l.auszug ?? "")) {
+      const key = l.stufe || "Primarschule";
+      const row = primar.get(key) ?? weeks.map(() => 0);
+      const w = weeks.indexOf(weekStart(l.createdAt));
+      if (w > -1) row[w]++;
+      primar.set(key, row);
+      continue;
+    }
     if (!isOfferLevel(l.kategorie) || l.ausschluss) continue;
     const mine = splitList(l.faecher).filter((f) => settings.mySubjects.includes(f));
     if (!mine.length) continue;
@@ -380,7 +405,12 @@ export function buildInterestList(leads: LeadRow[], courses: Course[], settings:
       const p = passend.get(c.id) ?? { passend: 0, freigegeben: 0 };
       return { courseId: c.id, angeboten: st.angeschrieben, geantwortet: st.geantwortet, angemeldet: st.zusagen, frei: Math.max(0, capacity(c) - st.zusagen), ...p };
     });
-  return { weeks, groups: Array.from(groups.values()).sort((a, b) => b.sicher - a.sicher || b.unsicher - a.unsicher || b.tief - a.tief), funnel };
+  // Primar: nur Zahlen pro Stufe (tutor24-Feld "Schulstufe") und Woche, letzte 8 Wochen.
+  const primarRows = Array.from(primar.entries())
+    .map(([stufe, perWeek]) => ({ stufe, perWeek, total: perWeek.reduce((a, b) => a + b, 0) }))
+    .filter((r) => r.total > 0)
+    .sort((a, b) => b.total - a.total);
+  return { weeks, groups: Array.from(groups.values()).sort((a, b) => b.sicher - a.sicher || b.unsicher - a.unsicher || b.tief - a.tief), funnel, primar: primarRows };
 }
 
 /** Status-Knoepfe pro Person und pro Liste. freigabeKursId: ich gebe die Person fuer diesen Kurs frei (null = zurueck). */

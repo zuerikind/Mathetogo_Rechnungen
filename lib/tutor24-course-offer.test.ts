@@ -145,7 +145,10 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
   it("gleicher Gruss, gleiche Signatur, wortgleicher Kursblock", () => {
     const n = buildFollowup("angebot", eltern, "Petra", matura(), 89);
     expect(erst.startsWith("Guten Tag,")).toBe(true);
-    expect(n.startsWith("Guten Tag Petra,")).toBe(true);
+    // Name im Gruss nur in der du-Fassung
+    expect(n.startsWith("Guten Tag,\n\n")).toBe(true);
+    expect(buildFollowup("angebot", { typ: "neutral" }, "Petra", matura(), 89).startsWith("Guten Tag,\n\n")).toBe(true);
+    expect(buildFollowup("angebot", { typ: "du" }, "Lea", matura(), 89).startsWith("Hallo Lea,\n\n")).toBe(true);
     expect(erst.endsWith("Liebi Grüess\nOmid")).toBe(true);
     expect(n.endsWith("Liebi Grüess\nOmid")).toBe(true);
     const block = courseBlock(matura(), 89);
@@ -191,7 +194,7 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
     expect(fr).toMatchObject({ send: true, kind: "einfach", course: null });
     const frText = followupMessage("einfach", followupForm(lead({ sprache: "fr" }), "Sie"), "Claire", null, 89);
     expect(frText.problem).toBeNull();
-    expect(frText.text).toMatch(/^Bonjour Claire,\n\nJe vous avais contacté il y a quelque temps/);
+    expect(frText.text).toMatch(/^Bonjour,\n\nJe vous avais contacté il y a quelque temps/);
     expect(frText.text.endsWith("Meilleures salutations\nOmid")).toBe(true);
     expect(frText.text).not.toContain("CHF");
     // Aeltere Kontakte ohne Erst-Nachricht in der Datenbank: wie bisher
@@ -240,7 +243,7 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
     expect(m.text).toContain(courseBlock(matura(), 89, "en"));
     expect(m.text.endsWith("Best regards\nOmid")).toBe(true);
     const n = followupMessage("erinnerung", { typ: "en" }, "Sam", matura(), 89);
-    expect(n.text).toMatch(/^Hello Sam,\n\nI got in touch with you a while ago/);
+    expect(n.text).toMatch(/^Hello,\n\nI got in touch with you a while ago/);
     expect(n.problem).toBeNull();
     // Englischer Kursname, falls gesetzt; sonst der deutsche
     const en = matura({ nameEn: "Matura maths preparation course" });
@@ -248,5 +251,47 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
     expect(courseBlock(en, 89, "de")).toContain("einen Mathe-Vorbereitungskurs für die Matura");
     expect(followupMessage("erinnerung", { typ: "en" }, "Sam", en, 89).text).toContain("mentioned the Matura maths preparation course");
     expect(courseBlock(matura(), 89, "en")).toContain("offering a Mathe-Vorbereitungskurs für die Matura");
+  });
+});
+
+describe("Entscheidungen 5.11.", () => {
+  it("BM2 mit Schulstufe 'Erwachsenenbildung' (Andrea) ist BM, nicht ausgeschlossen", () => {
+    const andrea: ListingInfo = {
+      title: "Nachhilfe – sind Sie dabei?",
+      fach: "Mathematik",
+      schulstufe: "Sekundarstufe und Erwachsenenbildung",
+      description: "Ich besuche momentan die Berufsmaturität (BM2) Vollzeit in Thun und suche regelmässige Nachhilfe, hauptsächlich in Mathematik.",
+    };
+    const bm = { ...newCourse("Mathe", "bm", NOW), id: "b1", active: true, deadline: "2026-11-14" };
+    const p = planFirstMessage(andrea, [bm], settings, [], NOW);
+    expect(p.analysis.kategorie).toBe("bm");
+    expect(p.analysis.ausschluss).toBe("");
+    expect(p.offer.kind).toBe("kurs");
+    // Schulkurse bleiben fuer Erwachsene ausgeschlossen
+    const erw = planFirstMessage({ ...andrea, schulstufe: "Erwachsenenbildung", description: "Ich möchte meine Mathe-Kenntnisse auffrischen." }, [matura()], settings, [], NOW);
+    expect(erw.offer.kind).toBe("nichts");
+  });
+
+  it("KI-Satz darf kein Ziel erfinden, das nicht im Inserat steht", () => {
+    const neutral = { typ: "neutral" } as const;
+    const sek = "Nachhilfe Mathe\nSekundarstufe\nMein Kind ist in der 2. Sek und braucht Hilfe in Algebra.";
+    expect(sentenceProblem("Für die Vorbereitung auf die Matura können gezielte Übungen helfen.", neutral, sek)).toMatch(/Matura/);
+    expect(sentenceProblem("Für die Vorbereitung auf die Gymiprüfung braucht es Übung.", neutral, sek)).toMatch(/Gymiprüfung/);
+    expect(sentenceProblem("Gerade bei der Algebra der 2. Sek helfen gezielte Übungen.", neutral, sek)).toBeNull();
+    // steht das Ziel im Inserat, ist es erlaubt
+    expect(sentenceProblem("Für die Vorbereitung auf die Matura helfen gezielte Übungen.", neutral, "Gymnasium\nIch mache dieses Jahr Matura.")).toBeNull();
+    expect(sentenceProblem("Für die BM-Prüfung helfen gezielte Übungen.", neutral, "Ich mache die BM2 in Thun.")).toBeNull();
+    // ohne Inserat-Text (alte Aufrufe) keine Ziel-Pruefung
+    expect(sentenceProblem("Für die Vorbereitung auf die Matura helfen gezielte Übungen.", neutral)).toBeNull();
+  });
+
+  it("Anrede bleibt wie in der ersten Nachricht (gespeichert), Vorschau nur bei fehlender Angabe", () => {
+    const stored = (anrede: string): LeadInfo => ({
+      quelle: "nachfassen", status: "offen", wer: "unklar", kind: null, anrede, sprache: "de",
+      erstKursId: null, erstKursDaten: null, freigabeKursId: null, nachgefasst: false,
+    });
+    expect(followupForm(stored("Sie"), "du")).toEqual({ typ: "neutral" });
+    expect(followupForm(stored("du"), "Sie")).toEqual({ typ: "du" });
+    expect(followupForm(stored(""), "du")).toEqual({ typ: "du" });
   });
 });

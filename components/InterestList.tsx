@@ -8,6 +8,7 @@ type Data = {
   weeks: string[];
   groups: InterestGroup[];
   funnel: CourseFunnel[];
+  primar: Array<{ stufe: string; perWeek: number[]; total: number }>;
   courses: Array<{ id: string; name: string; active: boolean; gruppe: string; fach: string }>;
 };
 
@@ -135,6 +136,35 @@ export function InterestList() {
           ))}
         </tbody>
       </table>
+
+      {data.primar.length > 0 && (
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-gray-700">Primarstufe (ausgeschlossen, nur gezählt)</h3>
+          <p className="text-xs text-gray-400">Kein Kurs, keine Nachricht, nicht in der Interessentenliste — nur wie gross die Nachfrage ist.</p>
+          <table className="mt-2 w-full text-left text-xs">
+            <thead className="text-gray-400">
+              <tr>
+                <th className="py-1 pr-3 font-medium">Stufe (laut Inserat)</th>
+                <th className="py-1 pr-3 font-medium">total</th>
+                {data.weeks.map((w) => (
+                  <th key={w} className="py-1 pr-2 text-right font-medium">{kw(w)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50 text-gray-700">
+              {data.primar.map((p) => (
+                <tr key={p.stufe}>
+                  <td className="py-1 pr-3">{p.stufe}</td>
+                  <td className="py-1 pr-3 font-semibold">{p.total}</td>
+                  {p.perWeek.map((n, i) => (
+                    <td key={i} className={`py-1 pr-2 text-right ${n ? "" : "text-gray-300"}`}>{n}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
