@@ -30,9 +30,11 @@ config({ path: ".env.local" });
 
 const SEND = process.argv.includes("--send");
 const compareArg = process.argv.indexOf("--compare");
+// --replycheck <n>: nur lesend, Stichprobe von n Chats mit und n ohne Aktivitaet → antwortpruefung.md
+const checkArg = process.argv.indexOf("--replycheck");
 // --course <id>: Senden/Antworten prüfen nur für diesen Kurs
 const courseArg = process.argv.indexOf("--course");
-const maxArg = compareArg > -1 ? compareArg : process.argv.indexOf("--max");
+const maxArg = compareArg > -1 ? compareArg : checkArg > -1 ? checkArg : process.argv.indexOf("--max");
 const maxChecks = maxArg > -1 ? Number(process.argv[maxArg + 1]) : 150;
 if (!Number.isInteger(maxChecks) || maxChecks < 1) {
   console.error("--max/--compare brauchen eine ganze Zahl ≥ 1, z.B. --max 150 oder --compare 20");
@@ -41,7 +43,7 @@ if (!Number.isInteger(maxChecks) || maxChecks < 1) {
 
 try {
   await runFollowup({
-    mode: SEND ? "send" : process.argv.includes("--replies") ? "replies" : compareArg > -1 ? "compare" : "preview",
+    mode: SEND ? "send" : process.argv.includes("--replies") ? "replies" : compareArg > -1 ? "compare" : checkArg > -1 ? "replycheck" : "preview",
     maxChecks,
     courseId: courseArg > -1 ? process.argv[courseArg + 1] : undefined,
     headless: !process.argv.includes("--headed"),

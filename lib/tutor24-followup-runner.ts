@@ -20,7 +20,8 @@
  * unerwartetem Seitenaufbau. Mit der Erst-Nachrichten-Automation geteilt werden
  * nur der Login (lib/tutor24-messaging.ts) und die Sperre (lib/tutor24-lock.ts).
  */
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Page } from "playwright";
 import { followupJobState as state } from "./automation-state";
 import {
@@ -57,6 +58,7 @@ import {
   COMPARE_COLS,
   COMPARE_PATH,
   ERRORS_PATH,
+  FOLLOWUP_DIR,
   PREVIEW_PATH,
   TIMING_COLS,
   TIMING_PATH,
@@ -90,6 +92,7 @@ import {
 
 /** Abbruch ohne Umgehungsversuch: Captcha, Login-Problem, Fehlerseite, unerwarteter Aufbau, Stopp. */
 export class StopRun extends Error {}
+const REPLY_CHECK_PATH = join(FOLLOWUP_DIR, "antwortpruefung.md");
 /** Eine einzelne Seite war nicht lesbar: als "fehler" speichern, naechster Lauf prueft erneut. */
 class ReadError extends Error {}
 /** So viele Lesefehler in Folge deuten auf einen geaenderten Seitenaufbau: dann abbrechen. */
@@ -690,6 +693,97 @@ async function replies(page: Page, log: Log, courseId?: string): Promise<void> {
 }
 
 /**
+ * Nur lesend: erkennt die Liste "Gesendet" wirklich jede Antwort? Vergleicht
+ * (1) welche Tabs es gibt und ob Konversationen nur ausserhalb von "Gesendet" stehen,
+ * (2) das Listen-Urteil (hasNewActivity) mit dem geoeffneten Chat fuer eine Stichprobe.
+ * Ergebnis: tutor24-followup/antwortpruefung.md. Sendet nichts, aendert keine Vorschau.
+ */
+async function replyCheck(page: Page, sample: number, log: Log): Promise<void> {
+  await visit(page, `${TUTOR24_BASE_URL}/de/conversations`, "liste", () =>
+    waitFor(page, "Konversationen", () => page.waitForSelector('a[href*="conversations?tab="]', { timeout: 15_000 }),
+      () => new StopRun("Unerwarteter Seitenaufbau: keine Tabs auf der Konversationsseite."))
+  );
+  await assertPageOk(page, "Konversationen");
+  const tabs = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('a[href*="conversations?tab="]')).map((a) => ({
+      tab: new URL((a as HTMLAnchorElement).href).searchParams.get("tab") ?? "",
+      label: (a as HTMLElement).innerText.replace(/\s+/g, " ").trim(),
+    }))
+  );
+  const tabNames = Array.from(new Set(tabs.map((t) => t.tab).filter(Boolean)));
+  log(`Tabs: ${tabs.map((t) => `${t.tab} („${t.label}“)`).join(", ")}`);
+
+  // Frisch laden (eigener, geleerter Zwischenspeicher): nichts darf aus alten Laeufen kommen.
+  const lists: Record<string, ListEntry[]> = {};
+  for (const tab of tabNames) {
+    saveListCache(`check:${tab}`, {});
+    lists[tab] = (await collectList(page, tab, `check:${tab}`, log, { maxAgeDays: MAX_AGE_DAYS + 1 })).entries;
+  }
+  const sent = lists.sent ?? [];
+  const sentIds = new Set(sent.map((e) => e.id));
+  const elsewhere = tabNames
+    .filter((t) => t !== "sent")
+    .map((t) => ({ tab: t, only: (lists[t] ?? []).filter((e) => !sentIds.has(e.id)) }));
+
+  // Bekannte Antworten aus der Datenbank: stehen sie in "Gesendet" und erkennt die Liste sie?
+  const leads = await loadLog();
+  const knownReplied = leads.filter((r) => r.geantwortet === "ja" && !r.conversation_id.startsWith("inserat:"));
+  const byId = new Map(sent.map((e) => [e.id, e]));
+  const repliedMissing = knownReplied.filter((r) => !byId.has(r.conversation_id));
+
+  // Stichprobe: alle, die laut Liste Aktivitaet haben (bis `sample`), und gleich viele ohne.
+  const active = sent.filter((e) => hasNewActivity(e)).slice(0, sample);
+  const quiet = sent.filter((e) => !hasNewActivity(e)).sort(() => Math.random() - 0.5).slice(0, sample);
+  const rows: { id: string; name: string; liste: string; chat: string; ok: boolean }[] = [];
+  const all = [...active, ...quiet];
+  state.total = all.length;
+  for (let i = 0; i < all.length; i++) {
+    const e = all[i];
+    checkStop();
+    state.done = i;
+    state.progress = `Stichprobe ${i + 1} von ${all.length}`;
+    timing.convos++;
+    try {
+      const c = await readConversation(page, e.id);
+      const answered = c.theirs > 0 || c.service.some((t) => /nicht an ihrer bewerbung interessiert/i.test(t));
+      const listSays = hasNewActivity(e);
+      rows.push({ id: e.id, name: e.name, liste: listSays ? "Aktivität" : "keine", chat: answered ? "Antwort/Absage" : "keine Antwort", ok: listSays === answered || (listSays && !answered) });
+    } catch (err) {
+      if (!(err instanceof ReadError)) throw err;
+      rows.push({ id: e.id, name: e.name, liste: hasNewActivity(e) ? "Aktivität" : "keine", chat: "Lesefehler", ok: false });
+    }
+  }
+  // Gefaehrlich ist nur: Liste sagt "keine", Chat hat eine Antwort (dann wuerde nachgefasst).
+  const missed = rows.filter((r) => r.liste === "keine" && r.chat === "Antwort/Absage");
+  const extra = rows.filter((r) => r.liste === "Aktivität" && r.chat === "keine Antwort");
+  const md = [
+    `# Antwortprüfung (nur lesend) — ${new Date().toLocaleString("de-CH")}`,
+    "",
+    `Tabs: ${tabs.map((t) => `\`${t.tab}\` („${t.label}“)`).join(", ")}`,
+    ...tabNames.map((t) => `- ${t}: ${(lists[t] ?? []).length} Konversationen (letzte ${MAX_AGE_DAYS + 1} Tage bzw. bis Listenende)`),
+    "",
+    "## Stehen Konversationen nur ausserhalb von „Gesendet“?",
+    ...elsewhere.map((x) => `- ${x.tab}: ${x.only.length} nicht in „Gesendet“${x.only.length ? ` (${x.only.slice(0, 10).map((e) => e.id).join(", ")}${x.only.length > 10 ? " …" : ""})` : ""}`),
+    "",
+    `## Bekannte Antworten aus der Datenbank: ${knownReplied.length}, davon nicht in „Gesendet“: ${repliedMissing.length}`,
+    ...repliedMissing.map((r) => `- ${r.conversation_id}`),
+    "",
+    `## Stichprobe: Liste gegen geöffneten Chat (${rows.length} Chats)`,
+    `- **Übersehene Antworten (Liste „keine“, Chat hat Antwort): ${missed.length}**`,
+    `- Liste meldet Aktivität ohne Antwort (harmlos, nur zusätzliches Öffnen): ${extra.length}`,
+    `- Lesefehler: ${rows.filter((r) => r.chat === "Lesefehler").length}`,
+    "",
+    "| Konversation | Liste | Chat |",
+    "|---|---|---|",
+    ...rows.map((r) => `| ${r.id} | ${r.liste} | ${r.chat}${r.ok ? "" : " ⚠"} |`),
+    "",
+  ].join("\n");
+  writeFileSync(REPLY_CHECK_PATH, md);
+  state.done = all.length;
+  log(`══ Antwortprüfung: ${missed.length} übersehen, ${extra.length} zusätzlich, ${repliedMissing.length} bekannte Antworten nicht in „Gesendet“. Bericht: ${REPLY_CHECK_PATH}. NICHTS gesendet. ══`);
+}
+
+/**
  * Vergleich fuer "Inserat nur bei Bedarf": N Konversationen, deren Inserat der Probelauf schon
  * gelesen hat, beide Varianten auswerten. Schreibt nur compare.csv, aendert die Vorschau nicht.
  */
@@ -749,7 +843,7 @@ async function compare(page: Page, n: number, log: Log): Promise<void> {
 }
 
 export type FollowupRunOptions = {
-  mode: "preview" | "send" | "replies" | "compare";
+  mode: "preview" | "send" | "replies" | "compare" | "replycheck";
   /** Probelauf: hoechstens so viele Konversationen oeffnen; Vergleich: so viele vergleichen */
   maxChecks?: number;
   /** Senden/Antworten prüfen: nur dieser Kurs; ohne Angabe alle */
@@ -803,6 +897,7 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
       opts.mode === "send" ? "Nachfassen (Senden)"
         : opts.mode === "replies" ? "Nachfassen (Antworten prüfen)"
         : opts.mode === "compare" ? "Nachfassen (Vergleich)"
+        : opts.mode === "replycheck" ? "Antwortprüfung (nur lesend)"
         : "Nachfassen (Probelauf)"
     );
   } catch (err) {
@@ -848,6 +943,7 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
     if (opts.mode === "send") await send(page, log, opts.courseId);
     else if (opts.mode === "replies") await replies(page, log, opts.courseId);
     else if (opts.mode === "compare") await compare(page, opts.maxChecks ?? 20, log);
+    else if (opts.mode === "replycheck") await replyCheck(page, opts.maxChecks ?? 30, log);
     else await preview(page, opts.maxChecks ?? 150, log);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
