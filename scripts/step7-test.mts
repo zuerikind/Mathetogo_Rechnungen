@@ -265,7 +265,7 @@ if (withCourse) {
 }
 if (withoutCourse) {
   const g = withoutCourse.kursgruppe as import("../lib/tutor24-followup").CourseGroup;
-  const fach = F.splitList(withoutCourse.plan.analysis.faecher)[0] ?? "Mathe";
+  const fach = F.splitList(withoutCourse.plan.analysis.faecher).find((f) => settings.mySubjects.includes(f)) ?? "Mathe";
   const nc: Course = { ...F.newCourse(fach, g, NOW), id: "test-neu", active: true };
   const cs3 = [...courses, nc];
   const before = followup(withoutCourse.row, withoutCourse.leadInfo, cs3);
