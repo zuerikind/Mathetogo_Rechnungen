@@ -140,10 +140,10 @@ describe("Telegram-Bot", () => {
     expect(c.state.modus).toBe("aus");
   });
 
-  it("naechster geplanter Lauf 9/13/18 Uhr", () => {
+  it("naechster geplanter Lauf 9 und 17 Uhr", () => {
     expect(nextScheduled(new Date(2026, 10, 5, 8, 0)).getHours()).toBe(9);
-    expect(nextScheduled(new Date(2026, 10, 5, 13, 0)).getHours()).toBe(13);
-    expect(nextScheduled(new Date(2026, 10, 5, 18, 1))).toEqual(new Date(2026, 10, 6, 9, 0));
+    expect(nextScheduled(new Date(2026, 10, 5, 13, 0)).getHours()).toBe(17);
+    expect(nextScheduled(new Date(2026, 10, 5, 17, 1))).toEqual(new Date(2026, 10, 6, 9, 0));
   });
 
   it("/status nach einem normalen Lauf", () => {
@@ -152,6 +152,6 @@ describe("Telegram-Bot", () => {
     expect(t).toContain("🟢 <b>Automatik eingeschaltet</b>");
     expect(t).toContain("<b>Ergebnis</b> Ohne Fehler · 1 neue Antwort");
     expect(t).toContain("<b>Gesendete Nachrichten</b> 6 (Erst-Nachricht 4 · Nachfassen 2)");
-    expect(t).toMatch(/<b>Nächster geplanter Lauf<\/b> Do\.?,? 05\.11\.2026,? 18:00/);
+    expect(t).toMatch(/<b>Nächster geplanter Lauf<\/b> Do\.?,? 05\.11\.2026,? 17:00/);
   });
 });

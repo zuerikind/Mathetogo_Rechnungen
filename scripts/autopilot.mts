@@ -1,5 +1,5 @@
 /**
- * Ein Durchgang der tutor24-Automatik (Windows-Aufgabenplanung 9/13/18 Uhr, scripts/autopilot.cmd):
+ * Ein Durchgang der tutor24-Automatik (Windows-Aufgabenplanung 9 und 17 Uhr, scripts/autopilot.cmd):
  *   neue Inserate → Erst-Nachrichten → Kandidaten suchen → Antworten prüfen → fälliges Nachfassen.
  *
  *   npx tsx scripts/autopilot.mts                  Modus aus tutor24-followup/autopilot.json (aus/probe/an)
@@ -15,7 +15,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 const {
-  RATE_LIMIT_TEXT, activePause, appendPassLog, daySummary, emptyCounts, errorKey, firstName, fmtZurich, inSendWindow, is429, isBusy,
+  RATE_LIMIT_TEXT, SUMMARY_FROM_HOUR, activePause, appendPassLog, daySummary, emptyCounts, errorKey, firstName, fmtZurich, inSendWindow, is429, isBusy,
   loadAutopilot, localDay, nextScheduled, notify, passResult, passSummary, rateLimitUntil, readPassLog, shortError, stopReason, updateAutopilot,
 } = await import("../lib/tutor24-autopilot");
 const { loadCourses, loadLeadInfo, loadLog, loadSettings, sentToday } = await import("../lib/tutor24-followup-store");
@@ -99,7 +99,8 @@ try {
     log(`Nachfassen: höchstens ${nachLimit}, frühestens ${settings.nachfassNachTagen} Tage nach der Erst-Nachricht …`);
     await runFollowup({
       mode: "auto",
-      maxChecks: max ?? 150,
+      // ponytail: 40 neue/geaenderte Chats pro Durchgang reichen bei ~20 Erst-Nachrichten am Tag; der Rest folgt beim naechsten
+      maxChecks: max ?? 40,
       headless: true,
       onLog: (l) => console.log(`  ${l}`),
       auto: {
@@ -147,7 +148,8 @@ if (reason) {
   const until = rateLimitUntil([pass]);
   await notify(
     is429(reason) && until
-      ? `${P}⛔ ${RATE_LIMIT_TEXT}\nAutomatik ist AUS. Frühester nächster Lauf: ${fmtZurich(nextScheduled(until))}.\nWieder einschalten mit /enable oder auf /kurse.`
+      ? `${P}⛔ ${RATE_LIMIT_TEXT}\n429 um ${fmtZurich(new Date(pass.ende))}. Pausiert bis ${fmtZurich(until)}; vorher startet kein Lauf.\n` +
+        `Automatik ist AUS. Frühester geplanter Lauf nach dem Einschalten: ${fmtZurich(nextScheduled(until))}.\nWieder einschalten mit /enable oder auf /kurse.`
       : `${P}⛔ Automatik gestoppt: ${reason}\nWieder einschalten mit /enable oder auf /kurse.`
   );
 } else {
@@ -165,9 +167,9 @@ if (dryRun) {
   );
 }
 
-// Abend-Zusammenfassung: einmal pro Tag, ab dem 18-Uhr-Durchgang (nicht beim begrenzten Probelauf)
+// Abend-Zusammenfassung: einmal pro Tag, ab dem letzten geplanten Durchgang (nicht beim begrenzten Probelauf)
 const today = localDay();
-if (!max && new Date().getHours() >= 18 && loadAutopilot().zusammenfassungAm !== today) {
+if (!max && new Date().getHours() >= SUMMARY_FROM_HOUR && loadAutopilot().zusammenfassungAm !== today) {
   if (await notify(daySummary(today))) updateAutopilot({ zusammenfassungAm: today });
 }
 process.exit(0);

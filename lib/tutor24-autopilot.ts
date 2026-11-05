@@ -1,5 +1,5 @@
 /**
- * Automatik fuer tutor24 (scripts/autopilot.mts, Windows-Aufgabenplanung 9/13/18 Uhr):
+ * Automatik fuer tutor24 (scripts/autopilot.mts, Windows-Aufgabenplanung 9 und 17 Uhr):
  * Zustand (an/probe/aus), Protokoll pro Durchgang, Stopp-Regeln, Telegram-Meldungen.
  *
  * Der Zustand liegt bewusst NICHT in settings.json: /kurse speichert die Einstellungen aus einem
@@ -195,7 +195,10 @@ export const activePause = (passes: PassLog[], now = new Date()) => {
 };
 
 /** Geplante Laeufe (Windows-Aufgabe), Ortszeit des PCs = Europe/Zurich */
-export const RUN_HOURS = [9, 13, 18];
+// Start mit 2 statt 3 Durchgaengen (Entscheid 5.11. nach dem 429); muss zur Windows-Aufgabe passen.
+export const RUN_HOURS = [9, 17];
+/** Abend-Zusammenfassung ab dem letzten geplanten Durchgang */
+export const SUMMARY_FROM_HOUR = RUN_HOURS[RUN_HOURS.length - 1];
 /** Naechster geplanter Lauf ab `from` (inklusive). */
 export function nextScheduled(from: Date): Date {
   for (let day = 0; day < 3; day++)

@@ -9,7 +9,7 @@ const fmt = (iso: string) => new Date(iso).toLocaleString("de-CH", { dateStyle: 
 const inputClass = "w-16 rounded-lg border border-gray-200 px-2 py-1 text-sm disabled:bg-gray-50";
 
 /**
- * Automatik (scripts/autopilot.mts, 9/13/18 Uhr): Notbremse, Modus, Tageslimits, Protokoll.
+ * Automatik (scripts/autopilot.mts, 9 und 17 Uhr): Notbremse, Modus, Tageslimits, Protokoll.
  * Modus wird sofort gespeichert (eigene Datei); Limits und X gehoeren zu den Einstellungen ("Einstellungen speichern").
  */
 export function AutopilotPanel({
@@ -64,7 +64,7 @@ export function AutopilotPanel({
         </div>
       </div>
       <p className="mt-2 text-sm text-gray-500">
-        Läuft über die Windows-Aufgabenplanung um 9, 13 und 18 Uhr: neue Inserate → Erst-Nachrichten → Antworten prüfen → Nachfassen. Gesendet wird nur
+        Läuft über die Windows-Aufgabenplanung um 9 und 17 Uhr: neue Inserate → Erst-Nachrichten → Antworten prüfen → Nachfassen. Gesendet wird nur
         8–20 Uhr und nur im Modus AN. Automatisch nachgefasst werden nur sichere Fälle mit passendem offenem Kurs; Antworten schreibst immer du. Notbremse auch per Telegram: <b>/stop</b>.
       </p>
       {info.gestoppt && (

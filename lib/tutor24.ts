@@ -147,6 +147,7 @@ export async function runTutor24Messaging(
       result.log.push(`${ts()} ════ Suche: ${subject} ════`);
 
       await gotoTutor24(page, SEARCH_BASE, (s) => result.log.push(s));
+      await assertPageOk(page, "Suche");
       await sleep(1000);
 
       let subjectBaseUrl = searchUrl(subject, 1);
@@ -270,6 +271,7 @@ export async function runTutor24Messaging(
         } else {
           result.log.push(`${ts()} Lade ${listingUrl}`);
           await gotoTutor24(page, listingUrl, (s) => result.log.push(s));
+          await assertPageOk(page, `Suchseite ${pageNum}`);
         }
         await acceptTutor24Cookies(page, (s) => result.log.push(s));
 
@@ -309,6 +311,9 @@ export async function runTutor24Messaging(
               continue;
             }
 
+            // Automatik: 8–15 s zwischen Inseraten wie beim Nachfassen. Ohne Pause folgte am 5.11. ein 429
+            // (Inserate im Sekundentakt direkt nach 133 Aufrufen der Antwortpruefung).
+            if (auto && opened > 0) await sleep(8_000 + Math.random() * 7_000);
             opened++;
             result.log.push(`${ts()} [${tutor24Id}] Öffne ${href}`);
             await gotoTutor24(page, href, (s) => result.log.push(s));
