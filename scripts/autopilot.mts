@@ -16,7 +16,7 @@ const {
   appendPassLog, daySummary, emptyCounts, errorKey, shortError, firstName, inSendWindow, isBusy, loadAutopilot, localDay, notify,
   passSummary, stopReason, updateAutopilot,
 } = await import("../lib/tutor24-autopilot");
-const { loadCourses, loadLog, loadSettings, sentToday } = await import("../lib/tutor24-followup-store");
+const { loadCourses, loadLeadInfo, loadLog, loadSettings, sentToday } = await import("../lib/tutor24-followup-store");
 const { runFollowup } = await import("../lib/tutor24-followup-runner");
 const { runTutor24Messaging } = await import("../lib/tutor24");
 const { followupJobState } = await import("../lib/automation-state");
@@ -37,6 +37,8 @@ const pass = {
   start: new Date().toISOString(), ende: "", modus,
   erst: emptyCounts(), nachfassen: emptyCounts(), antworten: 0, fehler: [] as string[], stopp: null as string | null, probe: [] as string[],
 };
+/** neue Antworten laut Liste "Gesendet" (runFollowup auto) */
+const listReplies: { id: string; name: string; absage: boolean }[] = [];
 
 /** Vor jeder einzelnen Nachricht: Zeitfenster und Notbremse (Telegram /stop, Schalter auf /kurse). */
 const mayContinue = () => {
@@ -74,7 +76,7 @@ try {
       maxChecks: 150,
       headless: true,
       onLog: (l) => console.log(`  ${l}`),
-      auto: { limit: nachLimit, minAgeDays: settings.nachfassNachTagen, dryRun, mayContinue, counts: pass.nachfassen, probe: pass.probe },
+      auto: { limit: nachLimit, minAgeDays: settings.nachfassNachTagen, dryRun, mayContinue, counts: pass.nachfassen, probe: pass.probe, antworten: listReplies },
     });
   }
 } catch (err) {
@@ -90,14 +92,21 @@ try {
   }
 }
 
-// Antworten: sofort melden (nur Vorname, Kurs, Link)
+// Antworten: sofort melden (nur Vorname, Kurs, Link). Zwei Quellen: Liste "Gesendet" (alle, auch ohne Kurs)
+// und "Antworten prüfen" (Angeschriebene mit Kurs); pro Konversation nur eine Meldung.
 const courses = loadCourses();
-const fresh = (await loadLog()).filter((r) => r.geantwortet === "ja" && !repliedBefore.has(r.conversation_id));
-pass.antworten = fresh.length;
-for (const r of fresh) {
-  const kurs = courses.find((c) => c.id === r.kurs)?.name ?? "ohne Kurs";
-  await notify(`${P}💬 Antwort von ${firstName(r.name)} · ${kurs}\nhttps://www.tutor24.ch/de/conversations/${r.conversation_id}?tab=sent`);
-}
+const logRows = await loadLog();
+const leadInfo = await loadLeadInfo();
+const kursOf = (id: string) => {
+  const kursId = logRows.find((r) => r.conversation_id === id)?.kurs || leadInfo[id]?.erstKursId;
+  return courses.find((c) => c.id === kursId)?.name ?? "ohne Kurs";
+};
+const toNotify = new Map(listReplies.map((r) => [r.id, r]));
+for (const r of logRows.filter((r) => r.geantwortet === "ja" && !repliedBefore.has(r.conversation_id)))
+  if (!toNotify.has(r.conversation_id)) toNotify.set(r.conversation_id, { id: r.conversation_id, name: r.name, absage: r.markierung === "Absage" });
+pass.antworten = toNotify.size;
+for (const r of toNotify.values())
+  await notify(`${P}💬 ${r.absage ? "Absage" : "Antwort"} von ${firstName(r.name)} · ${kursOf(r.id)}\nhttps://www.tutor24.ch/de/conversations/${r.id}?tab=sent`);
 
 // Stopp-Regeln
 const reason = stopReason({ pruefungFehler: pass.erst.pruefungFehler + pass.nachfassen.pruefungFehler, fehler: fatal, letzterFehler: state.letzterFehler });

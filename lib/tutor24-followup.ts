@@ -545,6 +545,17 @@ export function snippetSig(s: string): string {
   return (h >>> 0).toString(36);
 }
 
+/**
+ * Automatik-Meldung "Antwort": Konversationen in "Gesendet", die seit dem letzten Durchgang neue
+ * Aktivitaet haben und deren letzte Nachricht nicht von mir ist (Antwort, gelesene Antwort, Absage).
+ * Ganz neue Konversationen zaehlen nur, wenn es schon einen Stand gab (sonst meldete der erste Durchgang alles).
+ * Antwortpruefung 5.11.2026: Antworten bleiben in "Gesendet" (0 von 60 Stichproben uebersehen).
+ */
+export function newActivity(entries: ListEntry[], prev: ListCache): ListEntry[] {
+  const seeded = Object.keys(prev).length > 0;
+  return entries.filter((e) => e.lastSender !== "ich" && (prev[e.id] ? entryChanged(prev[e.id], e) : seeded));
+}
+
 /** Neue Aktivitaet seit dem letzten Lauf: Datum, letzter Absender oder Ausschnitt anders. */
 export function entryChanged(prev: ListEntry | undefined, cur: ListEntry): boolean {
   return !prev || prev.date !== cur.date || prev.lastSender !== cur.lastSender || prev.sig !== cur.sig;

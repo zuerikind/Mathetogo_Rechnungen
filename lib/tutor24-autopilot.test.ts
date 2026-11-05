@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { autoEligible, daySummary, errorKey, firstName, inSendWindow, isBusy, isHardStop, stopReason, type PassLog } from "./tutor24-autopilot";
-import { mergeSettings } from "./tutor24-followup";
+import { mergeSettings, newActivity, type ListEntry } from "./tutor24-followup";
 
 describe("Automatik", () => {
   it("Sendefenster 8:00–19:59", () => {
@@ -45,6 +45,16 @@ describe("Automatik", () => {
     expect(autoEligible({ sicherheit: "mittel", kind: "angebot", course: c })).toBe(false);
     expect(autoEligible({ sicherheit: "hoch", kind: "frage", course: c })).toBe(false);
     expect(autoEligible({ sicherheit: "hoch", kind: "einfach", course: null })).toBe(false);
+  });
+
+  it("Antwort-Meldung aus der Liste: nur neue Aktivitaet, letzte Nachricht nicht von mir", () => {
+    const e = (id: string, lastSender: ListEntry["lastSender"], sig = "a"): ListEntry => ({ id, name: "Luana", date: "2026-11-05", lastSender, unread: 0, sig, link: "" });
+    const prev = { "1": e("1", "ich"), "2": e("2", "ich"), "3": e("3", "unbekannt", "x") };
+    const now = [e("1", "gegenseite", "b"), e("2", "ich", "c"), e("3", "unbekannt", "x"), e("4", "gegenseite"), e("5", "system", "z")];
+    // 1: Antwort; 2: ich habe geschrieben; 3: schon gemeldet, unveraendert; 4, 5: neu seit dem letzten Stand
+    expect(newActivity(now, prev).map((x) => x.id)).toEqual(["1", "4", "5"]);
+    // Erster Durchgang ohne Stand: nichts melden, nur merken
+    expect(newActivity(now, {})).toEqual([]);
   });
 
   it("Meldungen nur mit Vorname", () => {

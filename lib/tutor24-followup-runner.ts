@@ -38,6 +38,7 @@ import {
   followedUpIds,
   hasNewActivity,
   needsReplyCheck,
+  newActivity,
   isOfferLevel,
   listSender,
   listSkipReason,
@@ -117,6 +118,8 @@ export type AutoSend = {
   /** Ausgabe */
   counts: PassCounts;
   probe: string[];
+  /** Ausgabe: neue Antworten laut Liste "Gesendet" (auch auf Erst-Nachrichten ohne Kurs) */
+  antworten: { id: string; name: string; absage: boolean }[];
 };
 
 // ── Zeitmessung ──
@@ -394,7 +397,7 @@ async function readJob(page: Page, jobId: string): Promise<ListingInfo & { activ
 /** Nur diese Gruende haengen vom Datum ab und werden bei jedem Lauf neu geprueft. */
 const RECHECK = new Set(["juenger_als_3_tage"]);
 
-async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
+async function preview(page: Page, maxChecks: number, log: Log, onSent?: (sent: ListEntry[]) => void): Promise<void> {
   const now = new Date();
   const logRows = await loadLog();
   const logged = followedUpIds(logRows);
@@ -409,6 +412,7 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
   const archived = new Set((await collectList(page, "archived", "preview:archived", log)).entries.map((i) => i.id));
   log("Lese gesendete Konversationen …");
   const { entries: sent, changed } = await collectList(page, "sent", "preview:sent", log, { maxAgeDays: MAX_AGE_DAYS + 1 });
+  onSent?.(sent);
   // Neue Aktivitaet bei einer schon geprueften Konversation: Zeile sofort entfernen, damit sie
   // auch nach einem Abbruch neu geprueft wird (der Zwischenspeicher kennt die Aenderung dann schon).
   const stale = rows.filter((r) => changed.has(r.conversation_id) && r.grund !== "bereits_nachgefasst");
@@ -990,7 +994,13 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
     else if (opts.mode === "replycheck") await replyCheck(page, opts.maxChecks ?? 30, log);
     else if (opts.mode === "auto") {
       if (!opts.auto) throw new Error("mode auto ohne auto-Optionen");
-      await preview(page, opts.maxChecks ?? 150, log);
+      const auto = opts.auto;
+      await preview(page, opts.maxChecks ?? 150, log, (sent) => {
+        // Eigener Stand nur fuer Meldungen: ein Probelauf von Hand dazwischen verschluckt so keine Antwort.
+        for (const e of newActivity(sent, loadListCache("notify:sent")))
+          auto.antworten.push({ id: e.id, name: e.name, absage: e.lastSender === "system" });
+        saveListCache("notify:sent", Object.fromEntries(sent.map((e) => [e.id, e])));
+      });
       await replies(page, log);
       await send(page, log, undefined, opts.auto);
     }
