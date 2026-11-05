@@ -210,7 +210,11 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
     const frage = { ...newCourse("Mathe", "offen", NOW), id: "q", active: true };
     for (const f of [{ typ: "du" }, eltern, { typ: "neutral" }, { typ: "en" }] as const)
       for (const k of ["angebot", "erinnerung", "geaendert", "neuer_durchgang", "frage"] as const)
-        expect(followupMessage(k, f, "Lea", k === "frage" ? frage : matura(), 89).problem).toBeNull();
+        for (const m of [followupMessage(k, f, "Lea", k === "frage" ? frage : matura(), 89)]) {
+          expect(m.problem).toBeNull();
+          // kein doppelter Punkt nach dem Datum ("Anmeldeschluss ist der 14.11..")
+          expect(m.text).not.toMatch(/\.\.(?!\.)/);
+        }
   });
 
   it("zwei Pruefregeln: Erst-Nachricht darf WhatsApp und Links, Nachfassen nicht", () => {

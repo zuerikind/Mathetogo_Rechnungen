@@ -45,6 +45,8 @@ const courses: Course[] = loadCourses().map((c) => ({ ...c, active: true }));
 const log = await loadLog();
 type Cached = { jobId: string | null; info: (ListingInfo & { active: boolean }) | null; error?: string };
 const cache: Record<string, Cached> = JSON.parse(readFileSync(join(FOLLOWUP_DIR, "course_offer_listings.json"), "utf8"));
+const KI_CACHE = join(FOLLOWUP_DIR, "schritt7_ki_saetze.json");
+const kiCache: Record<string, string | null> = existsSync(KI_CACHE) ? JSON.parse(readFileSync(KI_CACHE, "utf8")) : {};
 const preview = readPreview();
 const byConvo = new Map(preview.map((r) => [r.conversation_id, r]));
 const batch = preview.filter((r) => r.stufe || r.fach).slice(offset, offset + limit);
@@ -119,7 +121,7 @@ function placement(lead: LeadRow, cs: Course[], lg = log, now = NOW): string {
 
 type Result = {
   id: string; name: string; sprache: string; wer: string; kind: string; kategorie: string; kursgruppe: string; sicherheit: string;
-  ausschluss: string; ergebnis: string; kurs: string; grund: string; satz: string; problem: string; erst: string;
+  ausschluss: string; ergebnis: string; kurs: string; grund: string; satz: string; kiGrund: string; problem: string; erst: string;
   nachfassen: string; nachfassenArt: string; nachfassenProblem: string; kurse: string; info: ListingInfo;
   plan: ReturnType<typeof O.planFirstMessage>; lead: LeadRow; leadInfo: LeadInfo; row: PreviewRow;
 };
@@ -130,12 +132,20 @@ async function simulate(id: string, name: string, info: ListingInfo, jobId: stri
   let erst = "";
   let course: Course | null = null;
   let satz = "";
+  let kiGrund = "";
   let problem = "";
   if (sprache === "fr") {
     erst = "(Französisch: bisherige KI-Nachricht ohne Kurs — im Test nicht erzeugt)";
   } else {
     const f = plan.form;
-    const personal = withAi ? await generatePersonalSentence(info, f.typ === "fr" ? "neutral" : f.typ, f.typ === "eltern" ? f.nom : null, () => {}) : null;
+    // KI-Saetze zwischenspeichern: ein zweiter Lauf fragt die KI nicht nochmals (gleiche Saetze, vergleichbar).
+    const key = `${id}|${f.typ}`;
+    if (withAi && !(key in kiCache)) {
+      kiCache[key] = await generatePersonalSentence(info, f.typ === "fr" ? "neutral" : f.typ, f.typ === "eltern" ? f.nom : null, () => {});
+      writeFileSync(KI_CACHE, JSON.stringify(kiCache, null, 1));
+    }
+    const personal = withAi ? kiCache[key] : null;
+    kiGrund = personal ? O.sentenceProblem(personal, f) ?? "" : withAi ? "KI lieferte nichts" : "";
     const m = O.assembleFirstMessage(plan, personal);
     erst = m.text;
     course = m.course;
@@ -153,7 +163,7 @@ async function simulate(id: string, name: string, info: ListingInfo, jobId: stri
     id, name, sprache, wer: plan.addressee.wer, kind: plan.addressee.kind ?? "", kategorie: plan.analysis.kategorie,
     kursgruppe: plan.analysis.kursgruppe, sicherheit: plan.analysis.sicherheit, ausschluss: plan.analysis.ausschluss,
     ergebnis: course ? "kurs" : plan.offer.kind, kurs: course?.name ?? "", grund: plan.offer.kind === "kurs" ? (course ? "" : "prüfung") : plan.offer.grund,
-    satz, problem, erst, nachfassen: fu.text, nachfassenArt: fu.label, nachfassenProblem: fu.problem, kurse: placement(lead, cs, lg), info, plan, lead, leadInfo, row,
+    satz, kiGrund, problem, erst, nachfassen: fu.text, nachfassenArt: fu.label, nachfassenProblem: fu.problem, kurse: placement(lead, cs, lg), info, plan, lead, leadInfo, row,
   };
 }
 
@@ -194,7 +204,9 @@ const bm = followedUp.map((l) => {
 
 const matura = courses.find((c) => c.gruppe === "matura") as Course;
 const withCourse = results.find((r) => r.kurs === matura.name && r.sprache === "de") ?? results.find((r) => r.kurs);
-const withoutCourse = results.find((r) => !r.kurs && r.sicherheit === "hoch" && /^sek/.test(r.kursgruppe)) ?? results.find((r) => !r.kurs && r.sicherheit === "hoch");
+// Ohne Kurs, sicher erkannt und nicht nur vor Ort (sonst kann ein Online-Kurs ihr nie angeboten werden).
+const noCourseOk = (r: Result) => !r.kurs && r.sicherheit === "hoch" && r.plan.analysis.ort !== "vor Ort" && r.sprache === "de";
+const withoutCourse = results.find((r) => noCourseOk(r) && /^sek/.test(r.kursgruppe)) ?? results.find(noCourseOk);
 const scen: string[] = [];
 const sc = (title: string, lines: string[]) => scen.push(`### ${title}\n\n${lines.join("\n\n")}`);
 const block = (t: string) => "```\n" + t + "\n```";
@@ -264,35 +276,44 @@ if (withoutCourse) {
     `**/kurse**: ${placement(withoutCourse.lead, cs3)}`,
     `**Nachfassen ohne Freigabe**: ${before.label}`,
     `**Nachfassen nach Freigabe**: ${after.label}${after.problem ? ` — Problem: ${after.problem}` : ""}`,
-    block(after.text),
+    after.text ? block(after.text) : "_kein Text_",
   ]);
 }
 
 // ── Beispiele: 10 gemischte Faelle ────────────────────────────────────────────
 
-const pick: Result[] = [];
-const take = (pred: (r: Result) => boolean, n = 1) => {
-  for (const r of results.filter((x) => pred(x) && !pick.includes(x)).slice(0, n)) pick.push(r);
-};
-take((r) => r.wer === "schueler" && !!r.kurs && r.sprache === "de");
-take((r) => r.wer === "eltern" && !!r.kind && !!r.kurs && r.sprache === "de");
-take((r) => r.wer === "unklar" && !!r.kurs && r.sprache === "de");
-take((r) => r.wer === "schueler" && !r.kurs && r.sprache === "de");
-take((r) => r.wer === "eltern" && !r.kurs && r.sprache === "de");
-take((r) => r.wer === "unklar" && !r.kurs && r.sprache === "de" && r.sicherheit === "mittel");
-take((r) => r.wer === "unklar" && !r.kurs && r.sprache === "de" && r.kursgruppe === "offen");
-take((r) => r.sprache === "en", 2);
-take((r) => r.sprache === "fr");
-const synthetic: Result[] = [];
-if (pick.filter((r) => r.sprache === "en").length < 2) {
-  // Zu wenige englische Inserate in den Daten: synthetische ergaenzen (klar markiert).
-  for (const [i, d] of ["I am in my last year at the Gymnasium and will write the Matura in maths this year. Online lessons preferred.", "I am looking for help for my son, he is in 2nd year of Sek and struggles with algebra."].entries()) {
-    if (pick.filter((r) => r.sprache === "en").length + synthetic.length >= 2) break;
-    synthetic.push(await simulate(`synth-en-${i}`, "Sam (synthetisch)", { title: "Maths tutor wanted", fach: "Mathematik", schulstufe: i ? "Sekundarstufe" : "Gymnasium", description: d }, null));
-  }
+// Zehn Faecher: echtes Inserat, wenn eines passt, sonst ein synthetisches (im Titel als "(synthetisch)" markiert).
+// Mit Kurs gibt es in den echten Daten nur 2 Faelle (nur Matura- und BM-Kurs vorhanden).
+type Slot = { pred: (r: Result) => boolean; synth?: { name: string; info: ListingInfo } };
+const de = (r: Result) => r.sprache === "de";
+const offerLevel = (r: Result) => F.isOfferLevel(r.kategorie) && !r.ausschluss;
+const slots: Slot[] = [
+  { pred: (r) => de(r) && r.wer === "schueler" && !!r.kurs },
+  {
+    pred: (r) => de(r) && r.wer === "eltern" && !!r.kind && !!r.kurs,
+    synth: { name: "Petra", info: { title: "Mathe-Nachhilfe für die Matura", fach: "Mathematik", schulstufe: "Gymnasium", description: "Ich suche für meine Tochter Unterstützung in Mathematik. Sie macht dieses Jahr die Matura am Gymnasium und möchte sich gezielt auf die Prüfung vorbereiten. Online wäre ideal." } },
+  },
+  {
+    pred: (r) => de(r) && r.wer === "unklar" && !!r.kurs,
+    synth: { name: "Kim", info: { title: "Nachhilfe Mathematik BM", fach: "Mathematik", schulstufe: "Berufsschule", description: "Nachhilfe in Mathematik für die Berufsmatura gesucht. Die BM-Abschlussprüfung steht im Frühling an. Online-Unterricht ist möglich." } },
+  },
+  { pred: (r) => de(r) && r.wer === "schueler" && !r.kurs && offerLevel(r) },
+  { pred: (r) => de(r) && r.wer === "eltern" && !r.kurs && offerLevel(r) && r.sicherheit === "hoch" },
+  { pred: (r) => de(r) && r.wer === "unklar" && !r.kurs && offerLevel(r) && r.sicherheit === "mittel" },
+  { pred: (r) => de(r) && !r.kurs && r.kursgruppe === "offen" },
+  {
+    pred: (r) => r.sprache === "en" && !!r.kurs,
+    synth: { name: "Sam", info: { title: "Maths tutor wanted for Matura", fach: "Mathematik", schulstufe: "Gymnasium", description: "I am in my last year at the Gymnasium and will write the Matura in maths this year. I am looking for help with the typical exam exercises. Online lessons would be perfect." } },
+  },
+  { pred: (r) => r.sprache === "en" && !r.kurs && offerLevel(r) },
+  { pred: (r) => r.sprache === "fr" && !!r.nachfassen },
+];
+const examples: Result[] = [];
+for (const [i, s] of slots.entries()) {
+  const real = results.find((r) => s.pred(r) && !examples.includes(r));
+  if (real) examples.push(real);
+  else if (s.synth) examples.push(await simulate(`synth-${i}`, `${s.synth.name} (synthetisch)`, s.synth.info, null));
 }
-take((r) => r.wer === "eltern" && !r.kind, 10 - pick.length - synthetic.length);
-const examples = [...pick, ...synthetic].slice(0, 10);
 
 // ── Bericht ───────────────────────────────────────────────────────────────────
 
@@ -307,6 +328,7 @@ lines.push(`- Kurs angeboten: ${count(results.filter((r) => r.kurs).map((r) => r
 lines.push(`- Anrede: ${count(results.map((r) => r.wer + (r.kind ? `/${r.kind}` : "")))}`);
 lines.push(`- Sprache: ${count(results.map((r) => r.sprache))}`);
 lines.push(`- Persönlicher Satz: ${count(results.map((r) => r.satz))}`);
+lines.push(`- Warum der KI-Satz abgelehnt wurde (→ Ersatzsatz): ${count(results.filter((r) => r.kiGrund).map((r) => r.kiGrund.replace(/„.*“/, "„…“")))}`);
 lines.push(`- Prüfung Erst-Nachricht fehlgeschlagen: ${results.filter((r) => r.problem).length}${results.filter((r) => r.problem).map((r) => ` (${r.name}: ${r.problem})`).join("")}`);
 lines.push(`- Nachfassen: ${count(results.map((r) => r.nachfassenArt.replace(/\(stufe_\w+\)/, "(Stufe ausgeschlossen)")))}`);
 lines.push(`- Prüfung Nachfassen fehlgeschlagen: ${results.filter((r) => r.nachfassenProblem).length}${results.filter((r) => r.nachfassenProblem).map((r) => ` (${r.name}: ${r.nachfassenProblem})`).join("")}`);

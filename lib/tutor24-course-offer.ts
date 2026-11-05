@@ -205,7 +205,8 @@ export function buildFollowup(kind: FollowupKind, f: Form, name: string, course:
   }
   const c = course;
   const block = courseBlock(c, privatePrice, sprache(f));
-  const deadline = dayMonth(c.deadline);
+  // "14.11." endet schon mit Punkt und schliesst den Satz ab (kein "14.11..").
+  const deadline = dayMonth(c.deadline).replace(/([^.])$/, "$1.");
   let body: string[];
   if (f.typ === "en") {
     const fach = FACH_EN[c.fach] ?? c.fach;
@@ -213,7 +214,7 @@ export function buildFollowup(kind: FollowupKind, f: Form, name: string, course:
     const close = 'Shall I reserve a place for you? A short "Yes" here in the chat is enough, and I will send you all the details. Payment is only due once the course is confirmed.';
     body =
       kind === "erinnerung"
-        ? [`${ref} In that message I also mentioned the ${courseName(c, "en")}. There are still places available; registration closes on ${deadline}.`, close]
+        ? [`${ref} In that message I also mentioned the ${courseName(c, "en")}. There are still places available; registration closes on ${deadline}`, close]
         : kind === "geaendert"
           ? [`${ref} In that message I also mentioned the ${courseName(c, "en")}. Some details have changed since then, here is the current information:`, block, close]
           : kind === "neuer_durchgang"
@@ -239,7 +240,7 @@ export function buildFollowup(kind: FollowupKind, f: Form, name: string, course:
     const erwaehnt = `Dabei hatte ich auch den ${c.name.trim()} erwähnt.`;
     body =
       kind === "erinnerung"
-        ? [`${ref} ${erwaehnt} Es hat noch freie Plätze, Anmeldeschluss ist der ${deadline}.`, close]
+        ? [`${ref} ${erwaehnt} Es hat noch freie Plätze, Anmeldeschluss ist der ${deadline}`, close]
         : kind === "geaendert"
           ? [`${ref} ${erwaehnt} Inzwischen haben sich einige Angaben geändert, hier die aktuellen:`, block, close]
           : kind === "neuer_durchgang"
