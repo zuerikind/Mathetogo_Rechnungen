@@ -217,7 +217,7 @@ export async function setRowAnrede(conversationId: string, anrede: Anrede): Prom
   if (!row) throw new Error(`Konversation ${conversationId} steht nicht in der Vorschau.`);
   row.anrede = anrede;
   // Korrektur von Hand gilt auch fuer die Person (das Nachfassen nimmt die gespeicherte Anrede).
-  await setLeadAnrede(conversationId, anrede);
+  await setLeadAnrede(conversationId, row.inserat_id, anrede);
   writePreview(rows, await loadLog(), await loadLeadInfo());
 }
 

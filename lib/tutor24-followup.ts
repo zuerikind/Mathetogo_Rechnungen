@@ -901,6 +901,13 @@ export type LeadInfo = {
   nachgefasst: boolean;
 };
 
+/** Anrede von Hand umgestellt: du heisst Schueler/in, Sie bei einem Schueler wird "unklar" (DB und Pipeline-Vorschau). */
+export const withAnrede = <T extends Pick<LeadInfo, "wer" | "anrede">>(lead: T, anrede: "du" | "Sie"): T => ({
+  ...lead,
+  anrede,
+  wer: anrede === "du" ? "schueler" : lead.wer === "schueler" ? "unklar" : lead.wer,
+});
+
 /** Konversation zuerst, sonst Inserat ("inserat:<id>"). */
 export type LeadMap = Record<string, LeadInfo>;
 export const leadFor = (leads: LeadMap | undefined, row: Pick<PreviewRow, "conversation_id" | "inserat_id">): LeadInfo | undefined =>

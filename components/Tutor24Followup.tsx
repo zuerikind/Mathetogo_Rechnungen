@@ -17,6 +17,7 @@ import {
   isCourseGroup,
   isOfferLevel,
   leadFor,
+  withAnrede,
   needsReplyCheck,
   newCourse,
   validateCourses,
@@ -543,7 +544,15 @@ export function Tutor24Followup({
   };
 
   const setAnrede = async (id: string, anrede: "du" | "Sie") => {
-    setStatus((s) => s && { ...s, rows: s.rows.map((r) => (r.conversation_id === id ? { ...r, anrede } : r)) });
+    // Sofort umschalten: Zeile UND Person (der Text folgt der gespeicherten Anrede der Person).
+    setStatus((s) => {
+      if (!s) return s;
+      const row = s.rows.find((r) => r.conversation_id === id);
+      const leads = { ...s.leads };
+      for (const key of [id, row?.inserat_id ? `inserat:${row.inserat_id}` : ""])
+        if (key && leads[key]) leads[key] = withAnrede(leads[key], anrede);
+      return { ...s, leads, rows: s.rows.map((r) => (r.conversation_id === id ? { ...r, anrede } : r)) };
+    });
     await post({ action: "anrede", id, anrede });
     await fetchStatus();
   };

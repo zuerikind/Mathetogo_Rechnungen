@@ -93,9 +93,11 @@ function ReadyMessage({
   onAnrede: (id: string, anrede: "du" | "Sie") => void;
 }) {
   const lead = leadFor(leads, row);
-  const want = row.anrede === "du" ? "du" : "Sie";
   // Dieselbe Pruefung wie vor dem Senden: so sieht man hier schon, was den Lauf blockieren wuerde.
-  const msg = followupMessage(row.kind ?? "angebot", followupForm(lead, row.anrede), row.name, course, privatePrice);
+  const form = followupForm(lead, row.anrede);
+  // Markierter Knopf = Anrede des Textes darunter (nicht row.anrede: die gespeicherte Anrede der Person geht vor).
+  const want = form.typ === "du" ? "du" : "Sie";
+  const msg = followupMessage(row.kind ?? "angebot", form, row.name, course, privatePrice);
   const problem = msg.problem;
   return (
     <div className="mt-1.5">

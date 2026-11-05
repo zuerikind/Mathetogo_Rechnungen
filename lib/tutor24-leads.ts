@@ -17,6 +17,7 @@ import {
   isPrimar,
   pickCourse,
   splitList,
+  withAnrede,
   type Course,
   type CourseSnapshot,
   type FollowupSettings,
@@ -88,10 +89,13 @@ export async function loadLeadInfo(): Promise<LeadMap> {
 }
 
 /** Anrede von Hand korrigiert (Vorschau/Pipeline): auch bei der Person speichern. */
-export async function setLeadAnrede(conversationId: string, anrede: "du" | "Sie"): Promise<void> {
-  const lead = await prisma.tutor24Lead.findUnique({ where: { conversationId } });
+// Person wie leadFor: per Konversation, sonst per Inserat (Erst-Nachricht ohne bekannte Konversation).
+export async function setLeadAnrede(conversationId: string, inseratId: string, anrede: "du" | "Sie"): Promise<void> {
+  const lead =
+    (await prisma.tutor24Lead.findUnique({ where: { conversationId } })) ??
+    (inseratId ? await prisma.tutor24Lead.findFirst({ where: { inseratId } }) : null);
   if (!lead) return;
-  const wer = anrede === "du" ? "schueler" : lead.wer === "schueler" ? "unklar" : lead.wer;
+  const { wer } = withAnrede(lead, anrede);
   await prisma.tutor24Lead.update({ where: { id: lead.id }, data: { anrede, wer } });
 }
 

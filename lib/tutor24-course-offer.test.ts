@@ -22,7 +22,7 @@ import {
   planFirstMessage,
   sentenceProblem,
 } from "./tutor24-course-offer";
-import { courseBlock, courseChanged, courseSnapshot, type LeadInfo } from "./tutor24-followup";
+import { courseBlock, courseChanged, courseSnapshot, withAnrede, type LeadInfo } from "./tutor24-followup";
 
 const NOW = new Date(2026, 10, 4);
 const settings = mergeSettings(null);
@@ -207,6 +207,25 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
     expect(followupForm(undefined, "du")).toEqual({ typ: "du" });
     expect(followupForm(undefined, "Sie")).toEqual({ typ: "neutral" });
     expect(followupForm(lead({ sprache: "en" }), "Sie")).toEqual({ typ: "en" });
+  });
+
+  it("Anrede-Knopf: die Wahl bei der Person schaltet den Text um (Gruss, Anrede, Verben)", () => {
+    // Luana: Nachfass-Kontakt, gespeichert du; die Vorschau-Zeile allein reicht nicht, die Person geht vor.
+    const luana = lead({ quelle: "nachfassen", wer: "schueler", kind: null, anrede: "du", erstKursId: null, erstKursDaten: null });
+    const text = (l: LeadInfo) => followupMessage("angebot", followupForm(l, l.anrede), "Luana", matura(), 89).text;
+    expect(followupForm(luana, "Sie")).toEqual({ typ: "du" });
+    const sie = text(withAnrede(luana, "Sie"));
+    expect(sie).toMatch(/^Guten Tag,/);
+    expect(sie).toContain("Ihre Anfrage");
+    expect(sie).toContain("Falls Sie noch suchen");
+    expect(sie).not.toMatch(/\b(du|deine)\b/);
+    const du = text(withAnrede(withAnrede(luana, "Sie"), "du"));
+    expect(du).toMatch(/^Hallo Luana,/);
+    expect(du).toContain("Falls du noch suchst");
+    // Erst-Nachricht an Eltern: auf du umgestellt wird daraus Schueler/in, zurueck auf Sie "unklar" (nicht mehr Eltern)
+    expect(followupForm(withAnrede(lead(), "du"), "Sie")).toEqual({ typ: "du" });
+    expect(withAnrede(withAnrede(lead(), "du"), "Sie").wer).toBe("unklar");
+    expect(withAnrede(lead(), "Sie").wer).toBe("eltern");
   });
 
   it("alle Arten bestehen die Nachfass-Pruefung, in allen Fassungen", () => {
