@@ -11,6 +11,7 @@ import { courseSnapshot, parseJobText, type ListingInfo } from "./tutor24-follow
 import { loadCourses, loadLog, loadSettings } from "./tutor24-followup-store";
 import { listingHash, recordSend, type LeadFields } from "./tutor24-leads";
 import {
+  CookieBannerError,
   EXISTING_CONVO_SEL,
   TUTOR24_BASE_URL,
   buildPaginatedUrl,
@@ -366,6 +367,13 @@ export async function runTutor24Messaging(
               result.errors.push(`Send unconfirmed: ${tutor24Id} (${displayName})`);
             }
           } catch (err) {
+            // Cookie-Fenster bleibt offen: ganzer Lauf sauber beenden, nichts weiter senden.
+            if (err instanceof CookieBannerError) {
+              result.errors.push(err.message);
+              result.log.push(`${ts()} ✖ ${err.message}`);
+              jobState.shouldStop = true;
+              break;
+            }
             const msg = err instanceof Error ? err.message : String(err);
             result.errors.push(`[${tutor24Id}] ${msg}`);
             result.log.push(`${ts()} [${tutor24Id}] Fehler: ${msg}`);

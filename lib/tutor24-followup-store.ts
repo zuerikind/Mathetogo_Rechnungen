@@ -42,6 +42,8 @@ export const STATUS_PATH = join(FOLLOWUP_DIR, "status.json");
 export const STOP_PATH = join(FOLLOWUP_DIR, "stop.request");
 /** Ausgabe des aus der App gestarteten Prozesses (fuer Abstuerze vor dem ersten Status). */
 export const RUN_LOG_PATH = join(FOLLOWUP_DIR, "run.log");
+/** Alle Abbrueche fortlaufend (status.json und run.log ueberschreibt der naechste Lauf). */
+export const ERRORS_PATH = join(FOLLOWUP_DIR, "errors.log");
 /** Zwischenspeicher der Konversationslisten (pro Tab), damit nicht jeder Lauf alles nachlaedt. */
 export const CONVERSATIONS_PATH = join(FOLLOWUP_DIR, "conversations.json");
 /** Zeitmessung: pro Lauf eine Zeile je Phase. */
@@ -62,6 +64,8 @@ export type RunStatus = {
   total: number;
   log: string[];
   error: string | null;
+  /** technisches Protokoll zum Abbruch, ohne Steuerzeichen */
+  details?: string | null;
 };
 
 export function writeStatus(s: RunStatus): void {

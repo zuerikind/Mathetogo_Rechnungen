@@ -124,6 +124,8 @@ function makeGotoPage(fehler: string[], startUrl = "about:blank") {
       if (fehlerJetzt) throw new Error(`page.goto: net::${fehlerJetzt} at ${to}`);
       url = to;
     },
+    // gotoTutor24 schaut nach dem Laden nach einem Cookie-Fenster: hier keines.
+    locator: () => ({ first: () => ({ isVisible: async () => false }) }),
   };
   return { page: page as unknown as import("playwright").Page, versuche };
 }

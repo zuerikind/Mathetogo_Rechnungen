@@ -46,6 +46,7 @@ type StatusResponse = {
     total: number;
     log: string[];
     error: string | null;
+    details?: string | null;
   };
   blockedBy: string | null;
   settings: FollowupSettings;
@@ -493,6 +494,12 @@ export function Tutor24Followup({
             )}
           </div>
           {state.error && !running && <p className="mt-2 text-sm font-semibold text-red-700">{state.error}</p>}
+          {state.error && !running && state.details && (
+            <details className="mt-1 text-xs text-gray-600">
+              <summary className="cursor-pointer text-red-700/80">Details</summary>
+              <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 font-mono text-[11px] leading-4">{state.details}</pre>
+            </details>
+          )}
           {running && <p className="mt-2 text-sm text-gray-700">Position: {state.progress}</p>}
           {lastLine && <p className="mt-1 truncate font-mono text-xs text-gray-500">{lastLine}</p>}
           {state.log.length > 1 && (

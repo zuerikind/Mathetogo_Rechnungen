@@ -20,12 +20,14 @@
  * unerwartetem Seitenaufbau. Mit der Erst-Nachrichten-Automation geteilt werden
  * nur der Login (lib/tutor24-messaging.ts) und die Sperre (lib/tutor24-lock.ts).
  */
+import { appendFileSync } from "node:fs";
 import type { Page } from "playwright";
 import { followupJobState as state } from "./automation-state";
 import {
   MAX_AGE_DAYS,
   MIN_AGE_DAYS,
   hasFollowupMarker,
+  summarizeRunError,
   ageDays,
   courseSnapshot,
   analyzeListing,
@@ -54,6 +56,7 @@ import {
 import {
   COMPARE_COLS,
   COMPARE_PATH,
+  ERRORS_PATH,
   PREVIEW_PATH,
   TIMING_COLS,
   TIMING_PATH,
@@ -75,7 +78,15 @@ import {
 } from "./tutor24-followup-store";
 import { acquireTutor24Lock, readTutor24Lock } from "./tutor24-lock";
 import { fromPreview, recordSend, syncPreviewLeads } from "./tutor24-leads";
-import { TUTOR24_BASE_URL, acceptTutor24Cookies, gotoTutor24, loginToTutor24, sleep } from "./tutor24-messaging";
+import {
+  CookieBannerError,
+  TUTOR24_BASE_URL,
+  acceptTutor24Cookies,
+  closeCookieBanner,
+  gotoTutor24,
+  loginToTutor24,
+  sleep,
+} from "./tutor24-messaging";
 
 /** Abbruch ohne Umgehungsversuch: Captcha, Login-Problem, Fehlerseite, unerwarteter Aufbau, Stopp. */
 export class StopRun extends Error {}
@@ -545,10 +556,20 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
     const button = await page.$(".js-conversations-interface-send-button");
     if (!input || !isTextarea || !button) throw new StopRun(`Unerwarteter Seitenaufbau: Eingabefeld/Senden-Knopf fehlt (${row.conversation_id}).`);
 
+    // Cookie-Fenster vor jedem Klick schliessen (es erscheint oft erst nach dem Laden und verdeckt den Knopf).
+    await closeCookieBanner(page, log);
     await input.click();
     await input.fill(text);
     if ((await input.inputValue()).trim() !== text) throw new StopRun(`Text liess sich nicht vollständig eintragen (${row.conversation_id}).`);
-    await button.click();
+    await closeCookieBanner(page, log);
+    try {
+      await button.click({ timeout: 10_000 });
+    } catch (err) {
+      // Nicht abgeschickt: Eingabefeld leeren, damit kein halber Text stehen bleibt, dann sauber abbrechen.
+      await input.fill("").catch(() => {});
+      if (err instanceof CookieBannerError) throw err;
+      throw new StopRun(`Senden-Knopf bei ${row.name} liess sich nicht klicken. Es wurde nichts gesendet.`);
+    }
 
     // Bestaetigung: eine zusaetzliche eigene Nachricht mit unserem Anfang.
     const marker = (text.split("\n").find((l) => hasFollowupMarker(l)) ?? text).slice(0, 40);
@@ -795,7 +816,7 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
   resetTiming();
   Object.assign(state, {
     running: true, shouldStop: false, mode: opts.mode, startedAt: new Date(), finishedAt: null,
-    progress: "Anmelden …", done: 0, total: 0, log: [], error: null,
+    progress: "Anmelden …", done: 0, total: 0, log: [], error: null, details: null,
   });
   persist();
   const log: Log = (line) => {
@@ -830,10 +851,17 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
     else await preview(page, opts.maxChecks ?? 150, log);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    state.error =
-      `${err instanceof StopRun ? msg : `Login/Seitenfehler: ${msg}`} — Stand: ${state.progress || "noch keine Konversation"}.` +
-      (opts.mode === "preview" ? " Bisheriges ist in der Vorschau gespeichert; der nächste Lauf setzt dort fort." : "");
+    const kind = err instanceof CookieBannerError ? "cookie" : err instanceof StopRun ? "stop" : "other";
+    const summary = summarizeRunError(msg, kind, state.progress, opts.mode);
+    state.error = summary.error;
+    state.details = summary.details || null;
     log(`✖ ABGEBROCHEN: ${state.error}`);
+    // status.json ueberschreibt der naechste Lauf: Abbrueche zusaetzlich fortlaufend sichern (fuer spaetere Fehlersuche).
+    try {
+      appendFileSync(ERRORS_PATH, `── ${new Date().toISOString()} ${opts.mode}\n${summary.error}\n${summary.details}\n\n`);
+    } catch {
+      // Protokoll ist Nebensache
+    }
     throw err;
   } finally {
     await browser?.close().catch(() => {});

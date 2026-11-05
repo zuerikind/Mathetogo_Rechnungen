@@ -1062,6 +1062,31 @@ export function courseStats(c: Course, log: Array<Partial<LogRow>>, now = new Da
   };
 }
 
+// ── Fehlermeldung eines Laufs ─────────────────────────────────────────────────
+
+// Farbcodes aus dem Playwright-Protokoll ("[2m … [22m"), mit oder ohne Escape-Zeichen.
+const ANSI_RE = new RegExp("\\u001b?\\[\\d+(?:;\\d+)*m", "g");
+
+/**
+ * Abbruch eines Laufs fuer /kurse: oben ein kurzer, verstaendlicher Satz, das technische Protokoll
+ * (ohne Steuerzeichen) separat als details. kind: "stop" = eigene Meldung (StopRun), "cookie" = Cookie-Fenster.
+ */
+export function summarizeRunError(raw: string, kind: "stop" | "cookie" | "other", progress: string, mode: string | null) {
+  const details = raw.replace(ANSI_RE, "").replace(/�/g, "").trim();
+  const first = details.split("\n")[0].trim();
+  let head: string;
+  if (kind === "cookie") head = first;
+  else if (/intercepts pointer events/i.test(details) && /cybotcookiebot|onetrust|cookie/i.test(details))
+    head = "Ein Cookie-Fenster von tutor24 hat den Knopf verdeckt. Es wurde nichts gesendet.";
+  else if (/target crashed|target page, context or browser has been closed|browser has disconnected/i.test(details))
+    head = "Der Browser ist während des Laufs abgestürzt (meist zu wenig Arbeitsspeicher).";
+  else if (kind === "stop") head = first;
+  else head = `Fehler auf tutor24: ${first.replace(/^[\w.]+: /, "").slice(0, 140)}`;
+  const stand = progress ? ` Stand: ${progress}.` : "";
+  const resume = mode === "preview" ? " Bisheriges ist gespeichert, der nächste Lauf setzt dort fort." : "";
+  return { error: `${head}${stand}${resume}`, details: details === first ? "" : details };
+}
+
 // ── CSV-Hilfen ────────────────────────────────────────────────────────────────
 
 export function toCsv(rows: Record<string, string>[], columns: readonly string[]): string {

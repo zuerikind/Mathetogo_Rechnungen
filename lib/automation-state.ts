@@ -28,8 +28,10 @@ export const followupJobState: {
   done: number;
   total: number;
   log: string[];
-  /** Abbruchmeldung (429, Captcha, Login …); null = sauber beendet */
+  /** Abbruchmeldung (429, Captcha, Login …) in einem Satz; null = sauber beendet */
   error: string | null;
+  /** technisches Protokoll zum Abbruch (eingeklappt unter "Details") */
+  details?: string | null;
 } = {
   running: false,
   shouldStop: false,

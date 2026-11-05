@@ -3,7 +3,7 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { academigoJobState, tutor24JobState } from "@/lib/automation-state";
-import { MAX_SENDS_PER_DAY, NO_COURSE, needsReplyCheck, validateCourses } from "@/lib/tutor24-followup";
+import { MAX_SENDS_PER_DAY, NO_COURSE, needsReplyCheck, summarizeRunError, validateCourses } from "@/lib/tutor24-followup";
 import {
   FOLLOWUP_DIR,
   RUN_LOG_PATH,
@@ -39,6 +39,12 @@ function runStatus(): RunStatus {
   const s = readStatus() ?? IDLE;
   if (s.running && !pidAlive(s.pid))
     return { ...s, running: false, error: s.error ?? `Lauf-Prozess unerwartet beendet — Stand: ${s.progress || "Start"}. Startfehler ggf. in ${RUN_LOG_PATH}` };
+  // Aeltere Statusdateien (vor der Kurzmeldung): Playwright-Protokoll in einen Satz + Details aufteilen.
+  if (s.error && s.details === undefined && (s.error.length > 300 || s.error.includes("[2m"))) {
+    const raw = s.error.replace(/^Login\/Seitenfehler: /, "").replace(/ — Stand: [\s\S]*$/, "");
+    const sum = summarizeRunError(raw, "other", s.progress, s.mode);
+    return { ...s, error: sum.error, details: sum.details || null };
+  }
   return s;
 }
 

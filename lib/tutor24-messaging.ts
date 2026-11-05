@@ -73,6 +73,8 @@ export async function gotoTutor24(
     }
   }
   await sleep(400);
+  // Gemeinsame Stelle fuer alle Automationen: jede tutor24-Seite laeuft hier durch.
+  await closeCookieBanner(page, pushLog);
 }
 
 async function isLoggedInToTutor24(page: import("playwright").Page): Promise<boolean> {
@@ -474,25 +476,69 @@ const SEND_SUCCESS_SEL =
   'div:has-text("Nachricht gesendet"), div:has-text("erfolgreich gesendet"), ' +
   'div:has-text("Danke"), p:has-text("Nachricht gesendet")';
 
-const COOKIE_ACCEPT_SEL = [
-  "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
-  "#onetrust-accept-btn-handler",
-  'button:has-text("Alle akzeptieren")',
-  'button:has-text("Akzeptieren")',
-  'button:has-text("Accept all")',
-  'button:has-text("Accept")',
-].join(", ");
+/** Cookie-Fenster (Cookiebot auf tutor24, OneTrust als Rueckfall). */
+export const COOKIE_DIALOG_SEL = "#CybotCookiebotDialog, #onetrust-banner-sdk";
 
-export async function acceptTutor24Cookies(
+/**
+ * Knoepfe in der Reihenfolge der wenigsten Cookies: ablehnen / nur notwendige zuerst.
+ * "Auswahl erlauben" zuletzt: dort sind nur die notwendigen Cookies vorausgewaehlt. Nie "Alle akzeptieren".
+ */
+export const COOKIE_DECLINE_SEL = [
+  "#CybotCookiebotDialogBodyButtonDecline",
+  "#CybotCookiebotDialogBodyLevelButtonLevelOptinDeclineAll",
+  "#onetrust-reject-all-handler",
+  'button:has-text("Nur notwendige")',
+  'button:has-text("Nur erforderliche")',
+  'button:has-text("Alle ablehnen")',
+  'button:has-text("Ablehnen")',
+  'button:has-text("Reject all")',
+  'button:has-text("Only necessary")',
+  "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowallSelection",
+];
+
+export class CookieBannerError extends Error {}
+export const COOKIE_BANNER_MESSAGE = "Das Cookie-Fenster von tutor24 liess sich nicht schliessen. Es wurde nichts gesendet.";
+
+/**
+ * Gemeinsam fuer alle tutor24-Automationen (Kandidaten suchen, Erst-Nachricht, Kursangebot, Antworten pruefen):
+ * ein offenes Cookie-Fenster mit der Option mit den wenigsten Cookies schliessen. Vor jedem Klick aufrufen —
+ * Cookiebot erscheint oft erst Sekunden nach dem Laden und verdeckt dann den Senden-Knopf.
+ * Bleibt das Fenster offen: CookieBannerError (der Aufrufer bricht ab, es wird nichts gesendet).
+ */
+export async function closeCookieBanner(
   page: import("playwright").Page,
   pushLog?: (s: string) => void
-): Promise<void> {
-  const btn = await findVisible(page, COOKIE_ACCEPT_SEL);
-  if (!btn) return;
-  await jsClick(btn);
-  await sleep(600);
-  pushLog?.(`${ts()} Cookie-Banner geschlossen`);
+): Promise<"keins" | "geschlossen"> {
+  const dialog = page.locator(COOKIE_DIALOG_SEL).first();
+  const open = () => dialog.isVisible().catch(() => false);
+  if (!(await open())) return "keins";
+  for (const sel of COOKIE_DECLINE_SEL) {
+    const btn = page.locator(sel).first();
+    if (!(await btn.isVisible().catch(() => false))) continue;
+    // force: der Knopf liegt im Fenster selbst; ein Overlay darueber soll den Klick nicht abfangen.
+    await btn.click({ force: true, timeout: 5_000 }).catch(() => {});
+    break;
+  }
+  if (await dialog.waitFor({ state: "hidden", timeout: 4_000 }).then(() => true, () => false)) {
+    pushLog?.(`${ts()} Cookie-Fenster geschlossen (nur notwendige Cookies)`);
+    return "geschlossen";
+  }
+  // Rueckfall: Cookiebot-Schnittstelle der Seite ("ablehnen").
+  await page
+    .evaluate(() => {
+      const cb = (window as unknown as { Cookiebot?: { decline?: () => void } }).Cookiebot;
+      if (cb && typeof cb.decline === "function") cb.decline();
+    })
+    .catch(() => {});
+  if (await dialog.waitFor({ state: "hidden", timeout: 3_000 }).then(() => true, () => false)) {
+    pushLog?.(`${ts()} Cookie-Fenster geschlossen (abgelehnt)`);
+    return "geschlossen";
+  }
+  throw new CookieBannerError(COOKIE_BANNER_MESSAGE);
 }
+
+/** Alter Name, alle Aufrufer: schliesst das Cookie-Fenster mit "nur notwendige" (nicht mehr "alle akzeptieren"). */
+export const acceptTutor24Cookies = closeCookieBanner;
 
 function isExcludedContactLink(href: string | null): boolean {
   if (!href) return false;
