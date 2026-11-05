@@ -43,6 +43,8 @@ export type AutoErst = {
   mayContinue: () => string | null;
   counts: PassCounts;
   probe: string[];
+  /** begrenzter Probelauf: hoechstens so viele Inserate oeffnen (auch uebersprungene zaehlen) */
+  maxOpen?: number;
 };
 export { tutor24JobState as jobState } from "./automation-state";
 
@@ -122,6 +124,7 @@ export async function runTutor24Messaging(
     newContacts: [],
   };
   jobState.result = result;
+  let opened = 0;
 
   const { chromium } = await import("playwright");
 
@@ -287,7 +290,13 @@ export async function runTutor24Messaging(
           }
           try {
             // Automatik: Limit, Zeitfenster und Notbremse VOR dem Oeffnen (spart auch den KI-Aufruf).
-            const halt = auto && (auto.counts.gesendet + auto.counts.wuerde >= auto.limit ? `Tageslimit ${auto.limit} erreicht` : auto.mayContinue());
+            const halt =
+              auto &&
+              (auto.counts.gesendet + auto.counts.wuerde >= auto.limit
+                ? `Tageslimit ${auto.limit} erreicht`
+                : auto.maxOpen !== undefined && opened >= auto.maxOpen
+                  ? `${auto.maxOpen} Inserate geöffnet (begrenzter Lauf)`
+                  : auto.mayContinue());
             if (halt) {
               result.log.push(`${ts()} ⏹ ${halt}`);
               jobState.shouldStop = true;
@@ -300,6 +309,7 @@ export async function runTutor24Messaging(
               continue;
             }
 
+            opened++;
             result.log.push(`${ts()} [${tutor24Id}] Öffne ${href}`);
             await gotoTutor24(page, href, (s) => result.log.push(s));
             await waitForJobListingReady(page, tutor24Id, (s) => result.log.push(s));
@@ -366,6 +376,13 @@ export async function runTutor24Messaging(
               auto.probe.push(`${firstName(displayName)} · ${course?.name ?? "ohne Kurs"} · Erst-Nachricht`);
               tag(`PROBE — würde senden (${course?.name ?? "ohne Kurs"}):\n${message}`);
               continue;
+            }
+            // Notbremse direkt vor dem Senden nochmals lesen (KI-Text und Seitenaufbau dauern bis zu 30 s).
+            const haltNow = auto?.mayContinue();
+            if (haltNow) {
+              result.log.push(`${ts()} ⏹ ${haltNow} — ${tutor24Id} nicht gesendet`);
+              jobState.shouldStop = true;
+              break;
             }
             const outcome = await sendMessageOnListing(page, message, tutor24Id, displayName, (s) =>
               result.log.push(s),

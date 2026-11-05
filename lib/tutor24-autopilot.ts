@@ -134,13 +134,13 @@ async function telegram(method: string, body: Record<string, unknown>): Promise<
 }
 
 /** Meldung an mich. Scheitert nie laut: eine fehlende Meldung darf keinen Durchgang abbrechen. */
-export async function notify(text: string, chatId = process.env.TELEGRAM_CHAT_ID): Promise<boolean> {
+export async function notify(text: string, chatId = process.env.TELEGRAM_CHAT_ID, html = false): Promise<boolean> {
   if (!chatId) {
     console.log(`[telegram, keine TELEGRAM_CHAT_ID] ${text}`);
     return false;
   }
   try {
-    const r = await telegram("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true });
+    const r = await telegram("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true, ...(html ? { parse_mode: "HTML" } : {}) });
     if (!r.ok) console.error(`[telegram] ${r.description}`);
     return r.ok;
   } catch (err) {
@@ -149,7 +149,10 @@ export async function notify(text: string, chatId = process.env.TELEGRAM_CHAT_ID
   }
 }
 
-export type TgUpdate = { update_id: number; message?: { date: number; text?: string; chat: { id: number }; from?: { first_name?: string } } };
+export type TgUpdate = {
+  update_id: number;
+  message?: { date: number; text?: string; chat: { id: number; type?: string }; from?: { id?: number; first_name?: string } };
+};
 export async function getUpdates(offset: number, timeoutS = 50): Promise<TgUpdate[]> {
   const r = await telegram("getUpdates", { offset, timeout: timeoutS, allowed_updates: ["message"] });
   if (!r.ok) throw new Error(`Telegram getUpdates: ${r.description}`);
@@ -173,13 +176,86 @@ export function passSummary(p: PassLog): string {
   ].join("\n");
 }
 
-/** Antwort auf /status */
-export function statusText(s = loadAutopilot(), last = readPassLog(1)[0]): string {
-  return [
-    `Automatik: ${MODE_LABEL[s.modus]}`,
-    ...(s.gestoppt ? [`Zuletzt gestoppt ${fmt(new Date(s.gestoppt.am))}: ${s.gestoppt.grund}`] : []),
-    last ? `Letzter Durchgang:\n${passSummary(last)}` : "Noch kein Durchgang.",
-  ].join("\n");
+// ── 429 und naechster Lauf ────────────────────────────────────────────────────
+
+export const RATE_LIMIT_TEXT = "Tutor24 hat das Anfragelimit erreicht. Der Lauf wurde gestoppt.";
+export const is429 = (s: string) => /\b429\b|too many requests|zu viele anfragen/i.test(s);
+/** ponytail: feste Pause nach einem 429 (tutor24 nennt keine Wartezeit); verlaengern, falls 429 wiederkommt. */
+export const RATE_LIMIT_PAUSE_H = 12;
+
+/** Ende der 429-Pause aus dem Protokoll (letzter Durchgang mit 429 + 12 h); null = keine Pause bekannt. */
+export function rateLimitUntil(passes: PassLog[]): Date | null {
+  const hit = [...passes].reverse().find((p) => is429(p.stopp ?? "") || p.fehler.some(is429));
+  return hit ? new Date(new Date(hit.ende || hit.start).getTime() + RATE_LIMIT_PAUSE_H * 3_600_000) : null;
+}
+/** Laeuft die 429-Pause noch? Dann ihr Ende, sonst null. */
+export const activePause = (passes: PassLog[], now = new Date()) => {
+  const until = rateLimitUntil(passes);
+  return until && until > now ? until : null;
+};
+
+/** Geplante Laeufe (Windows-Aufgabe), Ortszeit des PCs = Europe/Zurich */
+export const RUN_HOURS = [9, 13, 18];
+/** Naechster geplanter Lauf ab `from` (inklusive). */
+export function nextScheduled(from: Date): Date {
+  for (let day = 0; day < 3; day++)
+    for (const h of RUN_HOURS) {
+      const t = new Date(from.getFullYear(), from.getMonth(), from.getDate() + day, h, 0, 0, 0);
+      if (t >= from) return t;
+    }
+  throw new Error("unreachable");
+}
+
+// ── /status ───────────────────────────────────────────────────────────────────
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const TZ = "Europe/Zurich";
+export const fmtZurich = (d: Date) =>
+  d.toLocaleString("de-CH", { timeZone: TZ, weekday: "short", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+/** Kurzes Ergebnis eines Durchgangs */
+export function passResult(p: PassLog): string {
+  if (is429(p.stopp ?? "") || p.fehler.some(is429)) return RATE_LIMIT_TEXT;
+  if (p.stopp) return `Gestoppt: ${p.stopp.slice(0, 120)}`;
+  if (p.fehler.length) return `Abgebrochen: ${p.fehler[0].slice(0, 120)}`;
+  const replies = `${p.antworten} ${p.antworten === 1 ? "neue Antwort" : "neue Antworten"}`;
+  return p.modus === "probe" ? `Probelauf ohne Fehler · ${replies}` : `Ohne Fehler · ${replies}`;
+}
+
+export const HELP_LINES = [
+  "/status zeigt den Stand.",
+  "/run startet einen Probelauf ohne Versand.",
+  "/stop schaltet die Automatik aus.",
+  "/enable schaltet die Automatik ein (mit Bestätigung).",
+];
+
+/** Antwort auf /status (Telegram-HTML), fuer das Handy: Zustand, letzter Lauf, naechster Lauf, Befehle. */
+export function statusHtml(s: AutoState, passes: PassLog[], now = new Date()): string {
+  const last = passes[passes.length - 1];
+  const pause = activePause(passes, now);
+  const head =
+    s.modus === "an" ? "🟢 <b>Automatik eingeschaltet</b>" : s.modus === "probe" ? "🟡 <b>Probe-Modus (sendet nichts)</b>" : "🔴 <b>Automatik ausgeschaltet</b>";
+  const lines = ["<b>Mathetogo · tutor24</b>", head, ""];
+  if (!last) lines.push("Noch kein Lauf erfasst");
+  else {
+    const sent = last.erst.gesendet + last.nachfassen.gesendet;
+    const wuerde = last.erst.wuerde + last.nachfassen.wuerde;
+    lines.push(
+      `<b>Letzter Lauf</b> ${esc(fmtZurich(new Date(last.start)))}`,
+      `<b>Ergebnis</b> ${esc(passResult(last))}`,
+      `<b>Gesendete Nachrichten</b> ${sent}` +
+        (last.modus === "probe" ? ` (Probe: ${wuerde} wären gesendet worden)` : ` (Erst-Nachricht ${last.erst.gesendet} · Nachfassen ${last.nachfassen.gesendet})`)
+    );
+  }
+  // Steht der 429 schon als Ergebnis da, nur noch die Zeit nennen.
+  if (pause)
+    lines.push(
+      "",
+      ...(last && passResult(last) === RATE_LIMIT_TEXT ? [] : [`⏸ ${esc(RATE_LIMIT_TEXT)}`]),
+      `<b>Frühester nächster Lauf</b> ${esc(fmtZurich(s.modus === "an" ? nextScheduled(pause) : pause))}`
+    );
+  else if (s.modus !== "aus") lines.push("", `<b>Nächster geplanter Lauf</b> ${esc(fmtZurich(nextScheduled(now)))}`);
+  return [...lines, "", ...HELP_LINES].join("\n");
 }
 
 /** Abend: alle Durchgaenge eines Tages zusammen. */

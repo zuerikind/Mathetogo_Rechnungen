@@ -1,0 +1,134 @@
+/**
+ * Befehle des Telegram-Bots (scripts/telegram-bot.mts). Alles Aeussere kommt ueber `deps`,
+ * damit die Regeln mit simulierten Telegram-Nachrichten testbar sind (lib/tutor24-bot.test.ts).
+ *
+ * Sicherheit:
+ * - nur der private Chat TELEGRAM_CHAT_ID; alles andere wird ignoriert (ohne Antwort)
+ * - nur feste Befehle, nie Text als Shell-Befehl
+ * - Befehle aelter als MAX_AGE_S werden ignoriert: nach einem Neustart startet ein altes /run nichts
+ *   (doppelt zugestellte Updates haelt schon der gespeicherte Offset ab)
+ * - /enable braucht "JA EINSCHALTEN" innerhalb von CONFIRM_S; die Bestaetigung lebt nur im Speicher,
+ *   ein Neustart verwirft sie
+ */
+import {
+  HELP_LINES,
+  RATE_LIMIT_TEXT,
+  activePause,
+  fmtZurich,
+  nextScheduled,
+  statusHtml,
+  type AutoState,
+  type PassLog,
+  type TgUpdate,
+} from "./tutor24-autopilot";
+
+export const MAX_AGE_S = 120;
+export const CONFIRM_S = 120;
+export const CONFIRM_WORD = "JA EINSCHALTEN";
+/** Umfang von /run: hoechstens so viele Inserate, Chats und Nachfass-Kandidaten */
+export const PROBE_MAX = 3;
+
+export type BotDeps = {
+  chatId: string;
+  now: () => Date;
+  reply: (html: string) => Promise<unknown>;
+  state: () => AutoState;
+  update: (patch: Partial<AutoState>) => AutoState;
+  passes: () => PassLog[];
+  /** wer gerade mit tutor24 arbeitet (Automatik-Lauf, Lauf von Hand), null = frei */
+  busy: () => string | null;
+  /** begrenzten Probelauf als eigenen Prozess starten (scripts/autopilot.mts --probe --max PROBE_MAX) */
+  startProbe: () => void;
+  /** laufenden Nachfass-Lauf vor der naechsten Nachricht anhalten (stop.request) */
+  requestStop: () => void;
+};
+
+const help = () => HELP_LINES.join("\n");
+
+/** Liefert eine Funktion pro Update; der Rueckgabewert beschreibt, was passiert ist (fuers Protokoll und die Tests). */
+export function createBot(deps: BotDeps) {
+  let pendingEnable: number | null = null;
+
+  return async function handle(u: TgUpdate): Promise<string> {
+    const m = u.message;
+    if (!m) return "ignoriert: keine Nachricht";
+    if (String(m.chat.id) !== deps.chatId || (m.chat.type && m.chat.type !== "private")) return `ignoriert: fremder Chat ${m.chat.id}`;
+    const now = deps.now().getTime();
+    if (now - m.date * 1000 > MAX_AGE_S * 1000) return "ignoriert: zu alt";
+
+    const text = (m.text ?? "").trim();
+    // Bestaetigung fuer /enable: genau das Wort, rechtzeitig, und nach der Aufforderung geschrieben.
+    if (pendingEnable !== null && text.toUpperCase() === CONFIRM_WORD) {
+      const asked = pendingEnable;
+      pendingEnable = null;
+      if (now - asked > CONFIRM_S * 1000 || m.date * 1000 < asked - 1000) {
+        await deps.reply("Bestätigung abgelaufen. Bitte nochmals /enable senden.");
+        return "enable: abgelaufen";
+      }
+      deps.update({ modus: "an", gestoppt: null, letzterFehler: null });
+      const pause = activePause(deps.passes(), deps.now());
+      await deps.reply(
+        "🟢 <b>Automatik ist EIN.</b>\n" +
+          "Jetzt wird nichts gesendet. Gesendet wird erst beim nächsten geplanten Lauf " +
+          `(${fmtZurich(nextScheduled(pause ?? deps.now()))}${pause ? ", nach der 429-Pause" : ""}), ` +
+          "sofern die Windows-Aufgabe „Mathetogo tutor24 Automatik“ eingerichtet ist.\n/stop schaltet wieder aus."
+      );
+      return "enable: eingeschaltet";
+    }
+    const cmd = text.split(/[\s@]/)[0].toLowerCase();
+    if (cmd !== "") pendingEnable = null;
+
+    if (cmd === "/status") {
+      await deps.reply(statusHtml(deps.state(), deps.passes(), deps.now()));
+      return "status";
+    }
+
+    if (cmd === "/stop") {
+      deps.update({ modus: "aus", gestoppt: { grund: "per Telegram /stop", am: deps.now().toISOString() } });
+      const running = deps.busy();
+      deps.requestStop();
+      await deps.reply(
+        "🔴 <b>Automatik ist AUS</b> — dauerhaft, bis du sie mit /enable oder auf /kurse wieder einschaltest.\n" +
+          (running
+            ? `Gerade läuft: ${running}. Er liest den Schalter vor jeder einzelnen Nachricht und direkt vor dem Senden erneut und sendet danach nichts mehr. Eine Nachricht, die in dieser Sekunde schon abgeschickt wird, kann noch ankommen.\n`
+            : "Gerade läuft nichts.\n") +
+          "Geplante Läufe starten weiterhin, beenden sich aber sofort ohne Abruf.\n" +
+          "Nicht betroffen: ein von Hand auf /tutor24 gestarteter Erst-Nachrichten-Lauf."
+      );
+      return "stop";
+    }
+
+    if (cmd === "/run") {
+      const pause = activePause(deps.passes(), deps.now());
+      if (pause) {
+        await deps.reply(`⏸ ${RATE_LIMIT_TEXT}\nFrühester nächster Lauf: ${fmtZurich(pause)}. Probelauf nicht gestartet.`);
+        return "run: 429-Pause";
+      }
+      const running = deps.busy();
+      if (running) {
+        await deps.reply(`Läuft schon: ${running}. Kein zweiter Lauf gestartet.`);
+        return "run: belegt";
+      }
+      deps.startProbe();
+      await deps.reply(
+        `🧪 <b>Probelauf gestartet</b> — sendet nichts.\nHöchstens ${PROBE_MAX} Inserate, ${PROBE_MAX} Chats bei „Antworten prüfen“ und ${PROBE_MAX} Nachfass-Kandidaten; Listen nur kurz nachgeladen.\nDas Ergebnis kommt als eigene Meldung; danach /status.`
+      );
+      return "run: gestartet";
+    }
+
+    if (cmd === "/enable") {
+      if (deps.state().modus === "an") {
+        await deps.reply("Die Automatik ist schon EIN.");
+        return "enable: schon an";
+      }
+      pendingEnable = now;
+      await deps.reply(
+        `Automatik dauerhaft einschalten? Ab dem nächsten geplanten Lauf werden echte Nachrichten gesendet.\nZum Bestätigen innerhalb von ${CONFIRM_S / 60} Minuten antworten mit:\n<b>${CONFIRM_WORD}</b>`
+      );
+      return "enable: frage";
+    }
+
+    await deps.reply(help());
+    return "hilfe";
+  };
+}

@@ -53,3 +53,5 @@ exports/
 # tutor24-Nachfassen: Vorschau und Protokoll mit Namen von Interessenten
 tutor24-followup/
 .tutor24.lock
+.autopilot.lock
+.telegram-bot.lock

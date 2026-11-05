@@ -8,6 +8,8 @@ import { join } from "node:path";
  * Ein Speicher-Flag reicht dafuer nicht — die beiden laufen in verschiedenen Prozessen.
  */
 export const TUTOR24_LOCK_PATH = join(process.cwd(), ".tutor24.lock");
+/** Ein ganzer Automatik-Durchgang (scripts/autopilot.mts): die einzelnen Laeufe darin holen TUTOR24_LOCK_PATH nacheinander. */
+export const AUTOPILOT_LOCK_PATH = join(process.cwd(), ".autopilot.lock");
 
 export function pidAlive(pid: number): boolean {
   try {

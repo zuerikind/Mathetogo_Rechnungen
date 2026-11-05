@@ -118,6 +118,9 @@ export type AutoSend = {
   /** Ausgabe */
   counts: PassCounts;
   probe: string[];
+  /** begrenzter Probelauf: hoechstens so viele Nachlade-Runden pro Liste und so viele Chats bei "Antworten pruefen" */
+  maxScrollRounds?: number;
+  maxReplyChecks?: number;
   /** Ausgabe: neue Antworten laut Liste "Gesendet" (auch auf Erst-Nachrichten ohne Kurs) */
   antworten: { id: string; name: string; absage: boolean }[];
 };
@@ -126,6 +129,8 @@ export type AutoSend = {
 type Phase = "liste" | "konversation" | "inserat" | "pause" | "auswertung";
 const PHASES: Phase[] = ["liste", "konversation", "inserat", "pause", "auswertung"];
 const timing = { phases: {} as Record<Phase, { ms: number; calls: number }>, convos: 0 };
+/** Nachlade-Runden pro Liste; der begrenzte Probelauf (/run) setzt weniger, damit er nicht das ganze Postfach liest. */
+let scrollRounds = 200;
 const resetTiming = () => {
   timing.phases = Object.fromEntries(PHASES.map((p) => [p, { ms: 0, calls: 0 }])) as typeof timing.phases;
   timing.convos = 0;
@@ -258,7 +263,7 @@ async function collectList(
   let items = await read();
   let batch = items;
   let why = "";
-  for (let round = 0; round < 200; round++) {
+  for (let round = 0; round < scrollRounds; round++) {
     checkStop();
     why = scrollStop(batch, cache, new Date(), opts.maxAgeDays) ??
       (opts.until?.(new Map(items.map((e) => [e.id, e]))) ? "alle gesuchten gefunden" : "");
@@ -602,6 +607,13 @@ async function send(page: Page, log: Log, courseId?: string, auto?: AutoSend): P
     const button = await page.$(".js-conversations-interface-send-button");
     if (!input || !isTextarea || !button) throw new StopRun(`Unerwarteter Seitenaufbau: Eingabefeld/Senden-Knopf fehlt (${row.conversation_id}).`);
 
+    // Notbremse direkt vor dem Eintippen nochmals lesen (zwischen der Pruefung oben und hier lag das Oeffnen des Chats).
+    checkStop();
+    const haltNow = auto?.mayContinue();
+    if (haltNow) {
+      log(`Aufgehört vor ${row.name}: ${haltNow}`);
+      break;
+    }
     // Cookie-Fenster vor jedem Klick schliessen (es erscheint oft erst nach dem Laden und verdeckt den Knopf).
     await closeCookieBanner(page, log);
     await input.click();
@@ -668,12 +680,15 @@ async function send(page: Page, log: Log, courseId?: string, auto?: AutoSend): P
 }
 
 /** Nur lesend: kam nach meinem Nachfassen eine Antwort? Gewertet wird sie nicht — das markiere ich im Tab. */
-async function replies(page: Page, log: Log, courseId?: string): Promise<void> {
+async function replies(page: Page, log: Log, courseId?: string, max?: number): Promise<void> {
   const all = (await loadLog()).filter((r) => needsReplyCheck(r) && (!courseId || r.kurs === courseId));
   // Erst-Nachricht ohne bekannte Konversation: erst ein Probelauf verknuepft sie (Inserat → Konversation).
-  const open = all.filter((r) => !r.conversation_id.startsWith("inserat:"));
+  const unlinked = all.filter((r) => !r.conversation_id.startsWith("inserat:"));
+  // Begrenzt: die zuletzt Angeschriebenen zuerst.
+  const open = max === undefined ? unlinked : [...unlinked].sort((a, b) => b.zeitstempel.localeCompare(a.zeitstempel)).slice(0, max);
+  if (open.length < unlinked.length) log(`Begrenzt: ${open.length} von ${unlinked.length} Konversationen werden geprüft.`);
   log(`${open.length} angeschriebene Konversationen ohne bekannte Antwort.`);
-  if (all.length > open.length) log(`${all.length - open.length} aus der Erst-Nachricht noch ohne Konversation — Probelauf verknüpft sie.`);
+  if (all.length > unlinked.length) log(`${all.length - unlinked.length} aus der Erst-Nachricht noch ohne Konversation — Probelauf verknüpft sie.`);
   if (!open.length) return;
   // Liste nur so weit laden, bis alle gesuchten Konversationen drin sind (oder aelter als das erste Nachfassen).
   const want = new Set(open.map((r) => r.conversation_id));
@@ -995,13 +1010,14 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
     else if (opts.mode === "auto") {
       if (!opts.auto) throw new Error("mode auto ohne auto-Optionen");
       const auto = opts.auto;
+      if (auto.maxScrollRounds !== undefined) scrollRounds = auto.maxScrollRounds;
       await preview(page, opts.maxChecks ?? 150, log, (sent) => {
         // Eigener Stand nur fuer Meldungen: ein Probelauf von Hand dazwischen verschluckt so keine Antwort.
         for (const e of newActivity(sent, loadListCache("notify:sent")))
           auto.antworten.push({ id: e.id, name: e.name, absage: e.lastSender === "system" });
         saveListCache("notify:sent", Object.fromEntries(sent.map((e) => [e.id, e])));
       });
-      await replies(page, log);
+      await replies(page, log, undefined, auto.maxReplyChecks);
       await send(page, log, undefined, opts.auto);
     }
     else await preview(page, opts.maxChecks ?? 150, log);
