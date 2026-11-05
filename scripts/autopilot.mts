@@ -23,6 +23,19 @@ const { runFollowup } = await import("../lib/tutor24-followup-runner");
 const { runTutor24Messaging } = await import("../lib/tutor24");
 const { followupJobState } = await import("../lib/automation-state");
 const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock } = await import("../lib/tutor24-lock");
+const { laptopSignal } = await import("../lib/tutor24-autopilot");
+const { finishRun, startRun, takeStops, writeLaptop } = await import("../lib/tutor24-watch-db");
+const { START_BUTTON } = await import("../lib/tutor24-watch");
+
+/** Datenbank fuer den Waechter: ein Fehler dort darf den Durchgang weder verhindern noch abbrechen. */
+const db = async <T,>(what: string, f: () => Promise<T>): Promise<T | null> => {
+  try {
+    return await f();
+  } catch (err) {
+    console.error(`[db] ${what}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+};
 
 const log = (s: string) => console.log(`${new Date().toLocaleString("de-CH")} ${s}`);
 const forcedProbe = process.argv.includes("--probe");
@@ -33,6 +46,16 @@ if (max !== undefined && !(Number.isInteger(max) && max >= 1 && max <= 20)) {
   process.exit(1);
 }
 
+const quelleArg = process.argv.indexOf("--quelle");
+/** plan (Aufgabenplanung, autopilot.cmd) | run (Telegram /run) | knopf ("Jetzt starten") | hand */
+const quelle = quelleArg > -1 ? process.argv[quelleArg + 1] : forcedProbe && max ? "run" : "hand";
+
+// /stop vom Handy, waehrend der Laptop aus war: gilt, bevor irgendetwas laeuft.
+if ((await db("Stopp-Befehle", takeStops)) && loadAutopilot().modus !== "aus") {
+  updateAutopilot({ modus: "aus", gestoppt: { grund: "per Telegram /stop", am: new Date().toISOString() } });
+  log("/stop vom Handy angewendet: Automatik ist AUS.");
+  await notify("🔴 /stop angewendet: Automatik ist AUS. Der Durchgang wurde nicht gestartet.");
+}
 const state = loadAutopilot();
 const modus = forcedProbe ? "probe" : state.modus;
 if (modus === "aus") {
@@ -55,6 +78,8 @@ try {
 
 const dryRun = modus === "probe";
 const P = dryRun ? "🧪 PROBE · " : "";
+const runId = await db("Durchgang anlegen", () => startRun(modus, quelle));
+await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
 const settings = loadSettings();
 
 const pass = {
@@ -159,6 +184,8 @@ if (reason) {
 
 appendPassLog(pass);
 log(passSummary(pass));
+if (runId) await db("Durchgang abschliessen", () => finishRun(runId, pass));
+await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
 
 if (dryRun) {
   const list = pass.probe.length ? pass.probe.map((x) => `• ${x}`).join("\n") : "niemand";
@@ -170,6 +197,6 @@ if (dryRun) {
 // Abend-Zusammenfassung: einmal pro Tag, ab dem letzten geplanten Durchgang (nicht beim begrenzten Probelauf)
 const today = localDay();
 if (!max && new Date().getHours() >= SUMMARY_FROM_HOUR && loadAutopilot().zusammenfassungAm !== today) {
-  if (await notify(daySummary(today))) updateAutopilot({ zusammenfassungAm: today });
+  if (await notify(daySummary(today), undefined, false, START_BUTTON)) updateAutopilot({ zusammenfassungAm: today });
 }
 process.exit(0);

@@ -134,13 +134,15 @@ async function telegram(method: string, body: Record<string, unknown>): Promise<
 }
 
 /** Meldung an mich. Scheitert nie laut: eine fehlende Meldung darf keinen Durchgang abbrechen. */
-export async function notify(text: string, chatId = process.env.TELEGRAM_CHAT_ID, html = false): Promise<boolean> {
+export async function notify(text: string, chatId = process.env.TELEGRAM_CHAT_ID, html = false, markup?: object): Promise<boolean> {
   if (!chatId) {
     console.log(`[telegram, keine TELEGRAM_CHAT_ID] ${text}`);
     return false;
   }
   try {
-    const r = await telegram("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true, ...(html ? { parse_mode: "HTML" } : {}) });
+    const r = await telegram("sendMessage", {
+      chat_id: chatId, text, disable_web_page_preview: true, ...(html ? { parse_mode: "HTML" } : {}), ...(markup ? { reply_markup: markup } : {}),
+    });
     if (!r.ok) console.error(`[telegram] ${r.description}`);
     return r.ok;
   } catch (err) {
@@ -152,9 +154,16 @@ export async function notify(text: string, chatId = process.env.TELEGRAM_CHAT_ID
 export type TgUpdate = {
   update_id: number;
   message?: { date: number; text?: string; chat: { id: number; type?: string }; from?: { id?: number; first_name?: string } };
+  /** Druck auf einen Knopf ("Jetzt starten"); hat kein eigenes Datum — gilt als jetzt */
+  callback_query?: { id: string; data?: string; from: { id: number }; message?: { chat: { id: number } } };
 };
+/** Knopf-Druck quittieren; Fehler egal (der Knopf zeigt sonst nur kurz eine Uhr) */
+export async function answerCallback(id: string, text: string): Promise<void> {
+  await telegram("answerCallbackQuery", { callback_query_id: id, text }).catch(() => {});
+}
+
 export async function getUpdates(offset: number, timeoutS = 50): Promise<TgUpdate[]> {
-  const r = await telegram("getUpdates", { offset, timeout: timeoutS, allowed_updates: ["message"] });
+  const r = await telegram("getUpdates", { offset, timeout: timeoutS, allowed_updates: ["message", "callback_query"] });
   if (!r.ok) throw new Error(`Telegram getUpdates: ${r.description}`);
   return (r.result as TgUpdate[]) ?? [];
 }
@@ -193,6 +202,13 @@ export const activePause = (passes: PassLog[], now = new Date()) => {
   const until = rateLimitUntil(passes);
   return until && until > now ? until : null;
 };
+
+/** Lebenszeichen fuer den Waechter (Tutor24Signal "laptop"): jetzt, Modus, letzter Stopp, 429-Pause */
+export function laptopSignal(now = new Date()) {
+  const s = loadAutopilot();
+  const pause = activePause(readPassLog(50), now);
+  return { at: now.toISOString(), modus: s.modus, gestoppt: s.gestoppt, pauseBis: pause?.toISOString() ?? null };
+}
 
 /** Geplante Laeufe (Windows-Aufgabe), Ortszeit des PCs = Europe/Zurich */
 // Start mit 2 statt 3 Durchgaengen (Entscheid 5.11. nach dem 429); muss zur Windows-Aufgabe passen.

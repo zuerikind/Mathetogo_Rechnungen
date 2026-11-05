@@ -39,6 +39,10 @@ export type BotDeps = {
   busy: () => string | null;
   /** begrenzten Probelauf als eigenen Prozess starten (scripts/autopilot.mts --probe --max PROBE_MAX) */
   startProbe: () => void;
+  /** Knopf "Jetzt starten": normaler Durchgang im eingestellten Modus (scripts/autopilot.mts --quelle knopf) */
+  startPass: () => void;
+  /** Telegram: Knopf-Druck quittieren (sonst dreht sich die Uhr am Knopf) */
+  answerCallback?: (id: string, text: string) => Promise<unknown>;
   /** laufenden Nachfass-Lauf vor der naechsten Nachricht anhalten (stop.request) */
   requestStop: () => void;
 };
@@ -49,7 +53,40 @@ const help = () => HELP_LINES.join("\n");
 export function createBot(deps: BotDeps) {
   let pendingEnable: number | null = null;
 
+  /** Knopf "Jetzt starten": wie ein geplanter Durchgang — Modus, Tageslimits, 8–20 Uhr und 429-Pause gelten. */
+  async function startNow(): Promise<string> {
+    const s = deps.state();
+    if (s.modus === "aus") {
+      await deps.reply("🔴 Automatik ist aus — „Jetzt starten“ startet nichts. /run für einen Probelauf, /enable zum Einschalten.");
+      return "start: aus";
+    }
+    const pause = activePause(deps.passes(), deps.now());
+    if (pause) {
+      await deps.reply(`⏸ ${RATE_LIMIT_TEXT}\nFrühester nächster Lauf: ${fmtZurich(pause)}. Nicht gestartet.`);
+      return "start: 429-Pause";
+    }
+    const running = deps.busy();
+    if (running) {
+      await deps.reply(`Läuft schon: ${running}. Kein zweiter Lauf gestartet.`);
+      return "start: belegt";
+    }
+    deps.startPass();
+    const h = deps.now().getHours();
+    await deps.reply(
+      `▶️ <b>Durchgang gestartet</b> (${s.modus === "probe" ? "Probe — sendet nichts" : "EIN — sendet"}).\n` +
+        (s.modus === "an" && (h < 8 || h >= 20) ? "Ausserhalb 8–20 Uhr: er liest nur und sendet nichts.\n" : "") +
+        "Tageslimits gelten. Das Ergebnis kommt als eigene Meldung."
+    );
+    return "start: gestartet";
+  }
+
   return async function handle(u: TgUpdate): Promise<string> {
+    const cb = u.callback_query;
+    if (cb) {
+      if (String(cb.from.id) !== deps.chatId || (cb.message && String(cb.message.chat.id) !== deps.chatId)) return `ignoriert: fremder Knopf ${cb.from.id}`;
+      await deps.answerCallback?.(cb.id, cb.data === "start" ? "Wird gestartet …" : "Unbekannter Knopf");
+      return cb.data === "start" ? startNow() : "ignoriert: unbekannter Knopf";
+    }
     const m = u.message;
     if (!m) return "ignoriert: keine Nachricht";
     if (String(m.chat.id) !== deps.chatId || (m.chat.type && m.chat.type !== "private")) return `ignoriert: fremder Chat ${m.chat.id}`;
@@ -77,6 +114,9 @@ export function createBot(deps: BotDeps) {
     }
     const cmd = text.split(/[\s@]/)[0].toLowerCase();
     if (cmd !== "") pendingEnable = null;
+
+    // "start" kommt vom Webhook auf Vercel (Knopf, als Befehl in die Datenbank gelegt)
+    if (cmd === "start") return startNow();
 
     if (cmd === "/status") {
       await deps.reply(statusHtml(deps.state(), deps.passes(), deps.now()));

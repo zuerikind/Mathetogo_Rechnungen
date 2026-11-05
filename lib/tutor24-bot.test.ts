@@ -24,7 +24,7 @@ const pass = (start: Date, p: Partial<PassLog> = {}): PassLog => ({
 function setup(now: Date, passes: PassLog[] = [], busy: string | null = null) {
   let state: AutoState = { modus: "aus", gestoppt: null, letzterFehler: null, zusammenfassungAm: null, telegramOffset: 0 };
   const replies: string[] = [];
-  const calls = { probe: 0, stop: 0 };
+  const calls = { probe: 0, stop: 0, pass: 0, answered: 0 };
   const clock = { now };
   const deps = {
     chatId: ME,
@@ -35,7 +35,9 @@ function setup(now: Date, passes: PassLog[] = [], busy: string | null = null) {
     passes: () => passes,
     busy: () => busy,
     startProbe: () => void calls.probe++,
+    startPass: () => void calls.pass++,
     requestStop: () => void calls.stop++,
+    answerCallback: async () => void calls.answered++,
   };
   let id = 1;
   const msg = (text: string, o: { chat?: number; type?: string; ageS?: number } = {}): TgUpdate => ({
@@ -71,7 +73,7 @@ describe("Telegram-Bot", () => {
     expect(commands.sort()).toEqual(["/enable", "/run", "/status", "/stop"]);
     await b.handle(b.msg("/irgendwas; rm -rf /"));
     expect(b.replies[1]).not.toContain("rm");
-    expect(b.calls).toEqual({ probe: 0, stop: 0 });
+    expect(b.calls).toEqual({ probe: 0, stop: 0, pass: 0, answered: 0 });
   });
 
   it("429 von tutor24: Stopp, Meldung, Pause; /run erst danach", async () => {
@@ -138,6 +140,28 @@ describe("Telegram-Bot", () => {
     const restarted = createBot(c.deps);
     await restarted(c.msg(CONFIRM_WORD));
     expect(c.state.modus).toBe("aus");
+  });
+
+  it("Knopf 'Jetzt starten': Modus, 429-Pause und laufender Lauf gelten; fremde Knoepfe nicht", async () => {
+    const press = (from = Number(ME)): TgUpdate => ({ update_id: 1, callback_query: { id: "cb", data: "start", from: { id: from }, message: { chat: { id: from } } } });
+    const b = setup(NOW);
+    expect(await b.handle(press(999))).toMatch(/fremder Knopf/);
+    expect(await b.handle(press())).toBe("start: aus"); // Automatik aus: nichts
+    expect(b.calls.answered).toBe(1); // trotzdem quittiert
+    b.deps.update({ modus: "probe" });
+    expect(await b.handle(press())).toBe("start: gestartet");
+    expect(b.calls.pass).toBe(1);
+    expect(b.replies[b.replies.length - 1]).toContain("Probe — sendet nichts");
+    // als Befehl aus der Datenbank (Webhook) genauso
+    expect(await b.handle(b.msg("start"))).toBe("start: gestartet");
+    const busy = setup(NOW, [], "Automatik-Durchgang");
+    busy.deps.update({ modus: "an" });
+    expect(await busy.handle(press())).toBe("start: belegt");
+    const hit = pass(new Date(2026, 10, 5, 12, 28), { stopp: "tutor24: 429 Too Many Requests" });
+    const paused = setup(NOW, [hit]);
+    paused.deps.update({ modus: "an" });
+    expect(await paused.handle(press())).toBe("start: 429-Pause");
+    expect(paused.calls.pass + busy.calls.pass).toBe(0);
   });
 
   it("naechster geplanter Lauf 9 und 17 Uhr", () => {

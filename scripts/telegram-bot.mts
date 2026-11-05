@@ -13,7 +13,8 @@ import { config } from "dotenv";
 
 config({ path: ".env.local" });
 
-const { getUpdates, loadAutopilot, notify, readPassLog, updateAutopilot } = await import("../lib/tutor24-autopilot");
+const { answerCallback, getUpdates, laptopSignal, loadAutopilot, notify, readPassLog, updateAutopilot } = await import("../lib/tutor24-autopilot");
+const { commandResult, takeCommands, writeLaptop } = await import("../lib/tutor24-watch-db");
 const { PROBE_MAX, createBot } = await import("../lib/tutor24-bot");
 const { readStatus, requestStop } = await import("../lib/tutor24-followup-store");
 const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock, pidAlive, readTutor24Lock } = await import("../lib/tutor24-lock");
@@ -58,17 +59,19 @@ const busy = (): string | null => {
   return null;
 };
 
-/** Fester Befehl ohne Benutzereingabe: begrenzter Probelauf als eigener Prozess (ueberlebt einen Bot-Neustart). */
-const startProbe = () => {
+/** Feste Befehle ohne Benutzereingabe, als eigener Prozess (ueberlebt einen Bot-Neustart). */
+const spawnAutopilot = (args: string) => {
   const dir = join(process.cwd(), "tutor24-followup");
   mkdirSync(dir, { recursive: true });
   const out = openSync(join(dir, "autopilot-run.log"), "a");
-  const child = spawn(`npx tsx scripts/autopilot.mts --probe --max ${PROBE_MAX}`, {
+  const child = spawn(`npx tsx scripts/autopilot.mts ${args}`, {
     cwd: process.cwd(), detached: true, windowsHide: true, stdio: ["ignore", out, out], shell: true,
   });
   child.unref();
   closeSync(out);
 };
+const startProbe = () => spawnAutopilot(`--probe --max ${PROBE_MAX} --quelle run`);
+const startPass = () => spawnAutopilot("--quelle knopf");
 
 const handle = createBot({
   chatId: me,
@@ -79,20 +82,73 @@ const handle = createBot({
   passes: () => readPassLog(50),
   busy,
   startProbe,
+  startPass,
   requestStop,
+  answerCallback,
 });
 
-console.log(`${new Date().toLocaleString("de-CH")} Telegram-Bot läuft. Befehle: /status, /run, /stop, /enable`);
+const stamp = () => new Date().toLocaleString("de-CH");
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const HEARTBEAT_MS = 2 * 60_000;
+let lastBeat = 0;
+const heartbeat = async () => {
+  if (Date.now() - lastBeat < HEARTBEAT_MS) return;
+  try {
+    await writeLaptop(laptopSignal());
+    lastBeat = Date.now();
+  } catch (err) {
+    console.error(`${stamp()} Lebenszeichen: ${err instanceof Error ? err.message : String(err)}`);
+    lastBeat = Date.now(); // nicht im Sekundentakt wiederholen
+  }
+};
+
+/** Befehle, die der Webhook auf Vercel in die Datenbank gelegt hat ("start" = Knopf, sonst der getippte Text). */
+const fromQueue = async () => {
+  for (const c of await takeCommands()) {
+    const u = { update_id: 0, message: { date: Math.floor(c.createdAt.getTime() / 1000), text: c.cmd, chat: { id: Number(me), type: "private" } } };
+    const result = await handle(u);
+    await commandResult(c.id, result);
+    console.log(`${stamp()} Befehl ${c.cmd}: ${result}`);
+    lastBeat = 0; // Zustand kann sich geaendert haben: gleich melden
+  }
+};
+
+console.log(`${stamp()} Telegram-Bot läuft. Befehle: /status, /run, /stop, /enable, Knopf „Jetzt starten“`);
+// Solange kein Webhook gesetzt ist, liest der Bot selbst bei Telegram (getUpdates). Ist der Webhook auf
+// Vercel aktiv, antwortet Telegram darauf mit 409 — dann nur noch Befehle aus der Datenbank.
+let webhook = false;
+let webhookCheckedAt = 0;
+let queueFailedAt = 0;
 for (;;) {
   try {
-    const updates = await getUpdates(loadAutopilot().telegramOffset);
-    for (const u of updates) {
-      // Zuerst weiterschieben: ein Befehl, der abstuerzt, kommt nach einem Neustart nicht nochmals.
-      updateAutopilot({ telegramOffset: u.update_id + 1 });
-      console.log(`${new Date().toLocaleString("de-CH")} ${u.update_id}: ${await handle(u)}`);
+    await heartbeat();
+    // Datenbank nicht erreichbar (oder Tabelle noch nicht angelegt): 5 Minuten warten statt alle paar Sekunden melden.
+    if (Date.now() - queueFailedAt > 5 * 60_000)
+      await fromQueue().catch((err) => {
+        queueFailedAt = Date.now();
+        console.error(`${stamp()} Befehle: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    if (webhook && Date.now() - webhookCheckedAt < 60 * 60_000) {
+      await sleep(4000);
+      continue;
+    }
+    try {
+      const updates = await getUpdates(loadAutopilot().telegramOffset, 20);
+      webhook = false;
+      for (const u of updates) {
+        // Zuerst weiterschieben: ein Befehl, der abstuerzt, kommt nach einem Neustart nicht nochmals.
+        updateAutopilot({ telegramOffset: u.update_id + 1 });
+        console.log(`${stamp()} ${u.update_id}: ${await handle(u)}`);
+        lastBeat = 0;
+      }
+    } catch (err) {
+      if (!/409|webhook/i.test(err instanceof Error ? err.message : String(err))) throw err;
+      if (!webhook) console.log(`${stamp()} Webhook aktiv: Befehle kommen jetzt über die Datenbank.`);
+      webhook = true;
+      webhookCheckedAt = Date.now();
     }
   } catch (err) {
-    console.error(`${new Date().toLocaleTimeString("de-CH")} ${err instanceof Error ? err.message : String(err)} — neuer Versuch in 30 s`);
-    await new Promise((r) => setTimeout(r, 30_000));
+    console.error(`${stamp()} ${err instanceof Error ? err.message : String(err)} — neuer Versuch in 30 s`);
+    await sleep(30_000);
   }
 }
