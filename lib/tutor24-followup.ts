@@ -899,6 +899,9 @@ export type LeadInfo = {
   freigabeKursId: string | null;
   /** schon eine Nachfass-Nachricht bekommen (auch ohne Kurs, z.B. franzoesisch) */
   nachgefasst: boolean;
+  /** Versanddaten (ISO) fuer die Pipeline: erste Erst-Nachricht, erstes Nachfassen */
+  erstAm?: string | null;
+  nachfassAm?: string | null;
 };
 
 /** Anrede von Hand umgestellt: du heisst Schueler/in, Sie bei einem Schueler wird "unklar" (DB und Pipeline-Vorschau). */

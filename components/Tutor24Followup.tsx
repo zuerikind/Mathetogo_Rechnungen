@@ -698,14 +698,14 @@ export function Tutor24Followup({
               )}
             </div>
             <p className="mb-4 text-sm text-gray-500">
-              Drei Schritte, von links nach rechts. Jeder läuft im Hintergrund weiter, auch wenn du die Seite neu lädst; es läuft immer nur einer gleichzeitig. Schritt 2 und 3 gelten für den unten ausgewählten Kurs.
+              Alle drei Schritte gehören zum <b>Nachfassen</b>: Wer die Erst-Nachricht bekommen und nicht geantwortet hat, erhält ein Kursangebot. Die <b>Erst-Nachricht</b> selbst schickt die tutor24-Automation (<a href="/tutor24" className="text-[#4A7FC1] underline">Seite tutor24</a>); ob sie schon einen Kurs anbietet, steuert der Schalter „Kurse in der Erst-Nachricht anbieten“ unten. Jeder Schritt läuft im Hintergrund weiter, auch wenn du die Seite neu lädst; es läuft immer nur einer gleichzeitig. Schritt 2 und 3 gelten für den unten ausgewählten Kurs.
             </p>
             <div className="grid gap-3 md:grid-cols-3">
               <div className="flex flex-col rounded-xl border border-gray-100 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 1</p>
-                <h3 className="font-semibold text-gray-900">Neue Kandidaten suchen</h3>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 1 · <span className="text-amber-700">Nachfassen</span></p>
+                <h3 className="font-semibold text-gray-900">Kandidaten fürs Nachfassen suchen</h3>
                 <p className="mt-1 flex-1 text-sm text-gray-500">
-                  Liest deine tutor24-Konversationen und ordnet passende Personen den Kursen zu (Spalte „Bereit“). Sendet nichts.
+                  Liest deine tutor24-Konversationen: wer auf die Erst-Nachricht nicht geantwortet hat, kommt in den passenden Kurs (Spalte „Bereit“). Sendet nichts.
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <button onClick={() => void start("preview")} disabled={blocked || busy || !(maxChecks >= 1)} className={btnPrimary}>
@@ -718,10 +718,10 @@ export function Tutor24Followup({
                 </div>
               </div>
               <div className="flex flex-col rounded-xl border border-gray-100 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 2</p>
-                <h3 className="font-semibold text-gray-900">Kursangebot senden</h3>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 2 · <span className="text-amber-700">Nachfassen</span></p>
+                <h3 className="font-semibold text-gray-900">Nachfassen senden (Kursangebot)</h3>
                 <p className="mt-1 flex-1 text-sm text-gray-500">
-                  Schickt das Angebot an alle in „Bereit“ von <b>{selected?.name || "—"}</b>{selected && !selected.active && " (pausiert — erst Häkchen setzen)"}. Höchstens {send.limit} pro Tag (heute noch {send.budget}), 1–3 Minuten
+                  Schickt die Nachfass-Nachricht mit dem Kursangebot an alle in „Bereit“ von <b>{selected?.name || "—"}</b>{selected && !selected.active && " (pausiert — erst Häkchen setzen)"}. Höchstens {send.limit} pro Tag (heute noch {send.budget}), 1–3 Minuten
                   Pause dazwischen. Alle Texte werden vorher geprüft; danach läuft es ohne Rückfrage durch.
                   {coursePending.length > courseQueue.length && ` ${coursePending.length - courseQueue.length} weitere folgen an einem späteren Tag.`}
                 </p>
@@ -775,10 +775,10 @@ export function Tutor24Followup({
                 )}
               </div>
               <div className="flex flex-col rounded-xl border border-gray-100 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 3</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 3 · <span className="text-amber-700">Nachfassen</span></p>
                 <h3 className="font-semibold text-gray-900">Antworten prüfen</h3>
                 <p className="mt-1 flex-1 text-sm text-gray-500">
-                  Schaut in den Chats der Angeschriebenen von <b>{selected?.name || "—"}</b> nach Antworten. Neue erscheinen in der Pipeline unter „Antwort erhalten“. Sendet nichts.
+                  Schaut in den Chats aller, die den Kurs per Erst-Nachricht oder Nachfassen bekamen, von <b>{selected?.name || "—"}</b> nach Antworten. Neue erscheinen in der Pipeline unter „Antwort erhalten“. Sendet nichts.
                 </p>
                 <div className="mt-3">
                   <button

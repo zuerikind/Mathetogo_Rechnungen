@@ -71,16 +71,19 @@ export async function loadLog(): Promise<LogRow[]> {
 
 /** Was das Nachfassen pro Person wissen muss (Anrede, Sprache, Kurs und Text der Erst-Nachricht, Stand). */
 export async function loadLeadInfo(): Promise<LeadMap> {
-  const leads = await prisma.tutor24Lead.findMany({ include: { messages: { select: { art: true, kursId: true, kursDaten: true }, orderBy: { sentAt: "asc" } } } });
+  const leads = await prisma.tutor24Lead.findMany({ include: { messages: { select: { art: true, kursId: true, kursDaten: true, sentAt: true }, orderBy: { sentAt: "asc" } } } });
   const out: LeadMap = {};
   for (const l of leads) {
     const erst = l.messages.find((m) => m.art === "erst");
+    const nach = l.messages.find((m) => m.art === "nachfassen");
     const info: LeadInfo = {
       quelle: l.quelle, status: l.status, wer: l.wer, kind: l.kind, anrede: l.anrede, sprache: l.sprache,
       erstKursId: erst?.kursId ?? null,
       erstKursDaten: (erst?.kursDaten as Partial<CourseSnapshot> | null) ?? null,
       freigabeKursId: l.freigabeKursId,
-      nachgefasst: l.messages.some((m) => m.art === "nachfassen"),
+      nachgefasst: !!nach,
+      erstAm: erst?.sentAt.toISOString() ?? null,
+      nachfassAm: nach?.sentAt.toISOString() ?? null,
     };
     if (l.conversationId) out[l.conversationId] = info;
     if (l.inseratId) out[`inserat:${l.inseratId}`] = info;

@@ -10,6 +10,7 @@ import {
   pipelineStage,
   type Course,
   type FollowupKind,
+  type LeadInfo,
   type LeadMap,
   type LevelCategory,
   type LogRow,
@@ -46,8 +47,8 @@ const STAGE_STYLE: Record<Stage, string> = {
 };
 
 const STAGE_HINT: Partial<Record<Stage, string>> = {
-  bereit: "Erhalten beim nächsten „Anschreiben“ das Angebot.",
-  angeschrieben: "Noch keine Antwort bekannt. „Antworten prüfen“ schaut nach.",
+  bereit: "Haben die Erst-Nachricht bekommen, nicht geantwortet: erhalten beim nächsten „Nachfassen senden“ das Kursangebot.",
+  angeschrieben: "Kurs per Erst-Nachricht oder Nachfassen bekommen (siehe Kärtchen), noch keine Antwort bekannt.",
   antwort: "Neue Antworten: lesen und einordnen.",
 };
 
@@ -62,6 +63,23 @@ function meta(r: Row | undefined): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/**
+ * Was die Person schon bekommen hat. `fallbackErst` = letzte Nachricht im Chat laut Probelauf
+ * ("22.10.26, 21:31"); nur fuer "Bereit" verlaesslich (noch nicht nachgefasst, keine Antwort).
+ */
+function History({ lead, fallbackErst = "" }: { lead: LeadInfo | undefined; fallbackErst?: string }) {
+  const erst = lead?.erstAm ? fmtDay(lead.erstAm) : fallbackErst.split(",")[0];
+  const nach = lead?.nachfassAm ? fmtDay(lead.nachfassAm) : "";
+  return (
+    <p className="mt-1 flex flex-wrap gap-1 text-[11px]">
+      <span className="rounded bg-blue-50 px-1.5 text-blue-800">Erst-Nachricht {erst ? `am ${erst}` : "(Datum vor dem Protokoll)"}</span>
+      <span className={`rounded px-1.5 ${nach ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-500"}`}>
+        {nach ? `Nachfassen am ${nach}` : "noch nicht nachgefasst"}
+      </span>
+    </p>
+  );
 }
 
 /** Anrede der gesendeten Nachricht steht im Protokoll: "Kursname/du" (nach Uebernahme "… → Kurs"). */
@@ -198,6 +216,7 @@ export function CoursePipeline({
                         </button>
                       </div>
                       <p className="mt-0.5 text-gray-500">{meta(r)}</p>
+                      <History lead={leadFor(leads, r)} fallbackErst={r.letzte_nachricht} />
                       <ReadyMessage course={course} row={r} leads={leads} privatePrice={privatePrice} disabled={disabled} onAnrede={onAnrede} />
                     </article>
                   ))}
@@ -221,6 +240,7 @@ export function CoursePipeline({
                         {meta(byId.get(l.conversation_id))}
                         {sentAnrede(l) && <span className="text-gray-400"> · gesendet per {sentAnrede(l)}</span>}
                       </p>
+                      <History lead={leadFor(leads, l)} />
                       {l.status === "unbestaetigt" && <p className="mt-1 text-amber-700">Senden nicht bestätigt — im Chat nachsehen.</p>}
                       {failed && <p className="mt-1 text-amber-700">Antwort konnte nicht gelesen werden, wird erneut geprüft.</p>}
                       {l.antwort && (
