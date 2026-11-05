@@ -396,3 +396,111 @@ export function assembleFirstMessage(plan: ReturnType<typeof planFirstMessage>, 
   const text = buildFirstMessage(plan.form, fallback, null, plan.privatePrice);
   return { text, course: null, satz: "fallback", problem: firstMessageProblem(text, plan.form, null, plan.privatePrice) };
 }
+
+// ── Vorschau und Pruefung beim Speichern (/kurse) ─────────────────────────────
+
+export type PreviewArt = "erst" | "nachfassen";
+export type PreviewWer = "du" | "eltern" | "unklar" | "en";
+
+const GROUP_LEVEL: Record<string, OfferLevel> = {
+  matura: "matura", bm: "bm", zap_lang: "gymivorbereitung", zap_kurz: "gymivorbereitung",
+  gymi_unter: "gymi", gymi_mittel: "gymi", sek1: "sek", sek2: "sek", sek3: "sek",
+};
+
+const previewForm = (wer: PreviewWer): Form =>
+  wer === "du" ? { typ: "du" } : wer === "eltern" ? { typ: "eltern", ...CHILD.Tochter } : wer === "en" ? { typ: "en" } : { typ: "neutral" };
+
+/**
+ * Nachricht, wie sie mit diesem Kurs rausginge — auch fuer einen ungespeicherten Entwurf.
+ * Erst-Nachricht mit dem Ersatzsatz als Beispiel fuer den persoenlichen Satz (der echte kommt aus dem Inserat).
+ * Eltern-Beispiel: "Ihre Tochter".
+ */
+export function previewMessage(c: Course, privatePrice: number, art: PreviewArt, wer: PreviewWer) {
+  const f = previewForm(wer);
+  if (art === "nachfassen") {
+    const m = followupMessage(c.gruppe === "offen" ? "frage" : "angebot", f, "Lea", c, privatePrice);
+    return { text: m.text, problem: m.problem };
+  }
+  if (c.gruppe === "offen") return { text: "Die Kursgruppe „Stufe offen“ erscheint nicht in der Erst-Nachricht, nur im Nachfassen.", problem: null };
+  const kategorie = GROUP_LEVEL[c.gruppe] ?? "sek";
+  const satz = fallbackSentence({ kategorie } as Analysis, f);
+  const text = buildFirstMessage(f, satz, c, privatePrice);
+  return { text, problem: firstMessageProblem(text, f, c, privatePrice) };
+}
+
+export type FieldIssue = { field: string; msg: string };
+
+/** "9:30–11:10 Uhr" oder "09:30-11:10": Start und Ende als Minuten; null = falsches Format. */
+export function parseTimeRange(t: string): { start: number; end: number } | null {
+  const m = t.trim().match(/^(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})(\s*Uhr)?$/);
+  if (!m) return null;
+  const [h1, m1, h2, m2] = [m[1], m[2], m[3], m[4]].map(Number);
+  if (h1 > 23 || h2 > 23 || m1 > 59 || m2 > 59) return null;
+  return { start: h1 * 60 + m1, end: h2 * 60 + m2 };
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const wholeIn = (n: number, min: number, max: number) => Number.isInteger(n) && n >= min && n <= max;
+
+/**
+ * Pruefung eines Kurses beim Speichern auf /kurse: errors verhindern das Speichern, warnings nur anzeigen.
+ * field = Formularfeld, bei dem die Meldung steht ("vorschau" = Nachrichtentext besteht CHECK_RULES nicht).
+ */
+export function checkCourse(c: Course, all: Course[], privatePrice: number, now = new Date()): { errors: FieldIssue[]; warnings: FieldIssue[] } {
+  const errors: FieldIssue[] = [];
+  const warnings: FieldIssue[] = [];
+  const err = (field: string, msg: string) => errors.push({ field, msg });
+  if (!c.name.trim()) err("name", "Name fehlt.");
+  if (containsForbiddenContact(c.name)) err("name", "Kein Link, keine E-Mail, keine Telefonnummer im Namen.");
+  if (containsForbiddenContact(c.nameEn ?? "")) err("nameEn", "Kein Link, keine E-Mail, keine Telefonnummer im Namen.");
+  if (!c.fach.trim()) err("fach", "Fach fehlt.");
+
+  if (c.gruppe !== "offen") {
+    if (containsForbiddenContact(c.place)) err("place", "Kein Link, keine E-Mail, keine Telefonnummer im Ort.");
+    if (c.mode === "vor Ort" && !c.place.trim()) err("place", "Bei „vor Ort“ bitte den Ort angeben.");
+    const dates = c.saturdays;
+    if (dates.length !== 4 || dates.some((d) => !ISO_DAY.test(d))) err("saturdays", "Bitte vier Termine angeben.");
+    else {
+      if (dates.some((d, i) => i > 0 && d <= dates[i - 1])) err("saturdays", "Die Termine sind nicht in der richtigen Reihenfolge.");
+      const today = isoOf(now);
+      if (dates.some((d) => d < today)) warnings.push({ field: "saturdays", msg: "Ein Termin liegt in der Vergangenheit." });
+    }
+    if (!ISO_DAY.test(c.deadline)) err("deadline", "Anmeldeschluss fehlt.");
+    else if (ISO_DAY.test(dates[0] ?? "") && c.deadline >= dates[0]) err("deadline", "Der Anmeldeschluss muss vor dem ersten Termin liegen.");
+    const time = parseTimeRange(c.time);
+    if (!time) err("time", "Uhrzeit im Format HH:MM–HH:MM, z.B. 9:30–11:10.");
+    else if (time.end <= time.start) err("time", "Das Ende muss nach dem Beginn liegen.");
+    if (!wholeIn(c.pricePerLesson, 1, 500)) err("pricePerLesson", "Preis pro Lektion: ganze Zahl zwischen 1 und 500.");
+    if (!wholeIn(c.lessons, 1, 40)) err("lessons", "Lektionen: ganze Zahl zwischen 1 und 40.");
+    if (!wholeIn(capacity(c), 1, 30)) err("maxParticipants", "Plätze: ganze Zahl zwischen 1 und 30.");
+    if (!wholeIn(c.minParticipants, 1, 30)) err("minParticipants", "Min. Teilnehmende: ganze Zahl zwischen 1 und 30.");
+    else if (c.minParticipants > capacity(c)) err("minParticipants", "Min. Teilnehmende darf nicht grösser als die Plätze sein.");
+
+    // Ueberschneidung mit einem anderen aktiven Kurs: gleicher Samstag, Uhrzeiten ueberlappen.
+    if (time) {
+      for (const o of all) {
+        if (o.id === c.id || !o.active || o.gruppe === "offen") continue;
+        const ot = parseTimeRange(o.time);
+        const same = o.saturdays.filter((d) => c.saturdays.includes(d));
+        if (ot && same.length && ot.start < time.end && time.start < ot.end)
+          warnings.push({ field: "time", msg: `Überschneidet sich mit „${o.name}“ (${same.map((d) => d.slice(8, 10) + "." + d.slice(5, 7) + ".").join(", ")}).` });
+      }
+    }
+  }
+
+  // Nachrichtentext: alle Fassungen muessen die normale Pruefung vor dem Senden bestehen (CHECK_RULES).
+  if (!errors.length) {
+    const forms: PreviewWer[] = ["du", "eltern", "unklar", "en"];
+    for (const art of ["erst", "nachfassen"] as const) {
+      for (const wer of forms) {
+        const p = previewMessage(c, privatePrice, art, wer);
+        if (p.problem) {
+          err("vorschau", `${art === "erst" ? "Erst-Nachricht" : "Nachfassen"} (${wer}): ${p.problem}`);
+          break;
+        }
+      }
+    }
+  }
+  return { errors, warnings };
+}

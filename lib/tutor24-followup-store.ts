@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendVariante, loadLeadInfo, loadLog, sentToday, setLeadAnrede, updateLead } from "./tutor24-leads";
-import { followupForm, followupMessage } from "./tutor24-course-offer";
+import { checkCourse, followupForm, followupMessage } from "./tutor24-course-offer";
 import {
   MARKS,
   MAX_SENDS_PER_DAY,
@@ -162,6 +162,12 @@ export async function saveConfig(input: { settings?: unknown; courses?: unknown 
   const settings = mergeSettings(input.settings as Partial<FollowupSettings> | null);
   const courses = Array.isArray(input.courses) ? (input.courses as Course[]) : [];
   const errors = validateCourses(courses);
+  // Geaenderte und neue Kurse zusaetzlich mit der vollen Pruefung von /kurse (Termine, Zeit, Zahlen, Nachrichtentext).
+  const before = new Map(loadCourses().map((c) => [c.id, JSON.stringify(c)]));
+  for (const c of courses) {
+    if (before.get(c.id) === JSON.stringify(c)) continue;
+    for (const e of checkCourse(c, courses, settings.privatePricePerLesson).errors) errors.push(`${c.name.trim() || "Kurs ohne Namen"}: ${e.msg}`);
+  }
   if (errors.length) throw new Error(errors.join(" "));
   writeChecked(SETTINGS_PATH, JSON.stringify(settings, null, 2));
   const next = JSON.stringify(courses, null, 2);
