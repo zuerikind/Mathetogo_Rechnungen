@@ -1,15 +1,13 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
+import { isOpenPath } from "@/lib/open-routes";
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;
 
-  if (pathname.startsWith("/api/auth") || pathname.startsWith("/login")) {
-    return NextResponse.next();
-  }
-  // Ohne Sitzung, aber mit eigenem Geheimnis geprueft: Telegram (Kopf x-telegram-bot-api-secret-token)
-  // und der Waechter aus GitHub Actions (Authorization: Bearer WATCH_SECRET).
-  if (pathname === "/api/telegram/webhook" || pathname === "/api/tutor24/watch") {
+  // Login/NextAuth sowie genau zwei Routen mit eigenem Geheimnis: Telegram (Kopf
+  // x-telegram-bot-api-secret-token) und der Waechter aus GitHub Actions (Bearer WATCH_SECRET).
+  if (isOpenPath(pathname)) {
     return NextResponse.next();
   }
 

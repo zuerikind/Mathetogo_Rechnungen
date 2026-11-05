@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { answerCallback, notify, type TgUpdate } from "@/lib/tutor24-autopilot";
 import { createWebhook } from "@/lib/tutor24-webhook";
+import { secretOk } from "@/lib/open-routes";
 import { lastPasses, queueCommand, readLaptop } from "@/lib/tutor24-watch-db";
 
 export const runtime = "nodejs";
@@ -13,7 +14,7 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
   const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!secret || !chatId || req.headers.get("x-telegram-bot-api-secret-token") !== secret)
+  if (!chatId || !secretOk(req.headers.get("x-telegram-bot-api-secret-token"), secret))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const update = (await req.json().catch(() => null)) as TgUpdate | null;

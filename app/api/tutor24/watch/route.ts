@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { notify } from "@/lib/tutor24-autopilot";
+import { secretOk } from "@/lib/open-routes";
 import { START_BUTTON, currentCheck, watchDecision, zurichTime } from "@/lib/tutor24-watch";
 import { markReminder, readLaptop, readReminders, runsSince } from "@/lib/tutor24-watch-db";
 
@@ -12,7 +13,7 @@ export const runtime = "nodejs";
  */
 async function watch(req: NextRequest) {
   const secret = process.env.WATCH_SECRET;
-  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!secret || !secretOk(req.headers.get("authorization"), `Bearer ${secret}`)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const now = new Date();
   const check = currentCheck(now);
