@@ -240,6 +240,15 @@ function Group({
                 >
                   {picked.size} markierte freigeben
                 </button>
+                {/* Sichere (Sicherheit hoch) pro Kurs auf einmal; unsichere bleiben einzeln. */}
+                {Array.from(new Set(releasable.filter((p) => p.sicher).map((p) => p.passtZu as string))).map((kurs) => {
+                  const ids = releasable.filter((p) => p.sicher && p.passtZu === kurs).map((p) => p.id);
+                  return (
+                    <button key={kurs} disabled={busy} className={btn} onClick={() => void onPatch(ids, { freigabeKursId: kurs })}>
+                      Für alle {ids.length} sicheren Interessenten freigeben ({courseName(kurs)})
+                    </button>
+                  );
+                })}
               </div>
             )}
             <table className="w-full text-[11px]">
