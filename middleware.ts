@@ -7,6 +7,11 @@ export default auth((req) => {
   if (pathname.startsWith("/api/auth") || pathname.startsWith("/login")) {
     return NextResponse.next();
   }
+  // Ohne Sitzung, aber mit eigenem Geheimnis geprueft: Telegram (Kopf x-telegram-bot-api-secret-token)
+  // und der Waechter aus GitHub Actions (Authorization: Bearer WATCH_SECRET).
+  if (pathname === "/api/telegram/webhook" || pathname === "/api/tutor24/watch") {
+    return NextResponse.next();
+  }
 
   if (!req.auth) {
     // API-Routen bekommen 401 statt einer Weiterleitung: fetch folgt Redirects

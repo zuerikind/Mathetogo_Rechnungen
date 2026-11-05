@@ -105,7 +105,9 @@ const heartbeat = async () => {
 /** Befehle, die der Webhook auf Vercel in die Datenbank gelegt hat ("start" = Knopf, sonst der getippte Text). */
 const fromQueue = async () => {
   for (const c of await takeCommands()) {
-    const u = { update_id: 0, message: { date: Math.floor(c.createdAt.getTime() / 1000), text: c.cmd, chat: { id: Number(me), type: "private" } } };
+    // /stop gilt immer, auch nach Stunden offline; alles, was etwas startet, verfaellt nach MAX_AGE_S.
+    const sent = c.cmd === "/stop" ? new Date() : c.createdAt;
+    const u = { update_id: 0, message: { date: Math.floor(sent.getTime() / 1000), text: c.cmd, chat: { id: Number(me), type: "private" } } };
     const result = await handle(u);
     await commandResult(c.id, result);
     console.log(`${stamp()} Befehl ${c.cmd}: ${result}`);

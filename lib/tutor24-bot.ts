@@ -98,7 +98,8 @@ export function createBot(deps: BotDeps) {
     if (pendingEnable !== null && text.toUpperCase() === CONFIRM_WORD) {
       const asked = pendingEnable;
       pendingEnable = null;
-      if (now - asked > CONFIRM_S * 1000 || m.date * 1000 < asked - 1000) {
+      // asked = Zeitpunkt der /enable-Nachricht: auch richtig, wenn beide zusammen aus der Datenbank kommen.
+      if (m.date * 1000 - asked > CONFIRM_S * 1000 || now - asked > (CONFIRM_S + MAX_AGE_S) * 1000 || m.date * 1000 < asked) {
         await deps.reply("Bestätigung abgelaufen. Bitte nochmals /enable senden.");
         return "enable: abgelaufen";
       }
@@ -161,7 +162,7 @@ export function createBot(deps: BotDeps) {
         await deps.reply("Die Automatik ist schon EIN.");
         return "enable: schon an";
       }
-      pendingEnable = now;
+      pendingEnable = m.date * 1000;
       await deps.reply(
         `Automatik dauerhaft einschalten? Ab dem nächsten geplanten Lauf werden echte Nachrichten gesendet.\nZum Bestätigen innerhalb von ${CONFIRM_S / 60} Minuten antworten mit:\n<b>${CONFIRM_WORD}</b>`
       );

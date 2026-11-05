@@ -1,0 +1,28 @@
+# Waechter fuer die tutor24-Automatik: ruft die Pruefung auf Vercel auf (app/api/tutor24/watch).
+# Zuercher Pruefzeiten 9:45, 12:00, 15:00, 17:45, 20:00 — GitHub rechnet in UTC, deshalb je zwei Zeiten
+# (Winter UTC+1, Sommer UTC+2). Die Seite entscheidet selbst nach Zuercher Zeit und erinnert pro
+# Pruefzeit hoechstens einmal; ein Aufruf vor der ersten Pruefzeit tut nichts.
+# Noetig in GitHub: Secret WATCH_SECRET, Variable WATCH_URL (https://<app>/api/tutor24/watch).
+name: tutor24-waechter
+
+on:
+  schedule:
+    - cron: "45 7,8 * * *"   # 9:45
+    - cron: "0 10,11 * * *"  # 12:00
+    - cron: "0 13,14 * * *"  # 15:00
+    - cron: "45 15,16 * * *" # 17:45
+    - cron: "0 18,19 * * *"  # 20:00
+  workflow_dispatch: {}
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Pruefung auf Vercel aufrufen
+        env:
+          WATCH_SECRET: ${{ secrets.WATCH_SECRET }}
+          WATCH_URL: ${{ vars.WATCH_URL }}
+        run: |
+          test -n "$WATCH_SECRET" && test -n "$WATCH_URL" || { echo "WATCH_SECRET oder WATCH_URL fehlt"; exit 1; }
+          curl -fsS --retry 3 --retry-delay 20 -X POST -H "Authorization: Bearer $WATCH_SECRET" "$WATCH_URL"
