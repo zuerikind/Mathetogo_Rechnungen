@@ -39,6 +39,7 @@ import {
   type PreviewWer,
 } from "@/lib/tutor24-course-offer";
 import { CoursePipeline } from "./Tutor24Pipeline";
+import { AutopilotPanel, type AutopilotInfo } from "./AutopilotPanel";
 
 type Row = Omit<PreviewRow, "nachricht">;
 type Mode = "preview" | "send" | "replies";
@@ -64,6 +65,7 @@ type StatusResponse = {
   log: LogRow[];
   /** Stand aus Tutor24Lead: Anrede, Sprache, Kurs der Erst-Nachricht */
   leads: LeadMap;
+  autopilot: AutopilotInfo;
   send: {
     limit: number;
     sentToday: number;
@@ -685,6 +687,16 @@ export function Tutor24Followup({
 
       {view === "kurse" ? (
         <>
+          <AutopilotPanel
+            info={status.autopilot}
+            settings={draft.settings}
+            onSettings={setSettings}
+            saveButton={saveButton}
+            onMode={async (modus) => {
+              await post({ action: "autopilot", modus });
+              await fetchStatus();
+            }}
+          />
           {/* Automationen: der Ablauf in drei Schritten */}
           <div className={cardClass}>
             <div className="mb-1 flex flex-wrap items-center gap-3">

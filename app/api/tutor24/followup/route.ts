@@ -24,6 +24,7 @@ import {
   type RunStatus,
 } from "@/lib/tutor24-followup-store";
 import { pidAlive, readTutor24Lock } from "@/lib/tutor24-lock";
+import { loadAutopilot, readPassLog, updateAutopilot, type AutoMode } from "@/lib/tutor24-autopilot";
 
 export const runtime = "nodejs";
 
@@ -99,6 +100,7 @@ export async function GET() {
     rows: readPreview().map(({ nachricht: _omit, ...r }) => r),
     log,
     leads,
+    autopilot: { ...loadAutopilot(), telegramOffset: undefined, durchgaenge: readPassLog(10).reverse() },
     send: {
       limit: MAX_SENDS_PER_DAY,
       sentToday: await sentToday(),
@@ -119,7 +121,8 @@ type PostBody =
   | { action: "status"; id: string; status: "send" | "skip" }
   | { action: "mark"; id: string; markierung: string }
   | { action: "assign"; id: string; kurs: string }
-  | { action: "anrede"; id: string; anrede: "du" | "Sie" };
+  | { action: "anrede"; id: string; anrede: "du" | "Sie" }
+  | { action: "autopilot"; modus: AutoMode };
 
 /** POST — Lauf starten, Faecher/Kurse speichern, Zeile umschalten oder Antwort markieren */
 export async function POST(req: NextRequest) {
@@ -127,6 +130,13 @@ export async function POST(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = (await req.json().catch(() => ({}))) as PostBody;
+  // Automatik-Schalter (Notbremse) auch waehrend eines Laufs: "aus" haelt den laufenden Durchgang vor der naechsten Nachricht an.
+  if (body.action === "autopilot") {
+    if (body.modus !== "aus" && body.modus !== "probe" && body.modus !== "an") return NextResponse.json({ error: "Modus muss aus, probe oder an sein." }, { status: 400 });
+    const next = updateAutopilot({ modus: body.modus, ...(body.modus === "aus" ? {} : { gestoppt: null, letzterFehler: null }) });
+    if (body.modus === "aus" && runStatus().running) requestStop();
+    return NextResponse.json({ ok: true, modus: next.modus });
+  }
   // Waehrend eines Laufs schreibt dieser CSV und Protokoll — keine parallelen Aenderungen.
   const status = runStatus();
   if (status.running) return NextResponse.json({ error: "Ein Nachfass-Lauf ist aktiv." }, { status: 409 });
