@@ -402,6 +402,53 @@ model Tutor24Message {
   @@map("tutor24_message")
 }
 
+/// Ein Durchgang der tutor24-Automatik (scripts/autopilot.mts): der Waechter auf Vercel prueft damit, ob der faellige lief.
+model Tutor24Run {
+  id        String    @id @default(cuid())
+  startedAt DateTime  @default(now())
+  /// null = laeuft (oder abgestuerzt)
+  endedAt   DateTime?
+  /// aus | probe | an
+  modus     String
+  /// plan (Aufgabenplanung) | run (Telegram /run) | knopf ("Jetzt starten") | hand (Kommandozeile)
+  quelle    String
+  /// kurz, wie in /status ("Ohne Fehler · 2 neue Antworten", "Tutor24 hat das Anfragelimit erreicht …")
+  ergebnis  String    @default("")
+  /// Grund, wenn der Durchgang die Automatik ausgeschaltet hat
+  stopp     String?
+  is429     Boolean   @default(false)
+  gesendet  Int       @default(0)
+  wuerde    Int       @default(0)
+  /// ganzes Protokoll des Durchgangs (PassLog)
+  daten     Json?
+
+  @@index([startedAt])
+  @@map("tutor24_run")
+}
+
+/// Kleine Zustaende fuer den Waechter: "laptop" (Lebenszeichen, Modus, 429-Pause), "erinnerungen" (schon geschickt).
+model Tutor24Signal {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("tutor24_signal")
+}
+
+/// Befehl aus Telegram (ueber den Webhook auf Vercel) an den Bot auf dem Laptop.
+model Tutor24Command {
+  id        String    @id @default(cuid())
+  /// status | run | start | stop | enable | confirm | help
+  cmd       String
+  createdAt DateTime  @default(now())
+  /// null = offen; der Laptop setzt die Zeit, wenn er den Befehl uebernimmt
+  takenAt   DateTime?
+  result    String    @default("")
+
+  @@index([takenAt, createdAt])
+  @@map("tutor24_command")
+}
+
 enum AcademigoContactType {
   teacher
   student
