@@ -426,7 +426,15 @@ export type FollowupSettings = {
   newFirstMessage: boolean;
   /** Mein Preis pro Lektion im Einzelunterricht: Vergleich im Kursblock beider Nachrichten. */
   privatePricePerLesson: number;
+  /** Automatik (scripts/autopilot.mts): hoechstens so viele pro Tag (gezaehlt aus der Datenbank) */
+  autoErstLimit: number;
+  autoNachfassLimit: number;
+  /** Automatik: Nachfassen fruehestens so viele Tage nach der Erst-Nachricht */
+  nachfassNachTagen: number;
 };
+
+/** ganze Zahl >= 0, sonst Standard */
+const count = (v: unknown, def: number) => (Number.isInteger(Number(v)) && Number(v) >= 0 && v !== null && v !== "" ? Number(v) : def);
 
 export function mergeSettings(saved: Partial<FollowupSettings> | null | undefined): FollowupSettings {
   return {
@@ -435,6 +443,9 @@ export function mergeSettings(saved: Partial<FollowupSettings> | null | undefine
     listingOnDemand: saved?.listingOnDemand === true,
     newFirstMessage: saved?.newFirstMessage === true,
     privatePricePerLesson: Number(saved?.privatePricePerLesson) > 0 ? Number(saved?.privatePricePerLesson) : DEFAULT_PRIVATE_PRICE,
+    autoErstLimit: count(saved?.autoErstLimit, 20),
+    autoNachfassLimit: Math.min(count(saved?.autoNachfassLimit, 15), MAX_SENDS_PER_DAY),
+    nachfassNachTagen: Math.max(count(saved?.nachfassNachTagen, 4), MIN_AGE_DAYS),
   };
 }
 

@@ -80,6 +80,7 @@ import {
 } from "./tutor24-followup-store";
 import { acquireTutor24Lock, readTutor24Lock } from "./tutor24-lock";
 import { fromPreview, recordSend, syncPreviewLeads } from "./tutor24-leads";
+import { autoEligible, firstName, type PassCounts } from "./tutor24-autopilot";
 import {
   CookieBannerError,
   TUTOR24_BASE_URL,
@@ -103,6 +104,20 @@ const fmtDate = (d: Date) => d.toLocaleString("de-CH", { dateStyle: "short", tim
 const jitter = (minMs: number, maxMs: number) => minMs + Math.random() * (maxMs - minMs);
 
 type Log = (line: string) => void;
+
+/** Automatik (scripts/autopilot.mts): nur sichere Faelle, eigenes Limit, Probe ohne Senden. */
+export type AutoSend = {
+  /** hoechstens so viele in diesem Durchgang (Tageslimit minus heute schon gesendet) */
+  limit: number;
+  /** Nachfassen fruehestens so viele Tage nach meiner letzten Nachricht (= Erst-Nachricht) */
+  minAgeDays: number;
+  dryRun: boolean;
+  /** vor jeder Nachricht: Grund zum Aufhoeren (Zeitfenster, Automatik aus) oder null */
+  mayContinue: () => string | null;
+  /** Ausgabe */
+  counts: PassCounts;
+  probe: string[];
+};
 
 // ── Zeitmessung ──
 type Phase = "liste" | "konversation" | "inserat" | "pause" | "auswertung";
@@ -521,16 +536,26 @@ async function preview(page: Page, maxChecks: number, log: Log): Promise<void> {
   log(`Vorschau: ${PREVIEW_PATH}`);
 }
 
-async function send(page: Page, log: Log, courseId?: string): Promise<void> {
+async function send(page: Page, log: Log, courseId?: string, auto?: AutoSend): Promise<void> {
   const courses = loadCourses();
   // Gespeicherte Kurse koennen aus der Zeit vor einer Pruefregel stammen: vor dem ersten Senden pruefen.
   const invalid = validateCourses(courses);
   if (invalid.length) throw new StopRun(`Kurse fehlerhaft, nichts gesendet: ${invalid.join(" ")}`);
-  const { pending, queue } = await sendQueue(courses, loadSettings(), new Date(), courseId);
+  const q = await sendQueue(courses, loadSettings(), new Date(), courseId);
+  const pending = auto ? q.pending.filter(autoEligible) : q.pending;
+  let queue = auto ? pending.slice(0, Math.min(q.budget, auto.limit)) : q.queue;
+  if (auto && q.pending.length > pending.length) log(`${q.pending.length - pending.length} offene nicht automatisch (unsicher, Stufen-Frage, ohne Kurs) — nur von Hand.`);
   // Alle Texte VOR der ersten Nachricht pruefen: der Lauf bricht nie mittendrin wegen eines Textes ab.
   const bad = queue.filter((r) => r.problem);
-  if (bad.length)
-    throw new StopRun(`Nichts gesendet — ${bad.length} Nachricht(en) fehlerhaft: ${bad.map((r) => `${r.name}: ${r.problem}`).join("; ")}`);
+  const badText = bad.map((r) => `${r.name}: ${r.problem}`).join("; ");
+  if (auto) {
+    // Automatik: fehlerhafte ueberspringen; mehr als 3 → die Automatik stoppt (siehe stopReason).
+    auto.counts.pruefungFehler += bad.length;
+    auto.counts.uebersprungen += bad.length;
+    if (bad.length > 3) throw new StopRun(`Nichts gesendet — ${bad.length} Nachricht(en) fehlerhaft: ${badText}`);
+    if (bad.length) log(`${bad.length} Nachricht(en) fehlerhaft, übersprungen: ${badText}`);
+    queue = queue.filter((r) => !r.problem);
+  } else if (bad.length) throw new StopRun(`Nichts gesendet — ${bad.length} Nachricht(en) fehlerhaft: ${badText}`);
   log(`Alle ${queue.length} Nachrichten vorab geprüft (CHECK_RULES.nachfassen): Anrede, Gruss, Signatur, Kursblock wortgleich, Bezug auf die Erst-Nachricht, keine Links/Nummern.`);
   log(
     `Heute schon gesendet: ${await sentToday()}/25. Jetzt: ${queue.length} von ${pending.length} offenen (nur aktive Kurse).` +
@@ -542,15 +567,29 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
   for (let i = 0; i < queue.length; i++) {
     const row = queue[i];
     checkStop();
+    const halt = auto?.mayContinue();
+    if (halt) {
+      log(`Aufgehört vor Nr. ${i + 1}: ${halt}`);
+      break;
+    }
     state.done = sentCount;
     state.progress = `${row.name} (${row.conversation_id}), Nr. ${i + 1} von ${queue.length}, ${sentCount} gesendet`;
     const text = row.text;
 
     // Zwischen Probelauf und Senden kann eine Antwort gekommen sein: neu pruefen.
     const convo = await readConversation(page, row.conversation_id);
-    const reason = conversationSkipReason(convo, new Date());
+    const reason =
+      conversationSkipReason(convo, new Date()) ??
+      (auto && convo.lastMineDate && ageDays(convo.lastMineDate, new Date()) < auto.minAgeDays ? `jünger als ${auto.minAgeDays} Tage` : null);
     if (reason) {
       log(`[${i + 1}/${queue.length}] ${row.name}: übersprungen (${reason})`);
+      if (auto) auto.counts.uebersprungen++;
+      continue;
+    }
+    if (auto?.dryRun) {
+      auto.counts.wuerde++;
+      auto.probe.push(`${firstName(row.name)} · ${row.course?.name ?? "ohne Kurs"} · Nachfassen`);
+      log(`[${i + 1}/${queue.length}] PROBE — würde senden: ${row.name} (${row.course?.name ?? "ohne Kurs"}, ${row.anrede}, ${row.kind})`);
       continue;
     }
 
@@ -606,10 +645,12 @@ async function send(page: Page, log: Log, courseId?: string): Promise<void> {
       throw new StopRun(`Senden an ${row.name} (${row.conversation_id}) nicht bestätigt — bitte in tutor24 nachsehen. Als "unbestaetigt" protokolliert.`);
     }
     sentCount++;
+    if (auto) auto.counts.gesendet++;
     state.done = sentCount;
     log(`[${i + 1}/${queue.length}] ✓ ${row.name} (${row.course?.name ?? "ohne Kurs"}, ${row.anrede}, ${row.kind})`);
 
     if (i < queue.length - 1) {
+      // Pause wie beim Senden von Hand (1–3 Minuten).
       const wait = jitter(60_000, 180_000);
       log(`   warte ${Math.round(wait / 1000)} s …`);
       // In Sekundenschritten warten, damit "Stoppen" nicht drei Minuten braucht.
@@ -843,7 +884,9 @@ async function compare(page: Page, n: number, log: Log): Promise<void> {
 }
 
 export type FollowupRunOptions = {
-  mode: "preview" | "send" | "replies" | "compare" | "replycheck";
+  mode: "preview" | "send" | "replies" | "compare" | "replycheck" | "auto";
+  /** nur mode "auto": Kandidaten suchen → Antworten pruefen → Nachfassen, in einer Anmeldung */
+  auto?: AutoSend;
   /** Probelauf: hoechstens so viele Konversationen oeffnen; Vergleich: so viele vergleichen */
   maxChecks?: number;
   /** Senden/Antworten prüfen: nur dieser Kurs; ohne Angabe alle */
@@ -898,6 +941,7 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
         : opts.mode === "replies" ? "Nachfassen (Antworten prüfen)"
         : opts.mode === "compare" ? "Nachfassen (Vergleich)"
         : opts.mode === "replycheck" ? "Antwortprüfung (nur lesend)"
+        : opts.mode === "auto" ? (opts.auto?.dryRun ? "Automatik (Probe)" : "Automatik")
         : "Nachfassen (Probelauf)"
     );
   } catch (err) {
@@ -944,6 +988,12 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
     else if (opts.mode === "replies") await replies(page, log, opts.courseId);
     else if (opts.mode === "compare") await compare(page, opts.maxChecks ?? 20, log);
     else if (opts.mode === "replycheck") await replyCheck(page, opts.maxChecks ?? 30, log);
+    else if (opts.mode === "auto") {
+      if (!opts.auto) throw new Error("mode auto ohne auto-Optionen");
+      await preview(page, opts.maxChecks ?? 150, log);
+      await replies(page, log);
+      await send(page, log, undefined, opts.auto);
+    }
     else await preview(page, opts.maxChecks ?? 150, log);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

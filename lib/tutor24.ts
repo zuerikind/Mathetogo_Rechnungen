@@ -31,7 +31,19 @@ import {
   type ListingProfile,
 } from "./tutor24-messaging";
 
+import { StopRun, assertPageOk } from "./tutor24-followup-runner";
+import { firstName, isHardStop, type PassCounts } from "./tutor24-autopilot";
+
 export type { Tutor24Result } from "./tutor24-types";
+
+/** Automatik (scripts/autopilot.mts): Tageslimit, Probe ohne Senden, Zeitfenster/Notbremse vor jeder Nachricht. */
+export type AutoErst = {
+  limit: number;
+  dryRun: boolean;
+  mayContinue: () => string | null;
+  counts: PassCounts;
+  probe: string[];
+};
 export { tutor24JobState as jobState } from "./automation-state";
 
 export const MESSAGE_TEMPLATE = TUTOR24_MESSAGE_TEMPLATE;
@@ -87,7 +99,8 @@ function searchUrl(subject: string, pageNum: number) {
 export async function runTutor24Messaging(
   headless = false,
   maxPages = 10,
-  subjects = ["Mathematik", "Physik"]
+  subjects = ["Mathematik", "Physik"],
+  auto?: AutoErst
 ): Promise<import("./tutor24-types").Tutor24Result> {
   assertNoAutomationRunning("tutor24");
 
@@ -125,6 +138,7 @@ export async function runTutor24Messaging(
   try {
     await loginToTutor24(page, email, password, (s) => result.log.push(s));
     await acceptTutor24Cookies(page, (s) => result.log.push(s));
+    await assertPageOk(page, "nach dem Login");
 
     for (const subject of subjects) {
       result.log.push(`${ts()} ════ Suche: ${subject} ════`);
@@ -272,6 +286,13 @@ export async function runTutor24Messaging(
             break;
           }
           try {
+            // Automatik: Limit, Zeitfenster und Notbremse VOR dem Oeffnen (spart auch den KI-Aufruf).
+            const halt = auto && (auto.counts.gesendet + auto.counts.wuerde >= auto.limit ? `Tageslimit ${auto.limit} erreicht` : auto.mayContinue());
+            if (halt) {
+              result.log.push(`${ts()} ⏹ ${halt}`);
+              jobState.shouldStop = true;
+              break;
+            }
             const existing = await prisma.tutor24Contact.findUnique({ where: { tutor24Id } });
             if (existing) {
               result.skipped++;
@@ -282,6 +303,7 @@ export async function runTutor24Messaging(
             result.log.push(`${ts()} [${tutor24Id}] Öffne ${href}`);
             await gotoTutor24(page, href, (s) => result.log.push(s));
             await waitForJobListingReady(page, tutor24Id, (s) => result.log.push(s));
+            await assertPageOk(page, `Inserat ${tutor24Id}`);
 
             const listingTitle = await page.title();
             const displayName = listingTitle.split(/[-–|]/)[0].trim() || tutor24Id;
@@ -326,6 +348,10 @@ export async function runTutor24Messaging(
               if (composed.problem) {
                 tag(`⚠ Nachricht nicht sendbar (${composed.problem}) — übersprungen`);
                 result.skipped++;
+                if (auto) {
+                  auto.counts.pruefungFehler++;
+                  auto.counts.uebersprungen++;
+                }
                 continue;
               }
               message = composed.text;
@@ -334,6 +360,13 @@ export async function runTutor24Messaging(
               message = await generateTutor24Message(profile, tag);
             }
 
+            if (auto?.dryRun) {
+              const course = kursId ? loadCourses().find((c) => c.id === kursId) : null;
+              auto.counts.wuerde++;
+              auto.probe.push(`${firstName(displayName)} · ${course?.name ?? "ohne Kurs"} · Erst-Nachricht`);
+              tag(`PROBE — würde senden (${course?.name ?? "ohne Kurs"}):\n${message}`);
+              continue;
+            }
             const outcome = await sendMessageOnListing(page, message, tutor24Id, displayName, (s) =>
               result.log.push(s),
               href
@@ -355,10 +388,12 @@ export async function runTutor24Messaging(
                 lead: leadFields(info, plan, language),
               });
               result.messaged++;
+              if (auto) auto.counts.gesendet++;
               result.newContacts.push({ name: displayName, tutor24Id, profileUrl: href });
               await sleep(1500);
             } else if (outcome === "skipped_no_button") {
               result.skipped++;
+              if (auto) auto.counts.uebersprungen++;
             } else if (outcome === "skipped_no_textarea") {
               result.errors.push(`No textarea: ${tutor24Id} (${displayName})`);
             } else if (outcome === "error_no_submit") {
@@ -367,6 +402,8 @@ export async function runTutor24Messaging(
               result.errors.push(`Send unconfirmed: ${tutor24Id} (${displayName})`);
             }
           } catch (err) {
+            // Captcha, Sicherheitsabfrage, Login-Umleitung: sofort ganz aufhoeren, nichts weiter versuchen.
+            if (err instanceof StopRun || isHardStop(err instanceof Error ? err.message : String(err))) throw err;
             // Cookie-Fenster bleibt offen: ganzer Lauf sauber beenden, nichts weiter senden.
             if (err instanceof CookieBannerError) {
               result.errors.push(err.message);

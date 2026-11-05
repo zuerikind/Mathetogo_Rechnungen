@@ -163,9 +163,9 @@ export async function recordSend(r: SendRecord): Promise<void> {
 }
 
 /** Nachfass-Nachrichten heute (auch "unbestaetigt" zaehlt mit) — fuers Tageslimit. */
-export async function sentToday(now = new Date()): Promise<number> {
+export async function sentToday(now = new Date(), art: "nachfassen" | "erst" = "nachfassen"): Promise<number> {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return prisma.tutor24Message.count({ where: { art: "nachfassen", sentAt: { gte: start } } });
+  return prisma.tutor24Message.count({ where: { art, sentAt: { gte: start } } });
 }
 
 /** Inserat-ID → Kurs, der schon in der Erst-Nachricht angeboten wurde. */
