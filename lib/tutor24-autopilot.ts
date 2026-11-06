@@ -245,6 +245,7 @@ export function passResult(p: PassLog): string {
 export const HELP_LINES = [
   "/status zeigt den Stand.",
   "/run startet einen Probelauf ohne Versand.",
+  "/erst 5 schreibt jetzt bis zu 5 neue Inserate an (/erst allein: bis zum Tageslimit).",
   "/stop schaltet die Automatik aus.",
   "/enable schaltet die Automatik ein (mit Bestätigung).",
 ];

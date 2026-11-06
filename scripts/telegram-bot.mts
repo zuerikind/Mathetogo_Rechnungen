@@ -110,6 +110,8 @@ const spawnAutopilot = (args: string) => {
 };
 const startProbe = () => spawnAutopilot(`--probe --max ${PROBE_MAX} --quelle run`);
 const startPass = () => spawnAutopilot("--quelle knopf");
+// n kommt aus parseErst (ganze Zahl 1–20) — nie freier Text in der Befehlszeile.
+const startErst = (n: number | null) => spawnAutopilot(`--erst${n && Number.isInteger(n) ? ` ${n}` : ""} --quelle erst`);
 
 const handle = createBot({
   chatId: me,
@@ -121,6 +123,7 @@ const handle = createBot({
   busy,
   startProbe,
   startPass,
+  startErst,
   requestStop,
   answerCallback,
 });

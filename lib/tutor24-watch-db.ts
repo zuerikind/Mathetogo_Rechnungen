@@ -91,6 +91,11 @@ export async function takeStops(): Promise<number> {
   return count;
 }
 
+/** Stand eines Befehls fuer die Website (/kurse): null = unbekannt; takenAt null = Laptop hat ihn noch nicht abgeholt */
+export async function commandStatus(id: string) {
+  return prisma.tutor24Command.findUnique({ where: { id }, select: { cmd: true, createdAt: true, takenAt: true, result: true } });
+}
+
 export async function commandResult(id: string, result: string): Promise<void> {
   await prisma.tutor24Command.update({ where: { id }, data: { result } }).catch(() => {});
 }

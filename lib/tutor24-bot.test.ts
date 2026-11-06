@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONFIRM_WORD, createBot } from "./tutor24-bot";
+import { CONFIRM_WORD, createBot, parseErst } from "./tutor24-bot";
 import {
   RATE_LIMIT_TEXT,
   emptyCounts,
@@ -24,7 +24,7 @@ const pass = (start: Date, p: Partial<PassLog> = {}): PassLog => ({
 function setup(now: Date, passes: PassLog[] = [], busy: string | null = null) {
   let state: AutoState = { modus: "aus", gestoppt: null, letzterFehler: null, zusammenfassungAm: null, telegramOffset: 0 };
   const replies: string[] = [];
-  const calls = { probe: 0, stop: 0, pass: 0, answered: 0 };
+  const calls = { probe: 0, stop: 0, pass: 0, answered: 0, erst: [] as Array<number | null> };
   const clock = { now };
   const deps = {
     chatId: ME,
@@ -36,6 +36,7 @@ function setup(now: Date, passes: PassLog[] = [], busy: string | null = null) {
     busy: () => busy,
     startProbe: () => void calls.probe++,
     startPass: () => void calls.pass++,
+    startErst: (n: number | null) => void calls.erst.push(n),
     requestStop: () => void calls.stop++,
     answerCallback: async () => void calls.answered++,
   };
@@ -70,10 +71,10 @@ describe("Telegram-Bot", () => {
     expect(t).toContain("/run startet einen Probelauf ohne Versand.");
     expect(t).toContain("/stop schaltet die Automatik aus.");
     const commands = t.match(/^\/\w+/gm) ?? [];
-    expect(commands.sort()).toEqual(["/enable", "/run", "/status", "/stop"]);
+    expect(commands.sort()).toEqual(["/enable", "/erst", "/run", "/status", "/stop"]);
     await b.handle(b.msg("/irgendwas; rm -rf /"));
     expect(b.replies[1]).not.toContain("rm");
-    expect(b.calls).toEqual({ probe: 0, stop: 0, pass: 0, answered: 0 });
+    expect(b.calls).toEqual({ probe: 0, stop: 0, pass: 0, answered: 0, erst: [] });
   });
 
   it("429 von tutor24: Stopp, Meldung, Pause; /run erst danach", async () => {
@@ -184,5 +185,41 @@ describe("Telegram-Bot", () => {
     expect(t).toContain("<b>Ergebnis</b> Ohne Fehler · 1 neue Antwort");
     expect(t).toContain("<b>Gesendete Nachrichten</b> 6 (Erst-Nachricht 4 · Nachfassen 2)");
     expect(t).toMatch(/<b>Nächster geplanter Lauf<\/b> Do\.?,? 05\.11\.2026,? 17:00/);
+  });
+});
+
+describe("/erst N", () => {
+  it("Zahl nur 1–20, sonst nichts; kein freier Text", () => {
+    expect(parseErst("/erst")).toEqual({ n: null });
+    expect(parseErst("/erst 5")).toEqual({ n: 5 });
+    expect(parseErst("/erst@MathetogoBot 20")).toEqual({ n: 20 });
+    for (const t of ["/erst 0", "/erst 21", "/erst 5 6", "/erst -3", "/erst 5; del", "/erst abc", "/erst 5.5"]) expect(parseErst(t), t).toBeNull();
+  });
+
+  it("Modus, 429-Pause, 8–20 Uhr (nur EIN), ein Lauf zur Zeit", async () => {
+    const b = setup(NOW);
+    expect(await b.handle(b.msg("/erst 5"))).toBe("erst: aus");
+    b.deps.update({ modus: "probe" });
+    expect(await b.handle(b.msg("/erst 99"))).toBe("erst: ungültig");
+    expect(await b.handle(b.msg("/erst 5"))).toBe("erst: gestartet");
+    expect(b.replies[b.replies.length - 1]).toContain("Probe — sendet nichts");
+    expect(await b.handle(b.msg("/erst"))).toBe("erst: belegt"); // eben gestartet
+    expect(b.calls.erst).toEqual([5]);
+
+    const night = setup(new Date(2026, 10, 5, 21, 30));
+    night.deps.update({ modus: "an" });
+    expect(await night.handle(night.msg("/erst 3"))).toBe("erst: ausserhalb 8–20 Uhr");
+    night.deps.update({ modus: "probe" });
+    expect(await night.handle(night.msg("/erst 3"))).toBe("erst: gestartet"); // Probe: Fenster gilt nicht
+    expect(night.calls.erst).toEqual([3]);
+
+    const hit = pass(new Date(2026, 10, 5, 12, 28), { stopp: "tutor24: 429 Too Many Requests" });
+    const paused = setup(NOW, [hit]);
+    paused.deps.update({ modus: "an" });
+    expect(await paused.handle(paused.msg("/erst"))).toBe("erst: 429-Pause");
+    const busy = setup(NOW, [], "Automatik-Durchgang");
+    busy.deps.update({ modus: "an" });
+    expect(await busy.handle(busy.msg("/erst"))).toBe("erst: belegt");
+    expect(paused.calls.erst.length + busy.calls.erst.length).toBe(0);
   });
 });

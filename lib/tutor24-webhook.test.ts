@@ -78,3 +78,17 @@ describe("Telegram-Webhook (Vercel)", () => {
     expect(w.replies).toEqual([]);
   });
 });
+
+describe("Webhook: /erst", () => {
+  it("nur die gepruefte Zahl geht an den Laptop; offline sofort 'offline'", async () => {
+    const w = setup(on);
+    expect(await w.handle(w.msg("/erst 5"))).toBe("/erst: weitergegeben");
+    expect(await w.handle(w.msg("/erst"))).toBe("/erst: weitergegeben");
+    expect(await w.handle(w.msg("/erst 5; rm -rf"))).toBe("erst: ungültig");
+    expect(w.queued.map(([, c]) => c)).toEqual(["/erst 5", "/erst"]);
+    const o = setup(off);
+    expect(await o.handle(o.msg("/erst 3"))).toBe("/erst: offline");
+    expect(o.replies[0]).toContain("Laptop ist seit");
+    expect(o.queued).toEqual([]);
+  });
+});

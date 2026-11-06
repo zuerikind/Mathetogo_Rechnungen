@@ -15,6 +15,7 @@ import {
   RATE_LIMIT_TEXT,
   activePause,
   fmtZurich,
+  inSendWindow,
   nextScheduled,
   statusHtml,
   type AutoState,
@@ -41,6 +42,8 @@ export type BotDeps = {
   startProbe: () => void;
   /** Knopf "Jetzt starten": normaler Durchgang im eingestellten Modus (scripts/autopilot.mts --quelle knopf) */
   startPass: () => void;
+  /** /erst N: nur Erst-Nachrichten, bis zu n (null = Tageslimit), im eingestellten Modus (scripts/autopilot.mts --erst n) */
+  startErst?: (n: number | null) => void;
   /** Telegram: Knopf-Druck quittieren (sonst dreht sich die Uhr am Knopf) */
   answerCallback?: (id: string, text: string) => Promise<unknown>;
   /** laufenden Nachfass-Lauf vor der naechsten Nachricht anhalten (stop.request) */
@@ -48,6 +51,19 @@ export type BotDeps = {
 };
 
 const help = () => HELP_LINES.join("\n");
+
+export const ERST_MAX = 20;
+/**
+ * "/erst" oder "/erst 5" (auch "/erst@Bot 5"), Zahl 1–ERST_MAX. Alles andere: null (keine freien Eingaben).
+ * n = null heisst: Tageslimit.
+ */
+export function parseErst(text: string): { n: number | null } | null {
+  const m = text.trim().match(/^\/erst(?:@\w+)?(?:\s+(\d{1,2}))?$/i);
+  if (!m) return null;
+  if (m[1] === undefined) return { n: null };
+  const n = Number(m[1]);
+  return n >= 1 && n <= ERST_MAX ? { n } : null;
+}
 
 /** Liefert eine Funktion pro Update; der Rueckgabewert beschreibt, was passiert ist (fuers Protokoll und die Tests). */
 export function createBot(deps: BotDeps) {
@@ -160,6 +176,40 @@ export function createBot(deps: BotDeps) {
         `🧪 <b>Probelauf gestartet</b> — sendet nichts.\nHöchstens ${PROBE_MAX} Inserate, ${PROBE_MAX} Chats bei „Antworten prüfen“ und ${PROBE_MAX} Nachfass-Kandidaten; Listen nur kurz nachgeladen.\nDas Ergebnis kommt als eigene Meldung; danach /status.`
       );
       return "run: gestartet";
+    }
+
+    if (cmd === "/erst") {
+      const p = parseErst(text);
+      if (!p || !deps.startErst) {
+        await deps.reply(`So geht es: /erst (bis zum Tageslimit) oder /erst 5 (1 bis ${ERST_MAX}).`);
+        return "erst: ungültig";
+      }
+      const s = deps.state();
+      if (s.modus === "aus") {
+        await deps.reply("🔴 Automatik ist aus — /erst startet nichts. /enable zum Einschalten.");
+        return "erst: aus";
+      }
+      const pause = activePause(deps.passes(), deps.now());
+      if (pause) {
+        await deps.reply(`⏸ ${RATE_LIMIT_TEXT}\nFrühester nächster Lauf: ${fmtZurich(pause)}. Nicht gestartet.`);
+        return "erst: 429-Pause";
+      }
+      if (s.modus === "an" && !inSendWindow(deps.now())) {
+        await deps.reply("Ausserhalb 8–20 Uhr wird nichts gesendet — nicht gestartet.");
+        return "erst: ausserhalb 8–20 Uhr";
+      }
+      const running = busyNow();
+      if (running) {
+        await deps.reply(`Läuft schon: ${running}. Kein zweiter Lauf gestartet.`);
+        return "erst: belegt";
+      }
+      deps.startErst(p.n);
+      spawnedAt = deps.now().getTime();
+      await deps.reply(
+        `✉️ <b>Erst-Nachrichten gestartet</b> (${s.modus === "probe" ? "Probe — sendet nichts" : "EIN — sendet"}): bis zu ${p.n ?? "Tageslimit"} neue Inserate${p.n ? " (höchstens bis zum Tageslimit)" : ""}.\n` +
+          "Ich melde mich am Ende mit Anzahl, davon mit Kursblock und mit Hinweis."
+      );
+      return "erst: gestartet";
     }
 
     if (cmd === "/enable") {

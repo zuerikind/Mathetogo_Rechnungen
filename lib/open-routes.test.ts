@@ -49,7 +49,7 @@ describe("middleware: nur zwei Adressen ohne Login", () => {
     for (const p of [
       "/", "/kurse", "/rechnungen", "/api/invoices", "/api/invoice/generate", "/api/students", "/api/tutor24/followup",
       "/api/telegram", "/api/telegram/webhook/x", "/api/telegram/webhookx", "/api/tutor24/watch/x", "/api/tutor24/watchx",
-      "/api/tutor24", "/API/telegram/webhook", "/api/telegram/webhook/../../invoices",
+      "/api/tutor24", "/API/telegram/webhook", "/api/telegram/webhook/../../invoices", "/api/tutor24/erst",
     ])
       expect(isOpenPath(p), p).toBe(false);
   });
@@ -136,5 +136,19 @@ describe("secretOk", () => {
     expect(secretOk("abc", undefined)).toBe(false);
     expect(secretOk("", "")).toBe(false);
     expect(secretOk(null, "abc")).toBe(false);
+  });
+});
+
+describe("/api/tutor24/erst braucht einen Login", () => {
+  it("ohne Sitzung 401, nichts in die Befehlstabelle", async () => {
+    vi.resetModules();
+    vi.doMock("@/auth", () => ({ auth: vi.fn(async () => null) }));
+    const queue = vi.fn(async () => true);
+    vi.doMock("@/lib/tutor24-watch-db", () => ({ readLaptop: vi.fn(async () => ({ at: new Date().toISOString(), modus: "probe", gestoppt: null, pauseBis: null })), queueCommand: queue, commandStatus: vi.fn() }));
+    const erst = await import("@/app/api/tutor24/erst/route");
+    expect((await erst.POST(req("/api/tutor24/erst", {}, { anzahl: 5 }))).status).toBe(401);
+    expect((await erst.GET(req("/api/tutor24/erst?id=web:x", {}, undefined, "GET"))).status).toBe(401);
+    expect(queue).not.toHaveBeenCalled();
+    expect(isOpenPath("/api/tutor24/erst")).toBe(false);
   });
 });

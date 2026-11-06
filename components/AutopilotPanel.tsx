@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { AutoMode, AutoState, PassLog } from "@/lib/tutor24-autopilot";
 import type { FollowupSettings } from "@/lib/tutor24-followup";
 
@@ -78,6 +79,7 @@ export function AutopilotPanel({
         {num("nachfassNachTagen", "Nachfassen frühestens nach Tagen", 3)}
         {saveButton}
       </div>
+      <ErstNow />
       <details className="mt-3 text-xs" open={info.durchgaenge.length > 0}>
         <summary className="cursor-pointer font-semibold text-gray-600">Letzte Durchgänge ({info.durchgaenge.length})</summary>
         {info.durchgaenge.length === 0 ? (
@@ -122,6 +124,80 @@ export function AutopilotPanel({
           </table>
         )}
       </details>
+    </div>
+  );
+}
+
+/** Was der Laptop aus dem Befehl gemacht hat (Rueckgabe von lib/tutor24-bot.ts, /erst) */
+const ERST_RESULT: Record<string, string> = {
+  "erst: gestartet": "Gestartet. Das Ergebnis kommt per Telegram.",
+  "erst: aus": "Nicht gestartet: Automatik ist aus.",
+  "erst: 429-Pause": "Nicht gestartet: 429-Pause läuft.",
+  "erst: ausserhalb 8–20 Uhr": "Nicht gestartet: ausserhalb 8–20 Uhr (Modus EIN).",
+  "erst: belegt": "Nicht gestartet: es läuft schon ein Lauf.",
+  "erst: ungültig": "Nicht gestartet: ungültige Anzahl.",
+  "ignoriert: zu alt": "Nicht gestartet: der Laptop hat den Befehl zu spät abgeholt.",
+};
+
+/**
+ * Knopf "Erst-Nachrichten jetzt senden": legt /erst N in die Befehlstabelle (app/api/tutor24/erst), der Laptop holt ihn ab.
+ * Modus, Tageslimit, 8–20 Uhr, 429-Pause und "nur ein Lauf" prueft der Laptop.
+ */
+function ErstNow() {
+  const [anzahl, setAnzahl] = useState("5");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const start = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/tutor24/erst", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ anzahl: anzahl.trim() === "" ? null : Number(anzahl) }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; text?: string; error?: string };
+      setMsg(data.text ?? data.error ?? "Fehler");
+      if (!data.ok || !data.id) return;
+      // Der Laptop holt Befehle alle paar Sekunden ab: bis zu 30 s auf seine Antwort warten.
+      for (let i = 0; i < 15; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const s = (await (await fetch(`/api/tutor24/erst?id=${encodeURIComponent(data.id)}`)).json().catch(() => ({}))) as { abgeholt?: boolean; ergebnis?: string };
+        if (s.ergebnis) {
+          setMsg(ERST_RESULT[s.ergebnis] ?? s.ergebnis);
+          return;
+        }
+      }
+      setMsg("Der Laptop hat den Befehl noch nicht abgeholt. Das Ergebnis kommt per Telegram, falls er ihn noch übernimmt.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-600">
+      <span>Erst-Nachrichten jetzt:</span>
+      <input
+        type="number"
+        min={1}
+        max={20}
+        value={anzahl}
+        onChange={(e) => setAnzahl(e.target.value)}
+        placeholder="Tageslimit"
+        className={`${inputClass} w-20`}
+        title="1 bis 20; leer = bis zum Tageslimit"
+      />
+      <button
+        type="button"
+        onClick={start}
+        disabled={busy}
+        className="rounded-lg border border-[#4A7FC1] px-3 py-1 text-sm font-semibold text-[#4A7FC1] hover:bg-blue-50 disabled:opacity-50"
+      >
+        {busy ? "Läuft …" : "Erst-Nachrichten jetzt senden"}
+      </button>
+      <span className="text-xs text-gray-400">Modus, Tageslimit, 8–20 Uhr und 429-Pause gelten. Auch online über den Laptop.</span>
+      {msg && <p className="w-full text-xs text-gray-700">{msg}</p>}
     </div>
   );
 }

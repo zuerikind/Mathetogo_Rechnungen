@@ -7,7 +7,7 @@
  * - /stop merkt er sich immer; der Laptop wendet ihn an, sobald er an ist, vor jedem Durchgang
  * Gleiche Schutzregeln wie der Laptop-Bot (lib/tutor24-bot.ts): nur mein privater Chat, keine alten Befehle.
  */
-import { CONFIRM_WORD, MAX_AGE_S } from "./tutor24-bot";
+import { CONFIRM_WORD, ERST_MAX, MAX_AGE_S, parseErst } from "./tutor24-bot";
 import { HELP_LINES, fmtZurich, statusHtml, type AutoState, type PassLog, type TgUpdate } from "./tutor24-autopilot";
 import { laptopOnline, offlineText, type LaptopSignal } from "./tutor24-watch";
 
@@ -79,6 +79,19 @@ export function createWebhook(deps: WebhookDeps) {
         return "stop: gemerkt (offline)";
       }
       return "stop: weitergegeben";
+    }
+    if (cmd === "/erst") {
+      // Nur die geprueften Zahl weitergeben, nie den getippten Text.
+      const p = parseErst(text);
+      if (!p) {
+        await deps.reply(`So geht es: /erst (bis zum Tageslimit) oder /erst 5 (1 bis ${ERST_MAX}).`);
+        return "erst: ungültig";
+      }
+      if (!online) {
+        await deps.reply(offline);
+        return "/erst: offline";
+      }
+      return (await deps.queue(id, p.n ? `/erst ${p.n}` : "/erst")) ? "/erst: weitergegeben" : "doppelt";
     }
     if (FORWARD.has(cmd) || text.toUpperCase() === CONFIRM_WORD) {
       if (!online) {

@@ -46,11 +46,21 @@ if (max !== undefined && !(Number.isInteger(max) && max >= 1 && max <= 20)) {
   process.exit(1);
 }
 
+// --erst [N]: nur Erst-Nachrichten (Telegram /erst N, Knopf auf /kurse), bis zu N (ohne N: Tageslimit), N 1–20.
+const erstArg = process.argv.indexOf("--erst");
+const erstOnly = erstArg > -1;
+const erstRaw = erstOnly ? process.argv[erstArg + 1] : undefined;
+const erstN = erstRaw && /^\d+$/.test(erstRaw) ? Number(erstRaw) : undefined;
+if (erstN !== undefined && !(erstN >= 1 && erstN <= 20)) {
+  console.error("--erst braucht eine ganze Zahl von 1 bis 20 (oder keine)");
+  process.exit(1);
+}
+
 const quelleArg = process.argv.indexOf("--quelle");
 /** plan (Aufgabenplanung, autopilot.cmd) | run (Telegram /run) | knopf ("Jetzt starten") | hand */
 const quelle = quelleArg > -1 ? process.argv[quelleArg + 1] : forcedProbe && max ? "run" : "hand";
 /** vom Handy gestartet: auch ein "nicht gestartet" melden, sonst wartet man vergeblich */
-const asked = quelle === "knopf" || quelle === "run";
+const asked = quelle === "knopf" || quelle === "run" || quelle === "erst";
 if (asked) {
   // Vom Bot gestartet: Ausgabe selbst ins Protokoll schreiben (weder vererbter Handle noch cmd-Umleitung kamen an).
   const { appendFileSync } = await import("node:fs");
@@ -90,7 +100,7 @@ if (pause) {
 }
 // Ein Durchgang zur Zeit (Aufgabenplanung und Telegram /run koennen sich ueberschneiden).
 try {
-  const release = acquireTutor24Lock(forcedProbe ? "Probelauf" : "Automatik-Durchgang", AUTOPILOT_LOCK_PATH);
+  const release = acquireTutor24Lock(forcedProbe ? "Probelauf" : erstOnly ? "Erst-Nachrichten-Lauf" : "Automatik-Durchgang", AUTOPILOT_LOCK_PATH);
   process.on("exit", release);
 } catch (err) {
   log(`Läuft schon, nicht gestartet: ${err instanceof Error ? err.message : String(err)}`);
@@ -139,7 +149,7 @@ let busy = false;
 
 try {
   // 1. Erst-Nachrichten an neue Inserate (begrenzt: nur Mathematik, eine Suchseite)
-  const erstLimit = Math.min(max ?? Infinity, Math.max(0, settings.autoErstLimit - (await sentToday(new Date(), "erst"))));
+  const erstLimit = Math.min(max ?? erstN ?? Infinity, Math.max(0, settings.autoErstLimit - (await sentToday(new Date(), "erst"))));
   if (!inSendWindow() && !dryRun) log((erstNote = "Ausserhalb 8–20 Uhr: keine Erst-Nachrichten."));
   else if (erstLimit === 0) log((erstNote = `Tageslimit Erst-Nachrichten (${settings.autoErstLimit}) erreicht.`));
   else {
@@ -157,8 +167,9 @@ try {
 
   // 2.–4. Kandidaten suchen → Antworten prüfen → Nachfassen (eine Anmeldung)
   const nachLimit = Math.min(max ?? Infinity, Math.max(0, settings.autoNachfassLimit - (await sentToday())));
-  // Notbremse waehrend der Erst-Nachrichten: Durchgang hier ganz beenden.
-  if (!forcedProbe && loadAutopilot().modus === "aus") log("Automatik wurde ausgeschaltet — Durchgang beendet.");
+  // Notbremse waehrend der Erst-Nachrichten: Durchgang hier ganz beenden. /erst: nur Schritt 1.
+  if (erstOnly) log("Nur Erst-Nachrichten (/erst) — fertig.");
+  else if (!forcedProbe && loadAutopilot().modus === "aus") log("Automatik wurde ausgeschaltet — Durchgang beendet.");
   else {
     log(`Nachfassen: höchstens ${nachLimit}, frühestens ${settings.nachfassNachTagen} Tage nach der Erst-Nachricht …`);
     await runFollowup({
@@ -242,17 +253,24 @@ await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
 // Schlussmeldung immer, auch im Modus EIN (Stopp und Abbruch haben oben zusaetzlich ihre eigene).
 const later = inSendWindow() ? "" : " — würde ab 8:00 gesendet";
 const list = dryRun ? `\nWürde senden:\n${pass.probe.length ? pass.probe.map((x) => `• ${x}${later}`).join("\n") : "niemand"}` : "";
+const n = dryRun ? pass.erst.wuerde : pass.erst.gesendet;
 await notify(
-  `${P}${pass.stopp || fatal || busy ? "■" : "✅"} Durchgang ${hhmm(pass.start)} fertig (${minutes(pass.start)})\n` +
-    `Ergebnis: ${busy ? "vorzeitig beendet (gestoppt)" : passResult(pass)}\n` +
-    `Erst-Nachrichten ${sentOrWould(pass.erst)} (${erstKinds()}) · Nachfassen ${sentOrWould(pass.nachfassen)} · Antworten ${pass.antworten}` +
-    (pass.notes.length ? `\n${pass.notes.join("\n")}` : "") +
-    list.slice(0, 3500)
+  erstOnly
+    ? `${P}${pass.stopp || fatal || busy ? "■" : "✉️"} Erst-Nachrichten ${hhmm(pass.start)} fertig (${minutes(pass.start)})\n` +
+        `${n} ${dryRun ? "würden angeschrieben" : "angeschrieben"}: ${pass.erst.kurs ?? 0} mit Kursblock, ${pass.erst.hinweis ?? 0} mit Hinweis, ${n - (pass.erst.kurs ?? 0) - (pass.erst.hinweis ?? 0)} ohne beides.\n` +
+        `${pass.erst.uebersprungen} übersprungen${erstNote && !n ? ` · ${erstNote}` : ""} · Ergebnis: ${busy ? "vorzeitig beendet (gestoppt)" : passResult(pass)}` +
+        (pass.notes.length ? `\n${pass.notes.join("\n")}` : "") +
+        list.slice(0, 3500)
+    : `${P}${pass.stopp || fatal || busy ? "■" : "✅"} Durchgang ${hhmm(pass.start)} fertig (${minutes(pass.start)})\n` +
+        `Ergebnis: ${busy ? "vorzeitig beendet (gestoppt)" : passResult(pass)}\n` +
+        `Erst-Nachrichten ${sentOrWould(pass.erst)} (${erstKinds()}) · Nachfassen ${sentOrWould(pass.nachfassen)} · Antworten ${pass.antworten}` +
+        (pass.notes.length ? `\n${pass.notes.join("\n")}` : "") +
+        list.slice(0, 3500)
 );
 
-// Abend-Zusammenfassung: einmal pro Tag, ab dem letzten geplanten Durchgang (nicht beim begrenzten Probelauf)
+// Abend-Zusammenfassung: einmal pro Tag, ab dem letzten geplanten Durchgang (nicht beim begrenzten Probelauf, nicht bei /erst)
 const today = localDay();
-if (!max && new Date().getHours() >= SUMMARY_FROM_HOUR && loadAutopilot().zusammenfassungAm !== today) {
+if (!max && !erstOnly && new Date().getHours() >= SUMMARY_FROM_HOUR && loadAutopilot().zusammenfassungAm !== today) {
   if (await notify(daySummary(today), undefined, false, START_BUTTON)) updateAutopilot({ zusammenfassungAm: today });
 }
 process.exit(0);
