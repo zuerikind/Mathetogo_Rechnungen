@@ -130,6 +130,9 @@ describe("secretOk", () => {
   it("nur exakt gleich und nie ohne erwartetes Geheimnis", () => {
     expect(secretOk("abc", "abc")).toBe(true);
     expect(secretOk("abd", "abc")).toBe(false);
+    expect(secretOk("ab", "abc")).toBe(false);
+    expect(secretOk("abcd", "abc")).toBe(false);
+    expect(secretOk("abc\u0000", "abc")).toBe(false);
     expect(secretOk("abc", undefined)).toBe(false);
     expect(secretOk("", "")).toBe(false);
     expect(secretOk(null, "abc")).toBe(false);
