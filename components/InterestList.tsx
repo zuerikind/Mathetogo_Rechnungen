@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { LEVEL_LABEL, type LevelCategory } from "@/lib/tutor24-followup";
-import type { CourseFunnel, InterestGroup, InterestPerson } from "@/lib/tutor24-leads";
+import type { CourseFunnel, HintReply, InterestGroup, InterestPerson } from "@/lib/tutor24-leads";
 
 type Data = {
   weeks: string[];
   groups: InterestGroup[];
   funnel: CourseFunnel[];
   primar: Array<{ stufe: string; perWeek: number[]; total: number }>;
+  hinweisAntworten?: HintReply[];
   courses: Array<{ id: string; name: string; active: boolean; gruppe: string; fach: string }>;
 };
 
@@ -71,6 +72,31 @@ export function InterestList() {
         </label>
       </div>
       {error && <p className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-700">{error}</p>}
+
+      {!!data.hinweisAntworten?.length && (
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+          <p className="text-xs font-semibold text-emerald-800">
+            Hat auf Kurs-Hinweis geantwortet ({data.hinweisAntworten.length}) · bekommt keine automatischen Nachrichten mehr, bitte selbst antworten
+          </p>
+          <ul className="mt-2 divide-y divide-emerald-100 text-xs text-gray-700">
+            {data.hinweisAntworten.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5">
+                <span className="font-semibold text-gray-900">{p.name || "ohne Namen"}</span>
+                <span className="rounded bg-white px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">hat auf Kurs-Hinweis geantwortet</span>
+                <span>{p.stufe || "Stufe unbekannt"}</span>
+                <span className="text-gray-500">{p.anrede}</span>
+                <span className="text-gray-400">angeschrieben {fmt(p.datum)}</span>
+                {p.status !== "offen" && <span className="text-gray-500">· {p.status}</span>}
+                {p.konversationUrl && (
+                  <a href={p.konversationUrl} target="_blank" rel="noreferrer" className="ml-auto font-semibold text-[#4A7FC1] hover:underline">
+                    Chat öffnen
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {data.funnel.length > 0 && (
         <table className="mt-4 w-full text-left text-xs">

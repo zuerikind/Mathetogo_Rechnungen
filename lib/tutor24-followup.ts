@@ -933,6 +933,10 @@ export type LeadInfo = {
   /** Versanddaten (ISO) fuer die Pipeline: erste Erst-Nachricht, erstes Nachfassen */
   erstAm?: string | null;
   nachfassAm?: string | null;
+  /** Erst-Nachricht mit Academigo-Hinweis: eine Antwort darauf meldet Telegram mit Stufe; danach nichts Automatisches mehr */
+  erstHinweis?: boolean;
+  stufe?: string;
+  geantwortet?: boolean;
 };
 
 /** Anrede von Hand umgestellt: du heisst Schueler/in, Sie bei einem Schueler wird "unklar" (DB und Pipeline-Vorschau). */
@@ -972,6 +976,8 @@ export function effectiveStatus(
   if (lead?.status === "Zusage" || lead?.status === "Bezahlt") return no("angemeldet");
   if (lead?.status === "Absage") return no("abgesagt");
   if (lead?.status === "ignoriert") return no("ignoriert");
+  // Antwort auf den Kurs-Hinweis: ich melde mich selbst, nie automatisch (unabhaengig von der Antwort-Erkennung im Chat).
+  if (lead?.erstHinweis && lead.geantwortet) return no("hat auf Kurs-Hinweis geantwortet");
   if (row.grund) return no(row.grund);
   // Franzoesisch: einfaches Nachfassen ohne Kurs (es gibt keinen franzoesischen Kursblock).
   if (lead?.sprache === "fr") return { send: true, label: "wird gesendet", course: null, kind: "einfach" };

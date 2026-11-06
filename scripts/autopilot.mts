@@ -206,8 +206,15 @@ const toNotify = new Map(listReplies.map((r) => [r.id, r]));
 for (const r of logRows.filter((r) => r.geantwortet === "ja" && !repliedBefore.has(r.conversation_id)))
   if (!toNotify.has(r.conversation_id)) toNotify.set(r.conversation_id, { id: r.conversation_id, name: r.name, absage: r.markierung === "Absage" });
 pass.antworten = toNotify.size;
-for (const r of toNotify.values())
-  await notify(`${P}💬 ${r.absage ? "Absage" : "Antwort"} von ${firstName(r.name)} · ${kursOf(r.id)}\nhttps://www.tutor24.ch/de/conversations/${r.id}?tab=sent`);
+for (const r of toNotify.values()) {
+  const link = `https://www.tutor24.ch/de/conversations/${r.id}?tab=sent`;
+  const lead = leadInfo[r.id];
+  await notify(
+    lead?.erstHinweis && !r.absage
+      ? `${P}💬 Antwort auf Kurs-Hinweis von ${firstName(r.name)} · Stufe ${lead.stufe || "unbekannt"}\n${link}\nBekommt keine automatischen Nachrichten mehr.`
+      : `${P}💬 ${r.absage ? "Absage" : "Antwort"} von ${firstName(r.name)} · ${kursOf(r.id)}\n${link}`
+  );
+}
 
 // Stopp-Regeln
 pass.ende = new Date().toISOString();

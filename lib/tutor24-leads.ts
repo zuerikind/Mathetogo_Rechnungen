@@ -71,7 +71,7 @@ export async function loadLog(): Promise<LogRow[]> {
 
 /** Was das Nachfassen pro Person wissen muss (Anrede, Sprache, Kurs und Text der Erst-Nachricht, Stand). */
 export async function loadLeadInfo(): Promise<LeadMap> {
-  const leads = await prisma.tutor24Lead.findMany({ include: { messages: { select: { art: true, kursId: true, kursDaten: true, sentAt: true }, orderBy: { sentAt: "asc" } } } });
+  const leads = await prisma.tutor24Lead.findMany({ include: { messages: { select: { art: true, kursId: true, kursDaten: true, sentAt: true, variante: true }, orderBy: { sentAt: "asc" } } } });
   const out: LeadMap = {};
   for (const l of leads) {
     const erst = l.messages.find((m) => m.art === "erst");
@@ -84,6 +84,9 @@ export async function loadLeadInfo(): Promise<LeadMap> {
       nachgefasst: !!nach,
       erstAm: erst?.sentAt.toISOString() ?? null,
       nachfassAm: nach?.sentAt.toISOString() ?? null,
+      erstHinweis: isHintVariant(erst?.variante),
+      stufe: l.stufe || l.kategorie,
+      geantwortet: l.geantwortet === "ja",
     };
     if (l.conversationId) out[l.conversationId] = info;
     if (l.inseratId) out[`inserat:${l.inseratId}`] = info;
@@ -318,9 +321,20 @@ export type CourseFunnel = { courseId: string; angeboten: number; geantwortet: n
  * Kurs der Person abgesagt, pausiert oder Anmeldeschluss vorbei → sie steht wieder in der Liste.
  */
 export async function interestList(courses: Course[], settings: FollowupSettings, log: LogRow[], now = new Date(), showIgnored = false) {
-  const leads = await prisma.tutor24Lead.findMany({ orderBy: { createdAt: "desc" } });
-  return buildInterestList(leads, courses, settings, log, now, showIgnored);
+  const leads = await prisma.tutor24Lead.findMany({
+    orderBy: { createdAt: "desc" },
+    include: { messages: { where: { art: "erst" }, select: { variante: true }, orderBy: { sentAt: "asc" }, take: 1 } },
+  });
+  return buildInterestList(
+    leads.map(({ messages, ...l }) => ({ ...l, erstVariante: messages[0]?.variante ?? "" })),
+    courses, settings, log, now, showIgnored
+  );
 }
+
+/** Erst-Nachricht enthielt den Academigo-Hinweis (variante "hinweis/…", lib/tutor24.ts) */
+export const isHintVariant = (variante: string | null | undefined) => !!variante?.startsWith("hinweis/");
+
+export type HintReply = { id: string; name: string; datum: string; stufe: string; anrede: string; status: string; konversationUrl: string | null };
 
 /** Felder eines Tutor24Lead, die die Liste braucht (auch fuer den Testlauf ohne Datenbank). */
 export type LeadRow = {
@@ -328,6 +342,8 @@ export type LeadRow = {
   stufe: string; kategorie: string; kursgruppe: string; sicherheit: string; ausschluss: string; faecher: string; anlass: string;
   ort: string; ortsname: string; wer: string; anrede: string; kind: string | null; sprache: string; kursId: string | null;
   freigabeKursId: string | null; status: string; geantwortet: string; einzelunterricht: boolean; auszug?: string;
+  /** variante der Erst-Nachricht ("hinweis/…" = mit Academigo-Hinweis) */
+  erstVariante?: string;
 };
 
 /** Reine Rechnung der Interessentenliste aus Lead-Zeilen. */
@@ -342,7 +358,19 @@ export function buildInterestList(leads: LeadRow[], courses: Course[], settings:
   const passend = new Map<string, { passend: number; freigegeben: number }>();
 
   const primar = new Map<string, number[]>();
+  const hinweisAntworten: HintReply[] = [];
   for (const l of leads) {
+    // Antwort auf den Kurs-Hinweis: ganz oben, jede Stufe (auch Primar, FMS, Bachelor); nicht in den Gruppen,
+    // damit "Für alle sicheren freigeben" sie nie mitnimmt. Absage und Ignorierte nicht.
+    if (isHintVariant(l.erstVariante) && l.geantwortet === "ja") {
+      if (l.status !== "Absage" && (l.status !== "ignoriert" || showIgnored))
+        hinweisAntworten.push({
+          id: l.id, name: l.name, datum: isoDay(l.createdAt), stufe: l.stufe || l.kategorie, status: l.status,
+          anrede: l.anrede === "du" ? "du" : l.wer === "eltern" ? `Sie (Eltern${l.kind ? `, ${l.kind}` : ""})` : "Sie (unklar)",
+          konversationUrl: l.conversationId ? `https://www.tutor24.ch/de/conversations/${l.conversationId}?tab=sent` : null,
+        });
+      continue;
+    }
     if (isPrimar(l.kategorie, l.stufe, l.auszug ?? "")) {
       const key = l.stufe || "Primarschule";
       const row = primar.get(key) ?? weeks.map(() => 0);
@@ -417,7 +445,10 @@ export function buildInterestList(leads: LeadRow[], courses: Course[], settings:
     .map(([stufe, perWeek]) => ({ stufe, perWeek, total: perWeek.reduce((a, b) => a + b, 0) }))
     .filter((r) => r.total > 0)
     .sort((a, b) => b.total - a.total);
-  return { weeks, groups: Array.from(groups.values()).sort((a, b) => b.sicher - a.sicher || b.unsicher - a.unsicher || b.tief - a.tief), funnel, primar: primarRows };
+  return {
+    weeks, groups: Array.from(groups.values()).sort((a, b) => b.sicher - a.sicher || b.unsicher - a.unsicher || b.tief - a.tief), funnel, primar: primarRows,
+    hinweisAntworten,
+  };
 }
 
 /** Status-Knoepfe pro Person und pro Liste. freigabeKursId: ich gebe die Person fuer diesen Kurs frei (null = zurueck). */
