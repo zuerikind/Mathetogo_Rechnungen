@@ -52,6 +52,9 @@ const help = () => HELP_LINES.join("\n");
 /** Liefert eine Funktion pro Update; der Rueckgabewert beschreibt, was passiert ist (fuers Protokoll und die Tests). */
 export function createBot(deps: BotDeps) {
   let pendingEnable: number | null = null;
+  // Der gestartete Durchgang holt seine Sperre erst nach ein paar Sekunden: so lange gilt er schon als laufend.
+  let spawnedAt = 0;
+  const busyNow = () => deps.busy() ?? (deps.now().getTime() - spawnedAt < 90_000 ? "Durchgang wurde eben gestartet" : null);
 
   /** Knopf "Jetzt starten": wie ein geplanter Durchgang — Modus, Tageslimits, 8–20 Uhr und 429-Pause gelten. */
   async function startNow(): Promise<string> {
@@ -65,17 +68,18 @@ export function createBot(deps: BotDeps) {
       await deps.reply(`⏸ ${RATE_LIMIT_TEXT}\nFrühester nächster Lauf: ${fmtZurich(pause)}. Nicht gestartet.`);
       return "start: 429-Pause";
     }
-    const running = deps.busy();
+    const running = busyNow();
     if (running) {
       await deps.reply(`Läuft schon: ${running}. Kein zweiter Lauf gestartet.`);
       return "start: belegt";
     }
     deps.startPass();
+    spawnedAt = deps.now().getTime();
     const h = deps.now().getHours();
     await deps.reply(
       `▶️ <b>Durchgang gestartet</b> (${s.modus === "probe" ? "Probe — sendet nichts" : "EIN — sendet"}).\n` +
         (s.modus === "an" && (h < 8 || h >= 20) ? "Ausserhalb 8–20 Uhr: er liest nur und sendet nichts.\n" : "") +
-        "Tageslimits gelten. Das Ergebnis kommt als eigene Meldung."
+        "Tageslimits gelten. Schritte: 1 neue Inserate · 2 Antworten prüfen · 3 Nachfassen — ich melde mich nach jedem Schritt und am Ende."
     );
     return "start: gestartet";
   }
@@ -126,7 +130,7 @@ export function createBot(deps: BotDeps) {
 
     if (cmd === "/stop") {
       deps.update({ modus: "aus", gestoppt: { grund: "per Telegram /stop", am: deps.now().toISOString() } });
-      const running = deps.busy();
+      const running = busyNow();
       deps.requestStop();
       await deps.reply(
         "🔴 <b>Automatik ist AUS</b> — dauerhaft, bis du sie mit /enable oder auf /kurse wieder einschaltest.\n" +
@@ -145,12 +149,13 @@ export function createBot(deps: BotDeps) {
         await deps.reply(`⏸ ${RATE_LIMIT_TEXT}\nFrühester nächster Lauf: ${fmtZurich(pause)}. Probelauf nicht gestartet.`);
         return "run: 429-Pause";
       }
-      const running = deps.busy();
+      const running = busyNow();
       if (running) {
         await deps.reply(`Läuft schon: ${running}. Kein zweiter Lauf gestartet.`);
         return "run: belegt";
       }
       deps.startProbe();
+      spawnedAt = deps.now().getTime();
       await deps.reply(
         `🧪 <b>Probelauf gestartet</b> — sendet nichts.\nHöchstens ${PROBE_MAX} Inserate, ${PROBE_MAX} Chats bei „Antworten prüfen“ und ${PROBE_MAX} Nachfass-Kandidaten; Listen nur kurz nachgeladen.\nDas Ergebnis kommt als eigene Meldung; danach /status.`
       );

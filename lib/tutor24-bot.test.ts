@@ -152,8 +152,15 @@ describe("Telegram-Bot", () => {
     expect(await b.handle(press())).toBe("start: gestartet");
     expect(b.calls.pass).toBe(1);
     expect(b.replies[b.replies.length - 1]).toContain("Probe — sendet nichts");
-    // als Befehl aus der Datenbank (Webhook) genauso
-    expect(await b.handle(b.msg("start"))).toBe("start: gestartet");
+    expect(b.replies[b.replies.length - 1]).toContain("ich melde mich nach jedem Schritt");
+    // zweimal schnell gedrueckt (Sperre noch nicht geholt): kein zweiter Start
+    expect(await b.handle(press())).toBe("start: belegt");
+    expect(b.replies[b.replies.length - 1]).toContain("eben gestartet");
+    expect(b.calls.pass).toBe(1);
+    // als Befehl aus der Datenbank (Webhook) genauso, sobald die 90 s vorbei sind
+    const later = setup(new Date(NOW.getTime() + 91_000));
+    later.deps.update({ modus: "probe" });
+    expect(await later.handle(later.msg("start"))).toBe("start: gestartet");
     const busy = setup(NOW, [], "Automatik-Durchgang");
     busy.deps.update({ modus: "an" });
     expect(await busy.handle(press())).toBe("start: belegt");

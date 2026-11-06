@@ -103,7 +103,7 @@ export function watchDecision(p: {
     return say(`Automatik ist seit ${fmtZurich(new Date(l.gestoppt.am))} aus: ${l.gestoppt.grund.slice(0, 160)}`);
   if (l?.pauseBis && new Date(l.pauseBis) > p.now) return say(`${RATE_LIMIT_TEXT} Pause bis ${fmtZurich(new Date(l.pauseBis))}; bis dahin läuft kein Durchgang.`);
   if (!online) return say(`Heute noch kein Durchgang (fällig ${dueLabel}). ${offlineText(l)} Laptop öffnen, dann „Jetzt starten“.`);
-  return say(`Laptop ist an, aber der Durchgang von ${dueLabel} fehlt (Aufgabenplanung prüfen). „Jetzt starten“ holt ihn nach.`);
+  return say(`Laptop ist an, aber der Durchgang von ${dueLabel} fehlt (z. B. war die Automatik da noch aus oder der Laptop schlief). „Jetzt starten“ holt ihn nach.`);
 }
 
 /** Telegram-Knopf unter Erinnerungen und der Tageszusammenfassung */

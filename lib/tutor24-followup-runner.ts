@@ -123,6 +123,8 @@ export type AutoSend = {
   maxReplyChecks?: number;
   /** Ausgabe: neue Antworten laut Liste "Gesendet" (auch auf Erst-Nachrichten ohne Kurs) */
   antworten: { id: string; name: string; absage: boolean }[];
+  /** Zwischenmeldung, bevor ein Schritt beginnt (Telegram) */
+  onStep?: (step: "antworten" | "nachfassen") => Promise<unknown>;
 };
 
 // ── Zeitmessung ──
@@ -1017,7 +1019,9 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
           auto.antworten.push({ id: e.id, name: e.name, absage: e.lastSender === "system" });
         saveListCache("notify:sent", Object.fromEntries(sent.map((e) => [e.id, e])));
       });
+      await auto.onStep?.("antworten");
       await replies(page, log, undefined, auto.maxReplyChecks);
+      await auto.onStep?.("nachfassen");
       await send(page, log, undefined, opts.auto);
     }
     else await preview(page, opts.maxChecks ?? 150, log);

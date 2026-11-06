@@ -57,8 +57,8 @@ describe("Waechter", () => {
     expect(watchDecision({ now, laptop: laptop(), runs: [running], alreadySent: [] })?.text).toContain("hat nicht fertig gemeldet");
   });
 
-  it("Laptop an, Durchgang fehlt: Hinweis auf die Aufgabenplanung", () => {
-    expect(watchDecision({ now, laptop: laptop({ at: "2026-11-06T08:44:00Z" }), runs: [], alreadySent: [] })?.text).toContain("Aufgabenplanung prüfen");
+  it("Laptop an, Durchgang fehlt: Hinweis und Knopf", () => {
+    expect(watchDecision({ now, laptop: laptop({ at: "2026-11-06T08:44:00Z" }), runs: [], alreadySent: [] })?.text).toContain("fehlt (z. B. war die Automatik da noch aus");
   });
 
   it("17:45 schaut nur auf den 17-Uhr-Durchgang", () => {
