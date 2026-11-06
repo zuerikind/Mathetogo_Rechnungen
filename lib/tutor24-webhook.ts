@@ -37,7 +37,8 @@ export function createWebhook(deps: WebhookDeps) {
     const l = await deps.laptop();
     const now = deps.now();
     const online = laptopOnline(l, now);
-    const offline = `💻 ${offlineText(l)} Laptop öffnen; danach geht es.`;
+    // "offline" heisst: kein Lebenszeichen seit 6 min — aus, im Ruhezustand oder ohne Internet (WLAN).
+    const offline = `💻 ${offlineText(l)} Er ist aus, schläft oder hat kein Internet (WLAN prüfen). Sobald er wieder verbunden ist, meldet er sich innert 2 Minuten; dann nochmals versuchen.`;
 
     const cb = u.callback_query;
     if (cb) {

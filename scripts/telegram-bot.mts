@@ -7,7 +7,7 @@
  *   → zeigt die Chat-ID der letzten Nachricht an den Bot (vorher dem Bot "/start" schreiben).
  */
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "dotenv";
 
@@ -63,12 +63,13 @@ const busy = (): string | null => {
 const spawnAutopilot = (args: string) => {
   const dir = join(process.cwd(), "tutor24-followup");
   mkdirSync(dir, { recursive: true });
-  const out = openSync(join(dir, "autopilot-run.log"), "a");
-  const child = spawn(`npx tsx scripts/autopilot.mts ${args}`, {
-    cwd: process.cwd(), detached: true, windowsHide: true, stdio: ["ignore", out, out], shell: true,
+  // Umleitung in der Shell (wie autopilot.cmd): ein vererbter Datei-Handle kam unter Windows nie an,
+  // die Ausgabe des Durchgangs vom 6.11. 19:20 fehlt deshalb ganz.
+  appendFileSync(join(dir, "autopilot-run.log"), `==== ${new Date().toLocaleString("de-CH")} vom Handy: ${args}\n`);
+  const child = spawn(`npx tsx scripts/autopilot.mts ${args} >> "tutor24-followup\\autopilot-run.log" 2>&1`, {
+    cwd: process.cwd(), detached: true, windowsHide: true, stdio: "ignore", shell: true,
   });
   child.unref();
-  closeSync(out);
 };
 const startProbe = () => spawnAutopilot(`--probe --max ${PROBE_MAX} --quelle run`);
 const startPass = () => spawnAutopilot("--quelle knopf");
