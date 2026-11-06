@@ -107,6 +107,8 @@ const settings = loadSettings();
 const pass = {
   start: new Date().toISOString(), ende: "", modus,
   erst: emptyCounts(), nachfassen: emptyCounts(), antworten: 0, fehler: [] as string[], stopp: null as string | null, probe: [] as string[],
+  /** z. B. "alter Text als Rueckfall" — steht in der Schlussmeldung */
+  notes: [] as string[],
 };
 /** neue Antworten laut Liste "Gesendet" (runFollowup auto) */
 const listReplies: { id: string; name: string; absage: boolean }[] = [];
@@ -128,6 +130,7 @@ if (!asked)
       "Schritte: 1 neue Inserate · 2 Antworten prüfen · 3 Nachfassen. Ich melde mich nach jedem Schritt."
   );
 const sentOrWould = (c: { gesendet: number; wuerde: number }) => (dryRun ? `${c.wuerde} würden gesendet` : `${c.gesendet} gesendet`);
+const erstKinds = () => `${pass.erst.kurs ?? 0} mit Kursblock, ${pass.erst.hinweis ?? 0} mit Hinweis`;
 let erstNote = "";
 
 const repliedBefore = new Set((await loadLog()).filter((r) => r.geantwortet === "ja").map((r) => r.conversation_id));
@@ -142,12 +145,12 @@ try {
   else {
     log(`Erst-Nachrichten: höchstens ${erstLimit}${dryRun ? " (PROBE, sendet nichts)" : ""} …`);
     const r = await runTutor24Messaging(true, max ? 1 : 10, max ? ["Mathematik"] : ["Mathematik", "Physik"], {
-      limit: erstLimit, dryRun, mayContinue, counts: pass.erst, probe: pass.probe, ...(max ? { maxOpen: max * 2 } : {}),
+      limit: erstLimit, dryRun, mayContinue, counts: pass.erst, probe: pass.probe, notes: pass.notes, ...(max ? { maxOpen: max * 2 } : {}),
     });
     for (const l of r.log) console.log(`  ${l}`);
     pass.fehler.push(...r.errors);
     erstNote =
-      `Erst-Nachrichten: ${sentOrWould(pass.erst)}, ${pass.erst.uebersprungen} übersprungen` +
+      `Erst-Nachrichten: ${sentOrWould(pass.erst)} (${erstKinds()}), ${pass.erst.uebersprungen} übersprungen` +
       (r.errors.length ? `, ⚠ ${r.errors.length} Inserate mit Fehler: ${shortError(r.errors[0]).slice(0, 120)}` : "") +
       ".";
   }
@@ -235,7 +238,8 @@ const list = dryRun ? `\nWürde senden:\n${pass.probe.length ? pass.probe.map((x
 await notify(
   `${P}${pass.stopp || fatal || busy ? "■" : "✅"} Durchgang ${hhmm(pass.start)} fertig (${minutes(pass.start)})\n` +
     `Ergebnis: ${busy ? "vorzeitig beendet (gestoppt)" : passResult(pass)}\n` +
-    `Erst-Nachrichten ${sentOrWould(pass.erst)} · Nachfassen ${sentOrWould(pass.nachfassen)} · Antworten ${pass.antworten}` +
+    `Erst-Nachrichten ${sentOrWould(pass.erst)} (${erstKinds()}) · Nachfassen ${sentOrWould(pass.nachfassen)} · Antworten ${pass.antworten}` +
+    (pass.notes.length ? `\n${pass.notes.join("\n")}` : "") +
     list.slice(0, 3500)
 );
 

@@ -422,8 +422,15 @@ export type FollowupSettings = {
   recommendMin: number;
   /** Probelauf: Inseratseite nur oeffnen, wenn die Konversationsseite nicht reicht (needsListing). Standard aus. */
   listingOnDemand: boolean;
-  /** Erst-Nachricht (lib/tutor24.ts) mit Anrede-Fassungen, Kursangebot und Nachfrage-Erfassung. Standard aus, bis freigegeben. */
+  /**
+   * Kursblock in der Erst-Nachricht, wenn ein passender Kurs offen ist. Standard aus.
+   * (Name historisch: seit 6.11. gilt der neue Text immer; der Schalter steuert nur noch den Kursblock.)
+   */
   newFirstMessage: boolean;
+  /** Academigo-Hinweis in der Erst-Nachricht, wenn kein passender Kurs offen ist. Standard aus. */
+  kursHinweis: boolean;
+  /** "ab CHF … pro Lektion" im Kurs-Hinweis */
+  kursPreisAb: number;
   /** Mein Preis pro Lektion im Einzelunterricht: Vergleich im Kursblock beider Nachrichten. */
   privatePricePerLesson: number;
   /** Automatik (scripts/autopilot.mts): hoechstens so viele pro Tag (gezaehlt aus der Datenbank) */
@@ -442,6 +449,8 @@ export function mergeSettings(saved: Partial<FollowupSettings> | null | undefine
     recommendMin: Number(saved?.recommendMin) >= 1 ? Math.floor(Number(saved?.recommendMin)) : 20,
     listingOnDemand: saved?.listingOnDemand === true,
     newFirstMessage: saved?.newFirstMessage === true,
+    kursHinweis: saved?.kursHinweis === true,
+    kursPreisAb: Number(saved?.kursPreisAb) > 0 ? Number(saved?.kursPreisAb) : 55,
     privatePricePerLesson: Number(saved?.privatePricePerLesson) > 0 ? Number(saved?.privatePricePerLesson) : DEFAULT_PRIVATE_PRICE,
     autoErstLimit: count(saved?.autoErstLimit, 20),
     autoNachfassLimit: Math.min(count(saved?.autoNachfassLimit, 15), MAX_SENDS_PER_DAY),

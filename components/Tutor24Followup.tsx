@@ -816,7 +816,7 @@ export function Tutor24Followup({
               <p className="text-xs text-gray-500">Kurs anklicken, um seine Pipeline zu sehen. Änderungen gelten erst nach „Speichern“.</p>
               <label
                 className="flex items-center gap-1.5 text-xs text-gray-600"
-                title="Erst-Nachricht auf tutor24: Anrede je nach Schüler/Eltern, passender aktiver Kurs, Nachfrage ohne Kurs wird erfasst. Aus = bisherige Nachricht."
+                title="Erst-Nachricht: Ist ein passender Kurs offen, steht der konkrete Kursblock in der Nachricht (bisherige Ausschlüsse gelten). Aus = nie ein Kursblock."
               >
                 <input
                   type="checkbox"
@@ -825,7 +825,31 @@ export function Tutor24Followup({
                   onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, newFirstMessage: e.target.checked } })}
                   className="accent-[#4A7FC1]"
                 />
-                Kurse in der Erst-Nachricht anbieten
+                Kursblock in der Erst-Nachricht (passender Kurs offen)
+              </label>
+              <label
+                className="flex items-center gap-1.5 text-xs text-gray-600"
+                title="Erst-Nachricht ohne passenden offenen Kurs: kurzer Hinweis auf Academigo (fester Text). Für alle ausser Erwachsene ohne BM-Bezug. Aus = kein Hinweis."
+              >
+                <input
+                  type="checkbox"
+                  checked={draft.settings.kursHinweis}
+                  disabled={running}
+                  onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, kursHinweis: e.target.checked } })}
+                  className="accent-[#4A7FC1]"
+                />
+                Kurs-Hinweis in der Erst-Nachricht (kein passender Kurs offen)
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-600" title="„ab CHF … pro Lektion“ im Kurs-Hinweis">
+                Kurspreis ab (CHF/Lektion)
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.settings.kursPreisAb}
+                  disabled={running}
+                  onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, kursPreisAb: Number(e.target.value) } })}
+                  className={`${inputClass} w-20`}
+                />
               </label>
               <label className="flex items-center gap-2 text-sm text-gray-600" title="Vergleichspreis im Kursblock beider Nachrichten: „CHF … pro Lektion statt CHF … im Einzelunterricht“">
                 Einzelunterricht CHF/Lektion

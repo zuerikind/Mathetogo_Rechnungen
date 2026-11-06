@@ -408,9 +408,9 @@ describe("Antworten", () => {
 
 describe("Einstellungen", () => {
   it("Standard: Mathe und Physik, N = 20; altes Format wird ersetzt", () => {
-    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4 });
-    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4 });
-    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5, listingOnDemand: false, newFirstMessage: false, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4 });
+    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false, kursHinweis: false, kursPreisAb: 55, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4 });
+    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false, kursHinweis: false, kursPreisAb: 55, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4 });
+    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5, listingOnDemand: false, newFirstMessage: false, kursHinweis: false, kursPreisAb: 55, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4 });
     expect(mergeSettings({ privatePricePerLesson: 95 }).privatePricePerLesson).toBe(95);
   });
 });

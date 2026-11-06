@@ -6,7 +6,7 @@ import {
   generateTutor24Message,
   TUTOR24_MESSAGE_TEMPLATE,
 } from "./tutor24-message-prompt";
-import { assembleFirstMessage, planFirstMessage } from "./tutor24-course-offer";
+import { assembleFirstMessage, firstMessageProblem, insertHintBeforeClosing, planFirstMessage } from "./tutor24-course-offer";
 import { courseSnapshot, parseJobText, type ListingInfo } from "./tutor24-followup";
 import { loadCourses, loadLog, loadSettings } from "./tutor24-followup-store";
 import { listingHash, recordSend, type LeadFields } from "./tutor24-leads";
@@ -43,6 +43,8 @@ export type AutoErst = {
   mayContinue: () => string | null;
   counts: PassCounts;
   probe: string[];
+  /** Hinweise fuer die Telegram-Meldung (z. B. alter Text als Rueckfall), auch im echten Betrieb */
+  notes?: string[];
   /** begrenzter Probelauf: hoechstens so viele Inserate oeffnen (auch uebersprungene zaehlen) */
   maxOpen?: number;
 };
@@ -61,7 +63,7 @@ export async function composeFirstMessage(info: ListingInfo, log: (s: string) =>
   const m = assembleFirstMessage(plan, personal);
   log(
     `Anrede=${plan.addressee.wer}${plan.addressee.kind ? `/${plan.addressee.kind}` : ""} Stufe=${plan.analysis.kategorie}/${plan.analysis.kursgruppe || "-"} ` +
-      `(${plan.analysis.sicherheit}) → ${m.course ? `Kurs „${m.course.name}“` : plan.offer.kind === "nachfrage" ? `Nachfrage: ${plan.offer.grund}` : `kein Kurs (${plan.offer.kind === "nichts" ? plan.offer.grund : "Prüfung"})`}, Satz=${m.satz}`
+      `(${plan.analysis.sicherheit}) → ${m.course ? `Kurs „${m.course.name}“` : m.hint ? "Kurs-Hinweis" : plan.offer.kind === "nachfrage" ? `Nachfrage: ${plan.offer.grund}` : `kein Kurs (${plan.offer.kind === "nichts" ? plan.offer.grund : "Prüfung"})`}, Satz=${m.satz}`
   );
   return { ...m, plan };
 }
@@ -353,37 +355,56 @@ export async function runTutor24Messaging(
                 `bodyText="${profile.bodyText.slice(0, 80) || "(leer)"}"`
             );
             const tag = (s: string) => result.log.push(`${ts()} [${tutor24Id}] ${s}`);
-            // Deutsch: fester Text in drei Anredeformen, ggf. mit Gruppenkurs. en/fr: bisherige KI-Nachricht.
+            // Seit 6.11. immer der neue Text (de/en): Anrede, Sprache, persoenlicher Satz; Kursblock bzw. Kurs-Hinweis
+            // je nach Schalter. Der alte Text nur noch als Rueckfall, wenn der neue die Pruefung nicht besteht (wird gemeldet).
+            // Franzoesisch: KI-Text in der vous-Form wie bisher, Hinweis als fester Absatz.
             let message: string;
             let kursId: string | null = null;
+            let hint: string | null = null;
+            let altText: string | null = null;
             const info = parseJobText(await page.evaluate(() => document.body.innerText), listingTitle);
             // Analyse immer (ohne KI): die Person kommt so oder so in Tutor24Lead.
             let plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), new Date(), language);
-            // Deutsch und Englisch: fester Text mit Anrede-Fassungen und ggf. Kursblock. Franzoesisch: bisherige KI-Nachricht.
-            if ((language === "de" || language === "en") && loadSettings().newFirstMessage) {
+            if (language === "de" || language === "en") {
               const composed = await composeFirstMessage(info, tag, new Date(), language);
               plan = composed.plan;
               if (composed.problem) {
-                tag(`⚠ Nachricht nicht sendbar (${composed.problem}) — übersprungen`);
-                result.skipped++;
-                if (auto) {
-                  auto.counts.pruefungFehler++;
-                  auto.counts.uebersprungen++;
-                }
-                continue;
+                altText = composed.problem;
+                tag(`⚠ Neuer Text besteht die Prüfung nicht (${composed.problem}) — alter Text als Rückfall`);
+                message = await generateTutor24Message(profile, tag);
+              } else {
+                message = composed.text;
+                kursId = composed.course?.id ?? null;
+                hint = composed.hint;
               }
-              message = composed.text;
-              kursId = composed.course?.id ?? null;
             } else {
               message = await generateTutor24Message(profile, tag);
+              if (plan.hint) {
+                const withHint = insertHintBeforeClosing(message, plan.hint);
+                const problem = firstMessageProblem(withHint, plan.form, null, plan.privatePrice, plan.hint);
+                if (problem) tag(`⚠ Kurs-Hinweis nicht eingefügt (${problem})`);
+                else {
+                  message = withHint;
+                  hint = plan.hint;
+                }
+              }
             }
+            const kindLabel = kursId ? "Kursblock" : hint ? "Hinweis" : "ohne Kurs";
+            /** nur fuer Gesendetes bzw. im Probemodus "wuerde gesendet" */
+            const countKind = () => {
+              if (!auto) return;
+              if (kursId) auto.counts.kurs = (auto.counts.kurs ?? 0) + 1;
+              else if (hint) auto.counts.hinweis = (auto.counts.hinweis ?? 0) + 1;
+              if (altText) auto.notes?.push(`⚠ Inserat https://tutor24.ch/de/jobs/${tutor24Id}: alter Text${auto.dryRun ? " würde gesendet" : " gesendet"} (neuer Text: ${altText})`);
+            };
 
             if (auto?.dryRun) {
               const course = kursId ? loadCourses().find((c) => c.id === kursId) : null;
               auto.counts.wuerde++;
+              countKind();
               // Inserate haben keinen Personennamen (displayName ist der Titel): nur Link, Kurs — nichts aus dem Inserat.
-              auto.probe.push(`Inserat https://tutor24.ch/de/jobs/${tutor24Id} · ${course?.name ?? "ohne Kurs"} · Erst-Nachricht`);
-              tag(`PROBE — würde senden (${course?.name ?? "ohne Kurs"}):\n${message}`);
+              auto.probe.push(`Inserat https://tutor24.ch/de/jobs/${tutor24Id} · ${course?.name ?? kindLabel}${altText ? " (alter Text)" : ""} · Erst-Nachricht`);
+              tag(`PROBE — würde senden (${course?.name ?? kindLabel}):\n${message}`);
               continue;
             }
             // Notbremse direkt vor dem Senden nochmals lesen (KI-Text und Seitenaufbau dauern bis zu 30 s).
@@ -407,14 +428,18 @@ export async function runTutor24Messaging(
                 name: displayName,
                 art: "erst",
                 kursId,
-                variante: course ? `${course.name}/${plan.addressee.anrede}` : `ohne Kurs/${plan.addressee.anrede}`,
+                // "hinweis/…": Antworten darauf erkennt die Interessentenliste (hat auf Kurs-Hinweis geantwortet)
+                variante: course ? `${course.name}/${plan.addressee.anrede}` : hint ? `hinweis/${plan.addressee.anrede}` : `ohne Kurs/${plan.addressee.anrede}`,
                 text: message,
                 status: "gesendet",
                 kursDaten: course ? courseSnapshot(course) : null,
                 lead: leadFields(info, plan, language),
               });
               result.messaged++;
-              if (auto) auto.counts.gesendet++;
+              if (auto) {
+                auto.counts.gesendet++;
+                countKind();
+              }
               result.newContacts.push({ name: displayName, tutor24Id, profileUrl: href });
               await sleep(1500);
             } else if (outcome === "skipped_no_button") {

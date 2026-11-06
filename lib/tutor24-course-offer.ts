@@ -168,16 +168,63 @@ export function fallbackSentence(a: Analysis, f: Form): string {
   return `Gerade für ${thema} lohnt es sich, gezielt an den typischen Aufgaben und den wichtigsten Themen zu arbeiten, und genau so baue ich die Lektionen${mit} auf.`;
 }
 
-export function buildFirstMessage(f: Form, personal: string, course: Course | null, privatePrice: number): string {
+// ── Kurs-Hinweis (Academigo) ──────────────────────────────────────────────────
+
+/**
+ * Fester Absatz statt Kursblock, wenn kein passender Kurs offen ist (Schalter "Kurs-Hinweis", Entscheid 6.11.).
+ * Nie von der KI. Die Website steht nur als Hinweis auf Academigo — kein "dort anmelden / dort finden".
+ */
+export function courseHint(f: Form, preisAb: number): string {
+  const head = "Neben dem Einzelunterricht biete ich über meine Kursplattform Academigo (www.academigo.xyz) auch Kurse in kleinen Gruppen an, ab CHF {preisAb} pro Lektion. Ein Kurs findet jeweils statt, sobald genügend Anmeldungen für eine Stufe zusammenkommen.";
+  const text =
+    f.typ === "en"
+      ? "In addition to private lessons, I also offer small-group courses through my course platform Academigo (www.academigo.xyz), starting at CHF {preisAb} per lesson. A course takes place once enough students have signed up for a given level. If you are interested, just let me know. I will check whether a suitable course is running or planned and get back to you."
+      : f.typ === "fr"
+        ? "En plus des cours particuliers, je propose également des cours en petits groupes via ma plateforme de cours Academigo (www.academigo.xyz), à partir de CHF {preisAb} par leçon. Un cours a lieu dès que le nombre d'inscriptions est suffisant pour un niveau. Si cela vous intéresse, n'hésitez pas à me le faire savoir. Je vérifierai si un cours adapté est en cours ou prévu, et je reviendrai vers vous."
+        : f.typ === "du"
+          ? `${head} Wenn du Interesse hast, gib mir kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei dir.`
+          : f.typ === "eltern"
+            ? `${head} Falls das für ${f.akk} interessant ist, geben Sie mir gerne kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei Ihnen.`
+            : `${head} Bei Interesse geben Sie mir gerne kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei Ihnen.`;
+  return text.replace("{preisAb}", String(preisAb));
+}
+
+/** Hinweis fuer alle ausser Erwachsene ohne BM-Bezug (BM1, BM2, Berufsmatura bekommen ihn auch als Erwachsene). */
+export function hintExcluded(info: ListingInfo, kategorie: string): boolean {
+  const t = `${info.schulstufe}\n${info.title}\n${info.description}`;
+  if (!/erwachsen/i.test(t)) return false;
+  const bm = kategorie === "bm" || new RegExp("(?<!\\p{L})bm ?[12]?(?!\\p{L})|berufsmatur", "iu").test(t);
+  return !bm;
+}
+
+/** Was der Hinweis nie sagen darf: Kurse auf der Website finden oder sich dort anmelden; Website ohne http(s). */
+const HINT_FORBIDDEN = [
+  /https?:\/\/(www\.)?academigo/i,
+  /academigo[^.\n]*\b(anmelden|buchen|finden|einschreiben|sign up|register|book|find|inscri\w*|réserv\w*|trouve\w*)\b/i,
+  /(auf|unter|über) (der|meiner) (website|webseite|seite)[^.\n]*\b(anmelden|buchen|finden)\b/i,
+];
+
+/** Fuer den franzoesischen KI-Text: Hinweis als eigener Absatz vor dem Gruss am Ende. */
+export function insertHintBeforeClosing(text: string, hint: string): string {
+  const paras = text.trim().split(/\n\s*\n/);
+  if (paras.length < 2) return `${text.trim()}\n\n${hint}`;
+  // Letzter Absatz = Gruss + Name ("Meilleures salutations\nOmid"); kurzer vorletzter Gruss ("Cordialement,") ebenfalls davor.
+  let at = paras.length - 1;
+  if (at > 1 && /^[^\n.!?]{1,30},$/.test(paras[at - 1].trim())) at--;
+  paras.splice(at, 0, hint);
+  return paras.join("\n\n");
+}
+
+export function buildFirstMessage(f: Form, personal: string, course: Course | null, privatePrice: number, hint: string | null = null): string {
   const p = parts(f);
   return [
     `${greeting(f)},`,
     `${p.intro} ${p.credentials}`,
     personal.trim(),
-    ...(course ? [courseBlock(course, privatePrice, sprache(f))] : []),
+    ...(course ? [courseBlock(course, privatePrice, sprache(f))] : hint ? [hint] : []),
     `${p.lehrmittel} ${p.plattform}`,
     p.meet,
-    course ? p.wichtigKurz : p.wichtig,
+    course || hint ? p.wichtigKurz : p.wichtig,
     p.kontakt,
     p.infos,
     signature(f),
@@ -349,8 +396,17 @@ export function messageCheck(art: keyof typeof CHECK_RULES, text: string, f: For
   return null;
 }
 
-export const firstMessageProblem = (text: string, f: Form, course: Course | null, privatePrice: number) =>
-  messageCheck("erst", text, f, course, privatePrice);
+/** Erst-Nachricht: allgemeine Pruefung, dazu der Kurs-Hinweis wortgleich in der Sprache der Nachricht. */
+export function firstMessageProblem(text: string, f: Form, course: Course | null, privatePrice: number, hint: string | null = null) {
+  if (hint !== null) {
+    if (!text.includes(hint)) return "Kurs-Hinweis nicht wortgleich";
+    if (course) return "Kursblock und Kurs-Hinweis zusammen";
+  }
+  const bad = HINT_FORBIDDEN.find((re) => re.test(text));
+  if (bad) return "deutet an, dass man die Kurse auf der Website findet oder sich dort anmeldet";
+  if (f.typ === "fr") return null; // franzoesisch: KI-Text, nur der Hinweis wird geprueft
+  return messageCheck("erst", text, f, course, privatePrice);
+}
 
 /** Nachfass-Text samt Pruefung — derselbe fuer Tab, API und Sende-Lauf. */
 export function followupMessage(kind: FollowupKind, f: Form, name: string, course: Course | null, privatePrice: number) {
@@ -373,28 +429,40 @@ export function planFirstMessage(
 ) {
   const analysis = analyzeListing(info);
   const addressee = detectAddressee(info.description);
-  const form = formFor(addressee, spracheListing);
+  // Franzoesisch: eigene Form (vous); der Text selbst kommt weiter von der KI, nur der Hinweis ist fest.
+  const form: Form = spracheListing === "fr" ? { typ: "fr" } : formFor(addressee, spracheListing);
   const offer = pickCourse(analysis, courses, settings, log, now);
+  // Schalter "Kursblock": nur dann ein konkreter Kurs (bisherige Ausschluesse in pickCourse). Franzoesisch: nie.
+  const course = settings.newFirstMessage && offer.kind === "kurs" && form.typ !== "fr" ? offer.course : null;
+  // Schalter "Kurs-Hinweis": ohne Kursblock, fuer alle ausser Erwachsene ohne BM-Bezug.
+  const hint = settings.kursHinweis && !hintExcluded(info, analysis.kategorie) ? courseHint(form, settings.kursPreisAb) : null;
   return {
-    analysis, addressee, form, offer, course: offer.kind === "kurs" ? offer.course : null,
+    analysis, addressee, form, offer, course, hint,
     privatePrice: settings.privatePricePerLesson, inserat: listingText(info),
   };
 }
 
-/** Text zusammensetzen; besteht er die Pruefung mit Kurs nicht, ohne Kurs, sonst mit Rueckfall-Satz. */
+/**
+ * Text zusammensetzen: mit Kursblock, sonst (ohne Kurs) mit Hinweis; jeweils KI-Satz, sonst Rueckfall-Satz.
+ * problem != null: auch der Rueckfall besteht die Pruefung nicht (dann alter Text, lib/tutor24.ts).
+ */
 export function assembleFirstMessage(plan: ReturnType<typeof planFirstMessage>, personal: string | null) {
   const fallback = fallbackSentence(plan.analysis, plan.form);
   const kiOk = personal && !sentenceProblem(personal, plan.form, plan.inserat);
   const sentence = kiOk ? personal! : fallback;
-  for (const course of plan.course ? [plan.course, null] : [null]) {
+  const variants: Array<{ course: Course | null; hint: string | null }> = plan.course
+    ? [{ course: plan.course, hint: null }, { course: null, hint: plan.hint }]
+    : [{ course: null, hint: plan.hint }];
+  for (const v of variants) {
     for (const s of kiOk ? [sentence, fallback] : [fallback]) {
-      const text = buildFirstMessage(plan.form, s, course, plan.privatePrice);
-      if (!firstMessageProblem(text, plan.form, course, plan.privatePrice))
-        return { text, course, satz: s === fallback ? "fallback" : "ki", problem: null as string | null };
+      const text = buildFirstMessage(plan.form, s, v.course, plan.privatePrice, v.hint);
+      if (!firstMessageProblem(text, plan.form, v.course, plan.privatePrice, v.hint))
+        return { text, course: v.course, hint: v.hint, satz: s === fallback ? "fallback" : "ki", problem: null as string | null };
     }
   }
-  const text = buildFirstMessage(plan.form, fallback, null, plan.privatePrice);
-  return { text, course: null, satz: "fallback", problem: firstMessageProblem(text, plan.form, null, plan.privatePrice) };
+  const last = variants[variants.length - 1];
+  const text = buildFirstMessage(plan.form, fallback, null, plan.privatePrice, last.hint);
+  return { text, course: null, hint: last.hint, satz: "fallback", problem: firstMessageProblem(text, plan.form, null, plan.privatePrice, last.hint) };
 }
 
 // ── Vorschau und Pruefung beim Speichern (/kurse) ─────────────────────────────

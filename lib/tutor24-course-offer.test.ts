@@ -13,6 +13,9 @@ import {
 import {
   CHECK_RULES,
   assembleFirstMessage,
+  courseHint,
+  hintExcluded,
+  insertHintBeforeClosing,
   buildFollowup,
   firstMessageProblem,
   followupForm,
@@ -25,7 +28,7 @@ import {
 import { courseBlock, courseChanged, courseSnapshot, withAnrede, type LeadInfo } from "./tutor24-followup";
 
 const NOW = new Date(2026, 10, 4);
-const settings = mergeSettings(null);
+const settings = mergeSettings({ newFirstMessage: true });
 const matura = (p: Partial<Course> = {}): Course => ({ ...newCourse("Mathe", "matura", NOW), id: "m1", active: true, deadline: "2026-11-14", ...p });
 const listing = (description: string, schulstufe = "Gymnasium", fach = "Mathematik"): ListingInfo => ({ title: "Nachhilfe Mathematik", fach, schulstufe, description });
 
@@ -312,5 +315,78 @@ describe("Entscheidungen 5.11.", () => {
     expect(followupForm(stored("Sie"), "du")).toEqual({ typ: "neutral" });
     expect(followupForm(stored("du"), "Sie")).toEqual({ typ: "du" });
     expect(followupForm(stored(""), "du")).toEqual({ typ: "du" });
+  });
+});
+
+describe("Kurs-Hinweis (Academigo, Entscheid 6.11.)", () => {
+  const S = (p: Partial<ReturnType<typeof mergeSettings>>) => mergeSettings({ newFirstMessage: true, kursHinweis: true, kursPreisAb: 60, ...p });
+  const msg = (d: string, s = S({}), courses: Course[] = [], schulstufe = "Sekundarstufe", sprache = "de") =>
+    assembleFirstMessage(planFirstMessage(listing(d, schulstufe), courses, s, [], NOW, sprache), null);
+  const HEAD = "Neben dem Einzelunterricht biete ich über meine Kursplattform Academigo (www.academigo.xyz) auch Kurse in kleinen Gruppen an, ab CHF 60 pro Lektion. Ein Kurs findet jeweils statt, sobald genügend Anmeldungen für eine Stufe zusammenkommen.";
+
+  it("Bausteine wortgleich je Anrede und Sprache, Preis aus der Einstellung", () => {
+    expect(courseHint({ typ: "du" }, 60)).toBe(`${HEAD} Wenn du Interesse hast, gib mir kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei dir.`);
+    expect(courseHint(formFor({ wer: "eltern", anrede: "Sie", kind: "Sohn" }), 60)).toBe(
+      `${HEAD} Falls das für Ihren Sohn interessant ist, geben Sie mir gerne kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei Ihnen.`
+    );
+    expect(courseHint({ typ: "neutral" }, 60)).toBe(`${HEAD} Bei Interesse geben Sie mir gerne kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei Ihnen.`);
+    expect(courseHint({ typ: "en" }, 60)).toMatch(/^In addition to private lessons, I also offer small-group courses through my course platform Academigo \(www\.academigo\.xyz\), starting at CHF 60 per lesson\./);
+    expect(courseHint({ typ: "fr" }, 60)).toMatch(/via ma plateforme de cours Academigo \(www\.academigo\.xyz\), à partir de CHF 60 par leçon\./);
+    for (const f of [{ typ: "du" }, { typ: "neutral" }, { typ: "en" }, { typ: "fr" }] as const) expect(courseHint(f, 60)).not.toMatch(/https?:|\{/);
+  });
+
+  it("Schalter: Kurs → Kursblock; kein Kurs → Hinweis; beide aus → keins von beiden (immer neuer Text)", () => {
+    const kursFall = "Ich mache dieses Jahr Matura und möchte mich vorbereiten";
+    expect(msg(kursFall, S({}), [matura()], "Gymnasium")).toMatchObject({ problem: null, hint: null });
+    expect(msg(kursFall, S({}), [matura()], "Gymnasium").course?.id).toBe("m1");
+    // Kursblock-Schalter aus: derselbe Fall bekommt den Hinweis
+    const ohneBlock = msg(kursFall, S({ newFirstMessage: false }), [matura()], "Gymnasium");
+    expect(ohneBlock.course).toBeNull();
+    expect(ohneBlock.text).toContain(HEAD);
+    // beide aus: neuer Text (du-Form, Gruss, Signatur), ohne Kursblock und ohne Hinweis, langer Wichtig-Absatz
+    const keins = msg(kursFall, S({ newFirstMessage: false, kursHinweis: false }), [matura()], "Gymnasium");
+    expect(keins).toMatchObject({ course: null, hint: null, problem: null });
+    expect(keins.text).toMatch(/^Hallo,\n\ngerne unterstütze ich dich/);
+    expect(keins.text).not.toContain("Academigo");
+    expect(keins.text).toContain("Lernstrategie");
+  });
+
+  it("mit Hinweis: an der Stelle des Kursblocks, Wichtig-Absatz gekuerzt, Pruefung besteht", () => {
+    const m = msg("Ich suche für meine Tochter Nachhilfe, sie ist in der 2. Sek");
+    expect(m.problem).toBeNull();
+    const paras = m.text.split("\n\n");
+    expect(paras[3]).toBe(courseHint(formFor({ wer: "eltern", anrede: "Sie", kind: "Tochter" }), 60));
+    expect(m.text).not.toContain("Lernstrategie");
+  });
+
+  it("wer den Hinweis bekommt: alle ausser Erwachsene ohne BM-Bezug", () => {
+    expect(msg("Ich bin erwachsen und möchte meine Mathekenntnisse auffrischen", S({}), [], "Erwachsenenbildung").hint).toBeNull();
+    // BM2 nach der Lehre, Schulstufe Erwachsenenbildung: bekommt den Hinweis
+    expect(msg("Ich mache die BM2 nach der Lehre und brauche Hilfe in Mathe", S({}), [], "Berufsmaturität und Erwachsenenbildung").hint).not.toBeNull();
+    expect(msg("Erwachsene Person, Vorbereitung auf die Berufsmatura", S({}), [], "Erwachsenenbildung").hint).not.toBeNull();
+    expect(hintExcluded(listing("Ich bin erwachsen", "Erwachsenenbildung"), "ausgeschlossen")).toBe(true);
+    expect(hintExcluded(listing("BM 1 neben der Lehre, ich bin erwachsen", "Erwachsenenbildung"), "ausgeschlossen")).toBe(false);
+    for (const [d, stufe] of [["Ich bin an der FMS", "FMS"], ["Mein Sohn ist in der 5. Klasse", "Primarschule"], ["Ich studiere im Bachelor", "Universität"]])
+      expect(msg(d, S({}), [], stufe).hint, stufe).not.toBeNull();
+  });
+
+  it("Pruefung: Hinweis wortgleich, keine Andeutung 'dort anmelden/finden', Website ohne http", () => {
+    const m = msg("Ich bin in der 2. Sek und brauche Hilfe");
+    const f = { typ: "du" } as const;
+    const hint = courseHint(f, 60);
+    expect(firstMessageProblem(m.text, f, null, 89, hint)).toBeNull();
+    expect(firstMessageProblem(m.text.replace("ab CHF 60", "ab CHF 50"), f, null, 89, hint)).toMatch(/wortgleich/);
+    expect(firstMessageProblem(m.text.replace(hint, `${hint} Auf Academigo kannst du dich direkt anmelden.`), f, null, 89, hint)).toMatch(/Website/);
+    expect(firstMessageProblem(m.text.replace("www.mathetogo.xyz", "https://www.academigo.xyz"), f, null, 89, hint)).toMatch(/Website/);
+  });
+
+  it("Franzoesisch: Hinweis als Absatz vor dem Gruss, wortgleich geprueft", () => {
+    const hint = courseHint({ typ: "fr" }, 60);
+    const ki = "Bonjour,\n\nJe serais ravi de vous aider en mathématiques.\n\nN'hésitez pas à me contacter.\n\nMeilleures salutations\nOmid";
+    const t = insertHintBeforeClosing(ki, hint);
+    expect(t.split("\n\n").slice(-2)).toEqual([hint, "Meilleures salutations\nOmid"]);
+    expect(firstMessageProblem(t, { typ: "fr" }, null, 89, hint)).toBeNull();
+    expect(firstMessageProblem(ki, { typ: "fr" }, null, 89, hint)).toMatch(/wortgleich/);
+    expect(planFirstMessage(listing("Je cherche de l'aide en maths pour mon fils"), [matura()], S({}), [], NOW, "fr")).toMatchObject({ course: null, hint });
   });
 });
