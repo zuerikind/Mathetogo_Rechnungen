@@ -136,6 +136,9 @@ export async function runTutor24Messaging(
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   });
+  // Unter tsx (Automatik, scripts/*.mts) fuegt esbuild in Browser-Funktionen __name(...) ein; ohne diese
+  // Definition scheitert jedes page.evaluate mit "__name is not defined" (Probelauf 6.11., alle Inserate).
+  await context.addInitScript({ content: "globalThis.__name = globalThis.__name || function (f) { return f; };" });
   const page = await context.newPage();
 
   try {

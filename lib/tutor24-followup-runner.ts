@@ -994,6 +994,8 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     });
+    // tsx/esbuild: __name in Browser-Funktionen (auch in lib/tutor24-messaging.ts beim Senden), siehe lib/tutor24.ts
+    await page.addInitScript({ content: "globalThis.__name = globalThis.__name || function (f) { return f; };" });
     // Bilder, Schriften, Videos und Tracker gar nicht erst laden. Per CDP statt page.route:
     // route schaltet den HTTP-Cache ab, dann kaemen CSS/JS bei jedem Aufruf neu von tutor24.
     // Captcha-Anbieter bleiben erlaubt, sonst wuerde ein Captcha nicht mehr erkannt.

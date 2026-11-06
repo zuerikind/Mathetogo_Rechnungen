@@ -51,6 +51,21 @@ const quelleArg = process.argv.indexOf("--quelle");
 const quelle = quelleArg > -1 ? process.argv[quelleArg + 1] : forcedProbe && max ? "run" : "hand";
 /** vom Handy gestartet: auch ein "nicht gestartet" melden, sonst wartet man vergeblich */
 const asked = quelle === "knopf" || quelle === "run";
+if (asked) {
+  // Vom Bot gestartet: Ausgabe selbst ins Protokoll schreiben (weder vererbter Handle noch cmd-Umleitung kamen an).
+  const { appendFileSync } = await import("node:fs");
+  for (const k of ["log", "error"] as const) {
+    const orig = console[k].bind(console);
+    console[k] = (...a: unknown[]) => {
+      orig(...a);
+      try {
+        appendFileSync("tutor24-followup/autopilot-run.log", a.map(String).join(" ") + "\n");
+      } catch {
+        // Protokoll ist Nebensache
+      }
+    };
+  }
+}
 const hhmm = (d: string) => new Date(d).toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" });
 const minutes = (from: string) => `${Math.max(1, Math.round((Date.now() - new Date(from).getTime()) / 60000))} min`;
 
@@ -131,7 +146,10 @@ try {
     });
     for (const l of r.log) console.log(`  ${l}`);
     pass.fehler.push(...r.errors);
-    erstNote = `Erst-Nachrichten: ${sentOrWould(pass.erst)}, ${pass.erst.uebersprungen} übersprungen.`;
+    erstNote =
+      `Erst-Nachrichten: ${sentOrWould(pass.erst)}, ${pass.erst.uebersprungen} übersprungen` +
+      (r.errors.length ? `, ⚠ ${r.errors.length} Inserate mit Fehler: ${shortError(r.errors[0]).slice(0, 120)}` : "") +
+      ".";
   }
 
   // 2.–4. Kandidaten suchen → Antworten prüfen → Nachfassen (eine Anmeldung)

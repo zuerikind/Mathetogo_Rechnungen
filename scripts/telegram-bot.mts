@@ -63,10 +63,9 @@ const busy = (): string | null => {
 const spawnAutopilot = (args: string) => {
   const dir = join(process.cwd(), "tutor24-followup");
   mkdirSync(dir, { recursive: true });
-  // Umleitung in der Shell (wie autopilot.cmd): ein vererbter Datei-Handle kam unter Windows nie an,
-  // die Ausgabe des Durchgangs vom 6.11. 19:20 fehlt deshalb ganz.
+  // Die Ausgabe schreibt autopilot.mts selbst ins Protokoll (--quelle run/knopf): Umleitungen kamen unter Windows nie an.
   appendFileSync(join(dir, "autopilot-run.log"), `==== ${new Date().toLocaleString("de-CH")} vom Handy: ${args}\n`);
-  const child = spawn(`npx tsx scripts/autopilot.mts ${args} >> "tutor24-followup\\autopilot-run.log" 2>&1`, {
+  const child = spawn(`npx tsx scripts/autopilot.mts ${args}`, {
     cwd: process.cwd(), detached: true, windowsHide: true, stdio: "ignore", shell: true,
   });
   child.unref();
