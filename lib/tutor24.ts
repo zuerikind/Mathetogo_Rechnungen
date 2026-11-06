@@ -32,7 +32,7 @@ import {
 } from "./tutor24-messaging";
 
 import { StopRun, assertPageOk } from "./tutor24-followup-runner";
-import { firstName, isHardStop, type PassCounts } from "./tutor24-autopilot";
+import { isHardStop, type PassCounts } from "./tutor24-autopilot";
 
 export type { Tutor24Result } from "./tutor24-types";
 
@@ -381,7 +381,8 @@ export async function runTutor24Messaging(
             if (auto?.dryRun) {
               const course = kursId ? loadCourses().find((c) => c.id === kursId) : null;
               auto.counts.wuerde++;
-              auto.probe.push(`${firstName(displayName)} · ${course?.name ?? "ohne Kurs"} · Erst-Nachricht`);
+              // Inserate haben keinen Personennamen (displayName ist der Titel): nur Link, Kurs — nichts aus dem Inserat.
+              auto.probe.push(`Inserat https://tutor24.ch/de/jobs/${tutor24Id} · ${course?.name ?? "ohne Kurs"} · Erst-Nachricht`);
               tag(`PROBE — würde senden (${course?.name ?? "ohne Kurs"}):\n${message}`);
               continue;
             }
