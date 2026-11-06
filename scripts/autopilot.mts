@@ -99,7 +99,8 @@ const listReplies: { id: string; name: string; absage: boolean }[] = [];
 /** Vor jeder einzelnen Nachricht und direkt vor dem Senden: Zeitfenster und Notbremse (Telegram /stop, /kurse). */
 const mayContinue = () => {
   if (forcedProbe) return null; // von Hand / Telegram /run: sendet ohnehin nichts
-  if (!inSendWindow()) return "ausserhalb 8–20 Uhr";
+  // Probe sendet nichts: das Fenster gilt nur im echten Betrieb; die Liste vermerkt "würde ab 8:00 gesendet".
+  if (!dryRun && !inSendWindow()) return "ausserhalb 8–20 Uhr";
   const now = loadAutopilot().modus;
   if (now === "aus" || (!dryRun && now !== "an")) return "Automatik wurde ausgeschaltet";
   return null;
@@ -121,7 +122,7 @@ let busy = false;
 try {
   // 1. Erst-Nachrichten an neue Inserate (begrenzt: nur Mathematik, eine Suchseite)
   const erstLimit = Math.min(max ?? Infinity, Math.max(0, settings.autoErstLimit - (await sentToday(new Date(), "erst"))));
-  if (!inSendWindow() && !forcedProbe) log((erstNote = "Ausserhalb 8–20 Uhr: keine Erst-Nachrichten."));
+  if (!inSendWindow() && !dryRun) log((erstNote = "Ausserhalb 8–20 Uhr: keine Erst-Nachrichten."));
   else if (erstLimit === 0) log((erstNote = `Tageslimit Erst-Nachrichten (${settings.autoErstLimit}) erreicht.`));
   else {
     log(`Erst-Nachrichten: höchstens ${erstLimit}${dryRun ? " (PROBE, sendet nichts)" : ""} …`);
@@ -211,7 +212,8 @@ if (runId) await db("Durchgang abschliessen", () => finishRun(runId, pass));
 await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
 
 // Schlussmeldung immer, auch im Modus EIN (Stopp und Abbruch haben oben zusaetzlich ihre eigene).
-const list = dryRun ? `\nWürde senden:\n${pass.probe.length ? pass.probe.map((x) => `• ${x}`).join("\n") : "niemand"}` : "";
+const later = inSendWindow() ? "" : " — würde ab 8:00 gesendet";
+const list = dryRun ? `\nWürde senden:\n${pass.probe.length ? pass.probe.map((x) => `• ${x}${later}`).join("\n") : "niemand"}` : "";
 await notify(
   `${P}${pass.stopp || fatal || busy ? "■" : "✅"} Durchgang ${hhmm(pass.start)} fertig (${minutes(pass.start)})\n` +
     `Ergebnis: ${busy ? "vorzeitig beendet (gestoppt)" : passResult(pass)}\n` +
