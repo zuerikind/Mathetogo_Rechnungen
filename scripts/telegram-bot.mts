@@ -7,7 +7,8 @@
  *   → zeigt die Chat-ID der letzten Nachricht an den Bot (vorher dem Bot "/start" schreiben).
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { uptime } from "node:os";
 import { join } from "node:path";
 import { config } from "dotenv";
 
@@ -39,11 +40,48 @@ if (!me) {
   process.exit(1);
 }
 
+// Wiederbeleber: die Windows-Aufgabe startet diese Datei alle 5 Minuten (MultipleInstances IgnoreNew).
+// Waehrend ein Durchgang laeuft, startet kein Bot — der naechste Versuch kommt 5 Minuten spaeter.
+const BOT_LOCK = join(process.cwd(), ".telegram-bot.lock");
+const EXIT_MARK = join(process.cwd(), "tutor24-followup", "telegram-bot.exit.json");
+const pass = readTutor24Lock(AUTOPILOT_LOCK_PATH);
+if (pass && !readTutor24Lock(BOT_LOCK)) {
+  console.log(`${new Date().toLocaleString("de-CH")} Durchgang läuft (${pass.owner}) — Bot startet erst danach.`);
+  process.exit(0);
+}
+
 // Nur ein Bot: zwei Bots wuerden sich die Updates wegnehmen (Telegram erlaubt nur einen getUpdates-Leser).
+let crashed: string | null = null;
 try {
-  const release = acquireTutor24Lock("Telegram-Bot", join(process.cwd(), ".telegram-bot.lock"));
+  // Vorher ausgefallen? Entweder hart beendet (Sperre verwaist) oder per Signal (Marke geschrieben).
+  const bootedAt = Date.now() - uptime() * 1000;
+  if (existsSync(BOT_LOCK) && !readTutor24Lock(BOT_LOCK)) {
+    const old = JSON.parse(readFileSync(BOT_LOCK, "utf8")) as { startedAt?: string };
+    if (old.startedAt && new Date(old.startedAt).getTime() > bootedAt) crashed = "ohne Abmeldung beendet";
+  }
+  if (existsSync(EXIT_MARK)) {
+    const m = JSON.parse(readFileSync(EXIT_MARK, "utf8")) as { am: string; grund: string };
+    // Neustart des Laptops seither: kein Ausfall, sondern normaler Start bei der Anmeldung.
+    if (new Date(m.am).getTime() > bootedAt) crashed = `${m.grund} um ${new Date(m.am).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" })}`;
+    unlinkSync(EXIT_MARK);
+  }
+} catch {
+  // Marke unlesbar: egal
+}
+try {
+  const release = acquireTutor24Lock("Telegram-Bot", BOT_LOCK);
   process.on("exit", release);
-  for (const sig of ["SIGINT", "SIGTERM", "SIGBREAK"] as const) process.on(sig, () => process.exit(0));
+  for (const sig of ["SIGINT", "SIGTERM", "SIGBREAK"] as const)
+    process.on(sig, () => {
+      // Spur fuer die Fehlersuche (6.11.: zweimal Strg+C ohne bekannten Ausloeser) und fuer die Meldung beim Neustart
+      console.log(`${new Date().toLocaleString("de-CH")} Beendet durch ${sig}`);
+      try {
+        writeFileSync(EXIT_MARK, JSON.stringify({ am: new Date().toISOString(), grund: `beendet durch ${sig}` }));
+      } catch {
+        // egal
+      }
+      process.exit(0);
+    });
 } catch (err) {
   console.error(`Bot läuft schon: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(0); // 0: die Aufgabenplanung soll das nicht als Absturz neu starten
@@ -116,6 +154,10 @@ const fromQueue = async () => {
 };
 
 console.log(`${stamp()} Telegram-Bot läuft. Befehle: /status, /run, /stop, /enable, Knopf „Jetzt starten“`);
+if (crashed) {
+  console.log(`${stamp()} Neu gestartet nach Ausfall (${crashed})`);
+  await notify(`♻️ Telegram-Bot war ausgefallen (${crashed}) und wurde automatisch neu gestartet. Befehle gehen wieder.`).catch(() => {});
+}
 // Solange kein Webhook gesetzt ist, liest der Bot selbst bei Telegram (getUpdates). Ist der Webhook auf
 // Vercel aktiv, antwortet Telegram darauf mit 409 — dann nur noch Befehle aus der Datenbank.
 let webhook = false;
