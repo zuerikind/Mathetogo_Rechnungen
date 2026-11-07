@@ -64,6 +64,39 @@ export type PassLog = {
 };
 export const emptyCounts = (): PassCounts => ({ gesendet: 0, wuerde: 0, uebersprungen: 0, pruefungFehler: 0 });
 
+/** Fehler, deren Ursache behoben ist: auf /kurse (Protokoll) ausgegraut mit "behoben …". */
+export const KNOWN_FIXED: Array<{ re: RegExp; am: string; text: string }> = [
+  { re: /__name is not defined/, am: "2026-11-06T21:55:00+01:00", text: "Programmfehler beim Lesen der Inserate" },
+  // 429 am 5.11.: Last pro Durchgang gesenkt (f1aa50d: 2 Durchgaenge, Pausen, weniger Chats). Ein neuer 429 bleibt rot.
+  { re: /\b429\b|Too Many Requests/i, am: "2026-11-05T15:30:00+01:00", text: "tutor24 hat das Anfragelimit erreicht (Last seither gesenkt)" },
+  { re: /tutor24_(command|signal|run)`? does not exist/, am: "2026-11-05T17:25:00+01:00", text: "Datenbank-Tabellen fehlten (vor der Migration)" },
+];
+
+export type PassView = PassLog & { satz: string; fehlerKurz: string | null; details: string | null; behoben: string | null };
+
+/** Ein Durchgang fuers Protokoll auf /kurse: Ergebnis in einem Satz, Fehler kurz, Technisches separat. */
+export function passView(p: PassLog): PassView {
+  const probe = p.modus === "probe";
+  const n = (c: PassCounts) => (probe ? c.wuerde : c.gesendet);
+  const counts = `Erst-Nachrichten ${n(p.erst)}, Nachfassen ${n(p.nachfassen)}${probe ? " (würden gesendet)" : ""}, ${p.antworten} ${p.antworten === 1 ? "Antwort" : "Antworten"}`;
+  const all = [...(p.stopp ? [p.stopp] : []), ...p.fehler];
+  const fixed = KNOWN_FIXED.find((k) => all.some((f) => k.re.test(f)) && new Date(p.start) < new Date(k.am));
+  const kurz = !all.length
+    ? null
+    : all.some(is429)
+      ? RATE_LIMIT_TEXT
+      : fixed
+        ? fixed.text
+        : shortError(all[0]).split("\n")[0].slice(0, 140);
+  return {
+    ...p,
+    satz: all.length ? (p.stopp ? "Gestoppt" : "Abgebrochen") + ` · ${counts}` : `Ohne Fehler · ${counts}`,
+    fehlerKurz: kurz,
+    details: all.length ? all.join("\n\n").slice(0, 4000) : null,
+    behoben: fixed ? new Date(fixed.am).toLocaleDateString("de-CH", { timeZone: "Europe/Zurich", day: "numeric", month: "numeric" }) : null,
+  };
+}
+
 export function appendPassLog(p: PassLog): void {
   mkdirSync(DIR, { recursive: true });
   appendFileSync(AUTOPILOT_LOG_PATH, JSON.stringify(p) + "\n");

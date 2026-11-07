@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoEligible, daySummary, errorKey, firstName, inSendWindow, isBusy, isHardStop, stopReason, type PassLog } from "./tutor24-autopilot";
+import { RATE_LIMIT_TEXT, autoEligible, daySummary, emptyCounts, errorKey, firstName, inSendWindow, isBusy, isHardStop, passView, stopReason, type PassLog } from "./tutor24-autopilot";
 import { mergeSettings, newActivity, type ListEntry } from "./tutor24-followup";
 
 describe("Automatik", () => {
@@ -78,5 +78,26 @@ describe("Automatik", () => {
     expect(text).toContain("2 Durchgänge");
     expect(text).toContain("Erst-Nachrichten: 5 gesendet");
     expect(text).toContain("Nachfassen: 2 gesendet");
+  });
+});
+
+describe("Protokoll auf /kurse (passView)", () => {
+  const base = { ende: "", erst: emptyCounts(), nachfassen: emptyCounts(), antworten: 0, fehler: [] as string[], stopp: null as string | null };
+  it("Ergebnis in einem Satz, Probe mit 'würden gesendet'", () => {
+    const v = passView({ ...base, start: "2026-11-06T21:51:00Z", modus: "probe", erst: { ...emptyCounts(), wuerde: 5 }, antworten: 1 });
+    expect(v.satz).toBe("Ohne Fehler · Erst-Nachrichten 5, Nachfassen 0 (würden gesendet), 1 Antwort");
+    expect(v).toMatchObject({ fehlerKurz: null, details: null, behoben: null });
+  });
+  it("behobene Fehler grau, neue bleiben offen", () => {
+    const name = "[6294260] page.evaluate: ReferenceError: __name is not defined\n    at eval";
+    const alt = passView({ ...base, start: "2026-11-06T20:43:00Z", modus: "probe", fehler: [name] });
+    expect(alt).toMatchObject({ fehlerKurz: "Programmfehler beim Lesen der Inserate", behoben: "6.11." });
+    expect(alt.details).toContain("__name");
+    expect(passView({ ...base, start: "2026-11-08T08:00:00Z", modus: "probe", fehler: [name] }).behoben).toBeNull();
+    const old429 = passView({ ...base, start: "2026-11-05T11:28:00Z", modus: "probe", stopp: "429 Too Many Requests" });
+    expect(old429.behoben).toBe("5.11.");
+    expect(old429.satz.startsWith("Gestoppt")).toBe(true);
+    const new429 = passView({ ...base, start: "2026-11-09T08:00:00Z", modus: "an", stopp: "429 Too Many Requests" });
+    expect(new429).toMatchObject({ behoben: null, fehlerKurz: RATE_LIMIT_TEXT });
   });
 });

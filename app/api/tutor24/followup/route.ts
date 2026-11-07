@@ -24,7 +24,9 @@ import {
   type RunStatus,
 } from "@/lib/tutor24-followup-store";
 import { pidAlive, readTutor24Lock } from "@/lib/tutor24-lock";
-import { loadAutopilot, readPassLog, updateAutopilot, type AutoMode } from "@/lib/tutor24-autopilot";
+import { activePause, loadAutopilot, localDay, nextScheduled, passView, readPassLog, updateAutopilot, type AutoMode, type PassLog } from "@/lib/tutor24-autopilot";
+import { laptopOnline } from "@/lib/tutor24-watch";
+import { readLaptop } from "@/lib/tutor24-watch-db";
 
 export const runtime = "nodejs";
 
@@ -82,6 +84,31 @@ function startRun(mode: "preview" | "send" | "replies", max?: number, courseId?:
   writeStatus({ ...IDLE, running: true, pid: child.pid ?? 0, mode, startedAt: new Date().toISOString(), progress: "Prozess startet …" });
 }
 
+/** Uebersicht auf /kurse: Laptop, heutige Zahlen mit Limit, naechster geplanter Durchgang, 429-Pause. */
+async function overview(passes: PassLog[], settings: ReturnType<typeof loadSettings>) {
+  const now = new Date();
+  const today = localDay(now);
+  const todays = passes.filter((p) => localDay(new Date(p.start)) === today);
+  const sum = (f: (p: PassLog) => number) => todays.reduce((n, p) => n + f(p), 0);
+  const laptop = await readLaptop().catch(() => null);
+  const pause = activePause(passes, now);
+  return {
+    laptop: laptop ? { at: laptop.at, online: laptopOnline(laptop, now) } : null,
+    heute: {
+      erst: await sentToday(now, "erst"),
+      erstLimit: settings.autoErstLimit,
+      nachfassen: await sentToday(now),
+      nachfassenLimit: settings.autoNachfassLimit,
+      antworten: sum((p) => p.antworten),
+      // Probe: was heute gesendet worden waere
+      erstWuerde: sum((p) => p.erst.wuerde),
+      nachfassenWuerde: sum((p) => p.nachfassen.wuerde),
+    },
+    naechster: nextScheduled(pause ?? now).toISOString(),
+    pauseBis: pause?.toISOString() ?? null,
+  };
+}
+
 /** GET — Laufstatus, Sperre, Faecher, Kurse, Vorschau, Protokoll, Sende-Kontingent */
 export async function GET() {
   const session = await auth();
@@ -91,6 +118,7 @@ export async function GET() {
   const courses = loadCourses();
   const { pending, queue, budget, log, leads } = await sendQueue(courses, settings, new Date());
   const status = runStatus();
+  const passes = readPassLog(200);
   return NextResponse.json({
     state: { ...status, log: status.log.slice(-40) },
     blockedBy: blocker(status),
@@ -100,7 +128,8 @@ export async function GET() {
     rows: readPreview().map(({ nachricht: _omit, ...r }) => r),
     log,
     leads,
-    autopilot: { ...loadAutopilot(), telegramOffset: undefined, durchgaenge: readPassLog(10).reverse() },
+    autopilot: { ...loadAutopilot(), telegramOffset: undefined, durchgaenge: passes.slice(-60).reverse().map(passView) },
+    uebersicht: await overview(passes, settings),
     send: {
       limit: MAX_SENDS_PER_DAY,
       sentToday: await sentToday(),
