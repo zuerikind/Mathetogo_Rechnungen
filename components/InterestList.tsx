@@ -13,7 +13,7 @@ type Data = {
   courses: Array<{ id: string; name: string; active: boolean; gruppe: string; fach: string }>;
 };
 
-const cardClass = "rounded-2xl border border-blue-100 bg-white p-5 shadow-sm";
+const cardClass = "overflow-x-auto rounded-2xl border border-gray-200 bg-white p-5";
 const btn = "rounded-lg border border-gray-200 px-2 py-0.5 text-[11px] font-semibold text-gray-600 hover:border-[#4A7FC1] hover:text-[#4A7FC1] disabled:opacity-50";
 /** ISO-Kalenderwoche eines Montags "YYYY-MM-DD": Donnerstag derselben Woche / Woche mit dem 4. Januar. */
 const kw = (iso: string) => {

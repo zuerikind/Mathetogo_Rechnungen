@@ -117,6 +117,11 @@ export default function Tutor24Page() {
     <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       <div className="space-y-4">
 
+        {/* ponytail: /tutor24 und /kurse spaeter zusammenfuehren (stand.md, offener Punkt) */}
+        <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-gray-800">
+          <b>Die Automatik steuerst du auf <a href="/kurse" className="text-[#4A7FC1] underline">/kurse</a>.</b> Dort siehst du auch, ob alles läuft, und kannst Erst-Nachrichten
+          jederzeit senden. Diese Seite ist für Läufe von Hand.
+        </p>
         <div className="flex gap-1 border-b border-gray-200">
           {([["erst", "Erst-Nachrichten"], ["nachfassen", "Nachfassen Gruppenkurs"]] as const).map(([key, label]) => (
             <button

@@ -20,6 +20,7 @@ import {
   withAnrede,
   needsReplyCheck,
   newCourse,
+  pipelineStage,
   validateCourses,
   type Course,
   type CourseGroup,
@@ -39,7 +40,7 @@ import {
   type PreviewWer,
 } from "@/lib/tutor24-course-offer";
 import { CoursePipeline } from "./Tutor24Pipeline";
-import { AutopilotPanel, type AutopilotInfo } from "./AutopilotPanel";
+import { Overview, PassTable, card, type Attention, type AutopilotInfo, type OverviewInfo } from "./AutopilotPanel";
 
 type Row = Omit<PreviewRow, "nachricht">;
 type Mode = "preview" | "send" | "replies";
@@ -66,6 +67,7 @@ type StatusResponse = {
   /** Stand aus Tutor24Lead: Anrede, Sprache, Kurs der Erst-Nachricht */
   leads: LeadMap;
   autopilot: AutopilotInfo;
+  uebersicht: OverviewInfo;
   send: {
     limit: number;
     sentToday: number;
@@ -204,7 +206,8 @@ function CourseEditor({
   const inquiry = course.gruppe === "offen";
 
   return (
-    <div className="rounded-xl border border-gray-100">
+    <div className="rounded-2xl border border-gray-200 bg-white">
+      <p className="px-4 pt-4 font-semibold text-gray-900">Kurs bearbeiten</p>
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
         <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-gray-800">
           <input type="checkbox" checked={course.active} disabled={disabled} onChange={(e) => set("active", e.target.checked)} className="accent-[#4A7FC1]" />
@@ -242,18 +245,18 @@ function CourseEditor({
         <div className="grid gap-4 border-t border-gray-100 p-4 lg:grid-cols-2">
           <div className="space-y-3 text-sm text-gray-600">
             <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-2">
+              <label className="flex w-full items-center gap-2 sm:w-auto">
                 Name
-                <input value={course.name} disabled={disabled} onChange={(e) => set("name", e.target.value)} className={`${inputClass} w-72`} />
+                <input value={course.name} disabled={disabled} onChange={(e) => set("name", e.target.value)} className={`${inputClass} w-full min-w-0 sm:w-72`} />
               </label>
-              <label className="flex items-center gap-2" title="Für englische Nachrichten; leer = deutscher Name">
+              <label className="flex w-full items-center gap-2 sm:w-auto" title="Für englische Nachrichten; leer = deutscher Name">
                 Name englisch
                 <input
                   value={course.nameEn ?? ""}
                   placeholder="optional, z.B. Matura maths preparation course"
                   disabled={disabled}
                   onChange={(e) => set("nameEn", e.target.value)}
-                  className={`${inputClass} w-72`}
+                  className={`${inputClass} w-full min-w-0 sm:w-72`}
                 />
               </label>
             </div>
@@ -385,10 +388,15 @@ function CourseEditor({
  */
 export function Tutor24Followup({
   view = "nachfassen",
+  tab = "uebersicht",
+  onTab,
   focusCourse = null,
   onOpenCourse,
 }: {
   view?: "nachfassen" | "kurse";
+  /** nur view "kurse": welcher Reiter (app/kurse/page.tsx) */
+  tab?: KurseTab;
+  onTab?: (t: KurseTab) => void;
   focusCourse?: string | null;
   onOpenCourse?: (courseId: string) => void;
 } = {}) {
@@ -396,6 +404,9 @@ export function Tutor24Followup({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [openCourse, setOpenCourse] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(focusCourse);
+  // /kurse: Kursliste oder Kursseite (Pipeline + Bearbeiten + Manuell)
+  const [courseOpen, setCourseOpen] = useState(!!focusCourse);
+  const [showNew, setShowNew] = useState(false);
   const [newFach, setNewFach] = useState("Mathe");
   const [newGruppe, setNewGruppe] = useState<CourseGroup>("bm");
   // id des Kurses, der gerade gespeichert wird ("settings" = Einstellungen oben)
@@ -593,7 +604,8 @@ export function Tutor24Followup({
     // Auf /kurse: als Entwurf anlegen, gespeichert wird mit "Speichern".
     setDraft({ ...draft, courses: [...draft.courses, c] });
     setSelectedId(c.id);
-    setOpenCourse(c.id);
+    setOpenCourse(null);
+    setCourseOpen(true);
   };
   const selected = draft.courses.find((c) => c.id === selectedId) ?? draft.courses[0] ?? null;
   /** Anderen Kurs oeffnen: ungespeicherte Aenderungen am aktuellen erst bestaetigen lassen. */
@@ -603,8 +615,26 @@ export function Tutor24Followup({
       discardCourse(selected.id);
     }
     setSelectedId(id);
+    setCourseOpen(true);
   };
   const openCourseTab = (id: string) => (onOpenCourse ? onOpenCourse(id) : selectCourse(id));
+  const deleteSelected = () => {
+    if (!selected) return;
+    // Mit Angeschriebenen haette deren Pipeline keinen Kurs mehr: Antworten waeren unsichtbar.
+    const contacted = status.log.filter((r) => r.kurs === selected.id).length;
+    if (contacted > 0) {
+      alert(`„${selected.name}“ hat schon ${contacted} Angeschriebene. Löschen würde ihre Antworten aus der Pipeline entfernen. Setz den Kurs stattdessen auf pausiert.`);
+      return;
+    }
+    if (window.confirm(`Kurs „${selected.name}“ löschen?`)) {
+      // Loeschen gilt sofort (nicht erst mit "Speichern").
+      const id = selected.id;
+      setDraft({ ...draft, courses: draft.courses.filter((x) => x.id !== id) });
+      setSelectedId(null);
+      setCourseOpen(false);
+      if (status.courses.some((x) => x.id === id)) void persist("delete", { settings: status.settings, courses: status.courses.filter((x) => x.id !== id) });
+    }
+  };
   // Pipeline, "Bereit" und Senden rechnen mit der gespeicherten Fassung.
   const selectedSaved = selected ? savedCourse(selected.id) ?? null : null;
   // "Bereit": wer beim naechsten Senden diesen Kurs bekaeme — auch wenn er gerade pausiert ist.
@@ -633,16 +663,46 @@ export function Tutor24Followup({
   const notAnalysed = status.rows.filter((r) => r.fach && !r.faecher).length;
   const lastLine = state.log.at(-1) ?? "";
   const runningLabel = { preview: "Probelauf läuft", send: "Senden läuft", replies: "Antworten werden geprüft", compare: "Vergleich läuft" };
+  // Abgebrochener manueller Lauf: nur die letzten 12 Stunden zeigen, aeltere stehen nicht mehr im Weg.
+  const recentError = !running && !!state.error && !!state.finishedAt && Date.now() - new Date(state.finishedAt).getTime() < 12 * 3600_000;
+  const lastPass = status.autopilot.durchgaenge[0];
+  const fmtAt = (iso: string) => new Date(iso).toLocaleString("de-CH", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+  const attention: Attention[] = [
+    ...(status.autopilot.gestoppt ? [{ tone: "bad" as const, text: <><b>Automatik gestoppt</b> ({fmtAt(status.autopilot.gestoppt.am)}): {status.autopilot.gestoppt.grund}</> }] : []),
+    ...(status.uebersicht.laptop && !status.uebersicht.laptop.online
+      ? [{ tone: "bad" as const, text: <><b>Laptop offline</b> seit {fmtAt(status.uebersicht.laptop.at)}. Ohne Laptop läuft kein Durchgang.</> }]
+      : []),
+    ...(lastPass?.fehlerKurz && !lastPass.behoben && !lastPass.stopp
+      ? [{ tone: "bad" as const, text: <><b>Letzter Durchgang abgebrochen</b> ({fmtAt(lastPass.start)}): {lastPass.fehlerKurz}</>, action: { label: "Protokoll", onClick: () => onTab?.("protokoll") } }]
+      : []),
+    ...(errors.length ? [{ tone: "bad" as const, text: <><b>Ein Kurs hat einen Fehler</b>, bis dahin wird nichts gesendet: {errors.join(" ")}</>, action: { label: "Kurse", onClick: () => onTab?.("kurse") } }] : []),
+    ...status.log
+      .filter((r) => pipelineStage(r) === "antwort")
+      .map((r) => ({
+        tone: "info" as const,
+        text: <><b>Neue Antwort</b> von {r.name || "ohne Namen"} · {status.courses.find((c) => c.id === r.kurs)?.name ?? "ohne Kurs"}. Lesen und in der Pipeline einordnen.</>,
+        action: { label: "Chat öffnen", href: `https://www.tutor24.ch/de/conversations/${r.conversation_id}?tab=sent` },
+      })),
+    ...status.courses
+      .filter((c) => c.active && c.gruppe !== "offen")
+      .flatMap((c) => {
+        const st = courseStats(c, status.log);
+        return st.tageBisSchluss >= 0 && st.tageBisSchluss <= 10 && st.zusagen < c.minParticipants
+          ? [{ tone: "warn" as const, text: <><b>{c.name}:</b> noch {st.tageBisSchluss} {st.tageBisSchluss === 1 ? "Tag" : "Tage"} bis Anmeldeschluss, {st.zusagen} von {c.minParticipants} Zusagen.</>, action: { label: "Kurs ansehen", onClick: () => { onTab?.("kurse"); selectCourse(c.id); } } }]
+          : [];
+      }),
+    ...(status.courses.length > 0 && !status.courses.some((c) => c.active) ? [{ tone: "warn" as const, text: <><b>Kein Kurs aktiv</b> — niemand bekommt ein Kursangebot.</> }] : []),
+  ];
 
   return (
     <div className="space-y-4">
-      {/* Live-Status */}
-      {status.blockedBy && !running && (
+      {/* Live-Status (Seite /tutor24; /kurse hat seinen eigenen, kurzen) */}
+      {view !== "kurse" && status.blockedBy && !running && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           tutor24 ist gerade belegt: <b>{status.blockedBy}</b>. Starten ist möglich, sobald dieser Lauf fertig ist.
         </div>
       )}
-      {(running || state.error || state.finishedAt) && (
+      {view !== "kurse" && (running || state.error || state.finishedAt) && (
         <div className={`${cardClass} ${state.error && !running ? "border-2 border-red-300 bg-red-50" : ""}`}>
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="font-semibold text-gray-900">
@@ -687,326 +747,331 @@ export function Tutor24Followup({
 
       {view === "kurse" ? (
         <>
-          <AutopilotPanel
-            info={status.autopilot}
-            settings={draft.settings}
-            onSettings={setSettings}
-            saveButton={saveButton}
-            onMode={async (modus) => {
-              await post({ action: "autopilot", modus });
-              await fetchStatus();
-            }}
-          />
-          {/* Automationen: der Ablauf in drei Schritten */}
-          <div className={cardClass}>
-            <div className="mb-1 flex flex-wrap items-center gap-3">
-              <h2 className="font-semibold text-gray-900">Automationen</h2>
-              {errors.length > 0 ? (
-                <span className="text-xs font-semibold text-red-600">Senden gesperrt: ein Kurs hat einen Fehler (siehe Kurse).</span>
-              ) : (
-                selected && courseDirty(selected.id) && (
-                  <span className="text-xs font-semibold text-amber-700">„{selected.name}“ hat ungespeicherte Änderungen — gesendet wird die gespeicherte Fassung.</span>
-                )
+          {/* Laufender oder eben abgebrochener manueller Lauf: kurz, Technisches eingeklappt */}
+          {status.blockedBy && !running && (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
+              tutor24 ist gerade belegt: <b>{status.blockedBy}</b>. Manuelle Schritte gehen, sobald dieser Lauf fertig ist.
+            </p>
+          )}
+          {(running || recentError) && (
+            <div className={`rounded-xl border px-4 py-3 text-sm ${running ? "border-blue-200 bg-blue-50" : "border-red-200 bg-red-50"}`}>
+              <div className="flex flex-wrap items-center gap-3">
+                <b className={running ? "text-gray-900" : "text-red-800"}>{running ? runningLabel[state.mode ?? "preview"] : "Manueller Lauf abgebrochen"}</b>
+                {running && <span className="text-gray-600">{state.done} von {state.total || "?"} · {state.progress}</span>}
+                {!running && <span className="text-red-800">{state.error}</span>}
+                {running && (
+                  <button
+                    onClick={async () => {
+                      await fetch("/api/tutor24/followup", { method: "DELETE" });
+                      void fetchStatus();
+                    }}
+                    className="ml-auto rounded-lg border border-red-300 bg-white px-3 py-1 font-semibold text-red-700 hover:bg-red-50"
+                  >
+                    Stoppen
+                  </button>
+                )}
+              </div>
+              {(state.details || state.log.length > 1) && (
+                <details className="mt-1 text-xs text-gray-600">
+                  <summary className="cursor-pointer text-[#4A7FC1]">Technische Details</summary>
+                  {state.details && <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 font-mono text-[11px]">{state.details}</pre>}
+                  <div className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg bg-gray-900 p-2 font-mono text-[11px] leading-5 text-green-400">{state.log.join("\n")}</div>
+                </details>
               )}
             </div>
-            <p className="mb-4 text-sm text-gray-500">
-              Alle drei Schritte gehören zum <b>Nachfassen</b>: Wer die Erst-Nachricht bekommen und nicht geantwortet hat, erhält ein Kursangebot. Die <b>Erst-Nachricht</b> selbst schickt die tutor24-Automation (<a href="/tutor24" className="text-[#4A7FC1] underline">Seite tutor24</a>); ob sie schon einen Kurs anbietet, steuert der Schalter „Kurse in der Erst-Nachricht anbieten“ unten. Jeder Schritt läuft im Hintergrund weiter, auch wenn du die Seite neu lädst; es läuft immer nur einer gleichzeitig. Schritt 2 und 3 gelten für den unten ausgewählten Kurs.
-            </p>
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="flex flex-col rounded-xl border border-gray-100 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 1 · <span className="text-amber-700">Nachfassen</span></p>
-                <h3 className="font-semibold text-gray-900">Kandidaten fürs Nachfassen suchen</h3>
-                <p className="mt-1 flex-1 text-sm text-gray-500">
-                  Liest deine tutor24-Konversationen: wer auf die Erst-Nachricht nicht geantwortet hat, kommt in den passenden Kurs (Spalte „Bereit“). Sendet nichts.
-                </p>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button onClick={() => void start("preview")} disabled={blocked || busy || !(maxChecks >= 1)} className={btnPrimary}>
-                    Kandidaten suchen
-                  </button>
-                  <label className="flex items-center gap-1 text-xs text-gray-500">
-                    max.
-                    <input type="number" min={1} value={maxChecks} onChange={(e) => setMaxChecks(Number(e.target.value))} disabled={blocked} className={`${inputClass} w-16`} />
-                  </label>
+          )}
+
+          {tab === "uebersicht" && (
+            <Overview
+              info={status.autopilot}
+              ov={status.uebersicht}
+              attention={attention}
+              onMode={async (modus) => {
+                await post({ action: "autopilot", modus });
+                await fetchStatus();
+              }}
+            />
+          )}
+
+          {tab === "protokoll" && <PassTable passes={status.autopilot.durchgaenge} />}
+
+          {tab === "einstellungen" && (
+            <div className="space-y-5">
+              <h2 className="text-lg font-semibold text-gray-900">Einstellungen</h2>
+              <div className={card}>
+                <h3 className="font-semibold text-gray-900">Erst-Nachricht</h3>
+                <SettingRow title="Kursblock" help="Ist ein passender Kurs offen, steht der konkrete Kurs mit Daten und Preis in der Erst-Nachricht. Die bisherigen Ausschlüsse gelten.">
+                  <Toggle id="set-kursblock" checked={draft.settings.newFirstMessage} disabled={running} onChange={(v) => setSettings({ newFirstMessage: v })} />
+                </SettingRow>
+                <SettingRow title="Kurs-Hinweis" help="Ist kein passender Kurs offen, steht ein kurzer Hinweis auf Academigo drin. Nicht für Erwachsene ohne BM-Bezug.">
+                  <Toggle id="set-hinweis" checked={draft.settings.kursHinweis} disabled={running} onChange={(v) => setSettings({ kursHinweis: v })} />
+                </SettingRow>
+                <SettingRow title="Kurspreis ab" help="„ab CHF … pro Lektion“ im Kurs-Hinweis.">
+                  <NumberField id="set-preisab" value={draft.settings.kursPreisAb} min={1} unit="CHF" disabled={running} onChange={(v) => setSettings({ kursPreisAb: v })} />
+                </SettingRow>
+                <SettingRow title="Einzelunterricht" help="Vergleichspreis im Kursblock beider Nachrichten: „CHF … pro Lektion statt CHF … im Einzelunterricht“.">
+                  <NumberField id="set-einzel" value={draft.settings.privatePricePerLesson} min={1} unit="CHF" disabled={running} onChange={(v) => setSettings({ privatePricePerLesson: v })} />
+                </SettingRow>
+              </div>
+              <div className={card}>
+                <h3 className="font-semibold text-gray-900">Automatik</h3>
+                <SettingRow title="Erst-Nachrichten pro Tag" help="Höchstens so viele neue Inserate pro Tag, über alle Durchgänge und „jetzt senden“ zusammen.">
+                  <NumberField id="set-erstlimit" value={draft.settings.autoErstLimit} min={0} disabled={running} onChange={(v) => setSettings({ autoErstLimit: v })} />
+                </SettingRow>
+                <SettingRow title="Nachfassen pro Tag" help="Höchstens so viele Nachfass-Nachrichten pro Tag (höchstens 25).">
+                  <NumberField id="set-nachlimit" value={draft.settings.autoNachfassLimit} min={0} max={25} disabled={running} onChange={(v) => setSettings({ autoNachfassLimit: v })} />
+                </SettingRow>
+                <SettingRow title="Nachfassen frühestens nach" help="So viele Tage nach der Erst-Nachricht, und nur ohne Antwort (mindestens 3).">
+                  <NumberField id="set-tage" value={draft.settings.nachfassNachTagen} min={3} unit="Tagen" disabled={running} onChange={(v) => setSettings({ nachfassNachTagen: v })} />
+                </SettingRow>
+              </div>
+              <div className={card}>
+                <h3 className="font-semibold text-gray-900">Meine Fächer</h3>
+                <p className="mt-1 text-sm text-gray-500">Nur diese Fächer zählen für Kurse und die Interessentenliste.</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {SUBJECTS.map((s) => {
+                    const on = draft.settings.mySubjects.includes(s);
+                    return (
+                      <button
+                        key={s}
+                        disabled={running}
+                        aria-pressed={on}
+                        onClick={() => setSettings({ mySubjects: on ? draft.settings.mySubjects.filter((x) => x !== s) : [...draft.settings.mySubjects, s] })}
+                        className={`rounded-full border px-3 py-1 text-sm font-medium ${on ? "border-[#4A7FC1] bg-blue-50 text-[#4A7FC1]" : "border-gray-300 bg-white text-gray-600"}`}
+                      >
+                        {s}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-              <div className="flex flex-col rounded-xl border border-gray-100 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 2 · <span className="text-amber-700">Nachfassen</span></p>
-                <h3 className="font-semibold text-gray-900">Nachfassen senden (Kursangebot)</h3>
-                <p className="mt-1 flex-1 text-sm text-gray-500">
-                  Schickt die Nachfass-Nachricht mit dem Kursangebot an alle in „Bereit“ von <b>{selected?.name || "—"}</b>{selected && !selected.active && " (pausiert — erst Häkchen setzen)"}. Höchstens {send.limit} pro Tag (heute noch {send.budget}), 1–3 Minuten
-                  Pause dazwischen. Alle Texte werden vorher geprüft; danach läuft es ohne Rückfrage durch.
-                  {coursePending.length > courseQueue.length && ` ${coursePending.length - courseQueue.length} weitere folgen an einem späteren Tag.`}
-                </p>
-                {courseQueue.length > 0 && (
-                  <details className="mt-2 text-xs" open={badRecipients.length > 0}>
-                    <summary className={`cursor-pointer font-semibold ${badRecipients.length ? "text-red-600" : "text-green-700"}`}>
-                      {badRecipients.length
-                        ? `${badRecipients.length} von ${courseQueue.length} Nachrichten fehlerhaft — so wird nichts gesendet`
-                        : `✓ ${courseQueue.length} Nachrichten geprüft — Liste ansehen`}
-                    </summary>
-                    <ul className="mt-1 max-h-56 space-y-1 overflow-y-auto">
-                      {courseQueue.map((r) => (
-                        <li key={r.id} className="rounded-md bg-gray-50 p-1.5">
-                          <span className="font-semibold text-gray-800">{r.name || r.id}</span>
-                          <span className="text-gray-500"> · {r.kurs} · {r.anrede}</span>
-                          {r.problem && <span className="block text-red-600">{r.problem}</span>}
-                          <details>
-                            <summary className="cursor-pointer text-[#4A7FC1]">Text</summary>
-                            <p className="mt-1 whitespace-pre-wrap text-gray-700">{r.text}</p>
-                          </details>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-                <div className="mt-3">
-                  <button
-                    onClick={() => void start("send")}
-                    disabled={blocked || busy || !selectedSaved || errors.length > 0 || badRecipients.length > 0 || courseQueue.length === 0}
-                    className="rounded-xl bg-green-600 px-5 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
-                  >
-                    {courseQueue.length > 0 ? `${courseQueue.length} ${courseQueue.length === 1 ? "Person" : "Personen"} anschreiben` : "Niemand bereit"}
-                  </button>
+              <div className="sticky bottom-0 pb-[env(safe-area-inset-bottom,0px)]">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-300 bg-white px-4 py-3 shadow-lg">
+                  <span className="text-sm text-gray-600">{settingsDirty ? <b className="text-amber-700">Ungespeicherte Änderungen — gelten erst nach Speichern</b> : savedAt.settings ? `Gespeichert um ${savedAt.settings}` : "Alles gespeichert"}</span>
+                  <SaveBar dirty={settingsDirty} saving={saving === "settings"} savedAt={undefined} disabled={running} onSave={() => void saveSettings()} onDiscard={discardSettings} />
                 </div>
-                {frenchQueue.length > 0 && (
-                  <div className="mt-3 rounded-lg bg-gray-50 p-2 text-xs text-gray-600">
-                    {frenchQueue.length} französische {frenchQueue.length === 1 ? "Person bekommt" : "Personen bekommen"} ein einfaches Nachfassen ohne Kurs
-                    {frenchQueue.some((r) => r.problem) && <b className="text-red-600"> — Text fehlerhaft: {frenchQueue.find((r) => r.problem)?.problem}</b>}
-                    <details className="mt-1">
-                      <summary className="cursor-pointer text-[#4A7FC1]">Text ansehen</summary>
-                      <p className="mt-1 whitespace-pre-wrap">{frenchQueue[0].text}</p>
-                    </details>
+              </div>
+            </div>
+          )}
+
+          {tab === "kurse" && !courseOpen && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-gray-900">Kurse</h2>
+                <button onClick={() => setShowNew(!showNew)} disabled={running} className={btnPrimary}>+ Neuer Kurs</button>
+              </div>
+              {showNew && (
+                <div className={`${card} flex flex-wrap items-center gap-3`}>
+                  <label className="flex items-center gap-2 text-sm text-gray-600" htmlFor="new-fach">
+                    Fach
+                    <select id="new-fach" value={fachForNew} onChange={(e) => setNewFach(e.target.value)} className={inputClass}>
+                      {draft.settings.mySubjects.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-600" htmlFor="new-gruppe">
+                    Kursgruppe
+                    <select id="new-gruppe" value={newGruppe} onChange={(e) => setNewGruppe(e.target.value as CourseGroup)} className={inputClass}>
+                      {COURSE_GROUPS.map((g) => <option key={g} value={g}>{GROUP_LABEL[g]}</option>)}
+                    </select>
+                  </label>
+                  <button onClick={() => { setShowNew(false); void addCourse(fachForNew, newGruppe); }} disabled={running || !fachForNew} className={btnPrimary}>Anlegen und bearbeiten</button>
+                  <button onClick={() => setShowNew(false)} className="text-sm font-semibold text-gray-500">Abbrechen</button>
+                </div>
+              )}
+              {draft.courses.length > 0 && !draft.courses.some((c) => c.active) && (
+                <p className="rounded-xl bg-amber-50 px-4 py-2.5 text-sm text-amber-800">Kein Kurs aktiv — niemand bekommt ein Kursangebot. Kurs öffnen und „aktiv“ setzen.</p>
+              )}
+              {errors.length > 0 && <p className="rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-700">Ein gespeicherter Kurs hat einen Fehler, bis dahin wird nichts gesendet: {errors.join(" ")}</p>}
+              {activeCount > MAX_ACTIVE_COURSES && (
+                <p className="rounded-xl bg-amber-50 px-4 py-2.5 text-sm text-amber-800">{activeCount} Kurse sind gleichzeitig aktiv. Mehr als {MAX_ACTIVE_COURSES} verteilen die Anmeldungen meist zu dünn.</p>
+              )}
+              {draft.courses.length === 0 && <p className={`${card} text-sm text-gray-500`}>Noch kein Kurs. Mit „+ Neuer Kurs“ anlegen.</p>}
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {draft.courses.map((c) => {
+                  const st = courseStats(c, status.log);
+                  const saved = savedCourse(c.id);
+                  const open = c.gruppe === "offen";
+                  const tone = !saved?.active ? "off" : open ? "ok" : st.ampel;
+                  return (
+                    <button key={c.id} onClick={() => openCourseTab(c.id)} className="grid gap-3 rounded-2xl border border-gray-200 bg-white p-4 text-left hover:border-[#4A7FC1]">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-semibold text-gray-900">{c.name || "Kurs ohne Namen"}</span>
+                        <span className="flex shrink-0 flex-col items-end gap-1">
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${saved?.active ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>{saved?.active ? "aktiv" : "pausiert"}</span>
+                          {courseDirty(c.id) && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">{saved ? "ungespeichert" : "neu"}</span>}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-500">
+                        {open ? "Fragt nach der genauen Stufe (nur Nachfassen)" : `${formatSaturdays(c.saturdays)} · ${c.time} · ${c.mode === "online" ? "online" : c.place || "vor Ort"} · CHF ${c.pricePerLesson}/Lektion`}
+                      </p>
+                      {!open && (
+                        <div className="grid grid-cols-3 gap-2 text-sm">
+                          <Meter label="Zusagen" value={`${st.zusagen} / ${c.minParticipants}`} />
+                          <Meter label="frei" value={String(Math.max(0, capacity(c) - st.zusagen))} />
+                          <Meter label="Anmeldeschluss" value={st.tageBisSchluss >= 0 ? `${st.tageBisSchluss} T.` : "vorbei"} />
+                        </div>
+                      )}
+                      <p className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold ${AMPEL_PILL[tone]}`}>
+                          <span className={`h-2 w-2 rounded-full ${tone === "off" ? "bg-gray-400" : AMPEL[tone as keyof typeof AMPEL]}`} />
+                          {tone === "off" ? "pausiert" : open ? "läuft" : tone === "gruen" ? "genug Zusagen" : tone === "gelb" ? "erste Zusagen" : "noch keine Zusage"}
+                        </span>
+                        <span>{readyFor(c).length} bereit · {st.angeschrieben} angeschrieben · {st.geantwortet} Antworten · {st.bezahlt} bezahlt</span>
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {tab === "kurse" && courseOpen && selected && (
+            <div className="space-y-5">
+              <button onClick={() => setCourseOpen(false)} className="text-sm font-semibold text-[#4A7FC1]">← Alle Kurse</button>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold text-gray-900">{selected.name || "Kurs ohne Namen"}</h2>
+                  <p className="text-sm text-gray-500">
+                    {selected.fach} · {GROUP_LABEL[selected.gruppe]}
+                    {selected.gruppe !== "offen" && ` · ${formatSaturdays(selected.saturdays)} · Anmeldeschluss ${selected.deadline.split("-").reverse().join(".")}`}
+                  </p>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${selectedSaved?.active ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>{selectedSaved?.active ? "aktiv" : "pausiert"}</span>
+              </div>
+
+              <div className={card}>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-semibold text-gray-900">Pipeline</h3>
+                  <span className="text-xs text-gray-500">Name öffnet den Chat auf tutor24. „Einordnen“ verschiebt die Person.</span>
+                </div>
+                {!selectedSaved && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Dieser Kurs ist noch nicht gespeichert: unten „Kurs speichern“, dann erscheint seine Pipeline.</p>}
+                {selectedSaved && !selectedSaved.active && (
+                  <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Dieser Kurs ist pausiert: „Bereit“ zeigt, wer ihn bekäme. Gesendet wird erst, wenn er aktiv ist.</p>
+                )}
+                {selected.gruppe === "offen" && <p className="mb-3 text-xs text-gray-500">Wer die Stufe nennt, übernimmst du mit „In Kurs übernehmen“ in den passenden Kurs.</p>}
+                {selectedSaved && (
+                  <CoursePipeline
+                    key={selectedSaved.id}
+                    course={selectedSaved}
+                    courses={status.courses}
+                    ready={readyFor(selectedSaved)}
+                    log={status.log.filter((r) => r.kurs === selectedSaved.id)}
+                    rows={status.rows}
+                    leads={status.leads}
+                    privatePrice={status.settings.privatePricePerLesson}
+                    disabled={running}
+                    onMark={(id, m) => void mark(id, m)}
+                    onSkip={(r) => void toggleRow(r)}
+                    onAssign={(id, kurs) => void assign(id, kurs)}
+                    onAnrede={(id, a) => void setAnrede(id, a)}
+                  />
+                )}
+              </div>
+
+              <CourseEditor
+                course={selected}
+                all={draft.courses}
+                settings={draft.settings}
+                log={status.log}
+                open={openCourse !== `zu:${selected.id}`}
+                disabled={running}
+                dirty={courseDirty(selected.id)}
+                isNew={!selectedSaved}
+                saving={saving === selected.id}
+                savedAt={savedAt[selected.id]}
+                onSave={() => void saveCourse(selected.id)}
+                onDiscard={() => discardCourse(selected.id)}
+                onToggle={() => setOpenCourse(openCourse === `zu:${selected.id}` ? null : `zu:${selected.id}`)}
+                onChange={(next) => setCourses(draft.courses.map((x) => (x.id === selected.id ? next : x)))}
+                onDelete={deleteSelected}
+              />
+
+              <details className={card}>
+                <summary className="cursor-pointer font-semibold text-gray-900">Manuell ausführen</summary>
+                <p className="mt-2 text-sm text-gray-500">
+                  Die Automatik macht diese Schritte selbst um 9 und 17 Uhr. Hier nur, wenn du sie für <b>{selected.name || "diesen Kurs"}</b> von Hand starten willst. Es läuft immer nur ein Lauf; er läuft weiter, auch wenn du die Seite neu lädst.
+                </p>
+                {errors.length > 0 ? (
+                  <p className="mt-2 text-sm font-semibold text-red-700">Senden gesperrt: ein Kurs hat einen Fehler.</p>
+                ) : (
+                  courseDirty(selected.id) && <p className="mt-2 text-sm font-semibold text-amber-700">Ungespeicherte Änderungen — gesendet wird die gespeicherte Fassung.</p>
+                )}
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <div className="grid content-start gap-2 rounded-xl border border-gray-200 p-4">
+                    <h4 className="font-semibold text-gray-900">Kandidaten suchen</h4>
+                    <p className="text-sm text-gray-500">Liest die Chats: wer auf die Erst-Nachricht nicht geantwortet hat, kommt nach „Bereit“. Sendet nichts.</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button onClick={() => void start("preview")} disabled={blocked || busy || !(maxChecks >= 1)} className={btnPrimary}>Suchen</button>
+                      <label className="flex items-center gap-1 text-xs text-gray-500" htmlFor="max-checks">
+                        max.
+                        <input id="max-checks" type="number" min={1} value={maxChecks} onChange={(e) => setMaxChecks(Number(e.target.value))} disabled={blocked} className={`${inputClass} w-20`} />
+                      </label>
+                    </div>
+                  </div>
+                  <div className="grid content-start gap-2 rounded-xl border border-gray-200 p-4">
+                    <h4 className="font-semibold text-gray-900">Nachfassen senden</h4>
+                    <p className="text-sm text-gray-500">
+                      An alle in „Bereit“{!selected.active && " (Kurs pausiert — erst aktiv setzen)"}. Höchstens {send.limit} pro Tag (heute noch {send.budget}), 1–3 Minuten Pause dazwischen. Alle Texte werden vorher geprüft.
+                      {coursePending.length > courseQueue.length && ` ${coursePending.length - courseQueue.length} weitere folgen an einem späteren Tag.`}
+                    </p>
+                    {courseQueue.length > 0 && (
+                      <details className="text-xs" open={badRecipients.length > 0}>
+                        <summary className={`cursor-pointer font-semibold ${badRecipients.length ? "text-red-600" : "text-green-700"}`}>
+                          {badRecipients.length ? `${badRecipients.length} von ${courseQueue.length} Nachrichten fehlerhaft — so wird nichts gesendet` : `✓ ${courseQueue.length} Nachrichten geprüft — Liste ansehen`}
+                        </summary>
+                        <ul className="mt-1 max-h-56 space-y-1 overflow-y-auto">
+                          {courseQueue.map((r) => (
+                            <li key={r.id} className="rounded-md bg-gray-50 p-1.5">
+                              <span className="font-semibold text-gray-800">{r.name || r.id}</span>
+                              <span className="text-gray-500"> · {r.kurs} · {r.anrede}</span>
+                              {r.problem && <span className="block text-red-600">{r.problem}</span>}
+                              <details>
+                                <summary className="cursor-pointer text-[#4A7FC1]">Text</summary>
+                                <p className="mt-1 whitespace-pre-wrap text-gray-700">{r.text}</p>
+                              </details>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                     <button
-                      onClick={() => void start("send", NO_COURSE)}
-                      disabled={blocked || busy || frenchQueue.some((r) => r.problem)}
-                      className="mt-2 rounded-lg border border-green-600 px-3 py-1 font-semibold text-green-700 hover:bg-green-50 disabled:opacity-50"
+                      onClick={() => void start("send")}
+                      disabled={blocked || busy || !selectedSaved || errors.length > 0 || badRecipients.length > 0 || courseQueue.length === 0}
+                      className="justify-self-start rounded-xl bg-green-600 px-5 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
                     >
-                      Französisch nachfassen
+                      {courseQueue.length > 0 ? `${courseQueue.length} ${courseQueue.length === 1 ? "Person" : "Personen"} anschreiben` : "Niemand bereit"}
+                    </button>
+                    {frenchQueue.length > 0 && (
+                      <div className="rounded-lg bg-gray-50 p-2 text-xs text-gray-600">
+                        {frenchQueue.length} französische {frenchQueue.length === 1 ? "Person bekommt" : "Personen bekommen"} ein einfaches Nachfassen ohne Kurs
+                        {frenchQueue.some((r) => r.problem) && <b className="text-red-600"> — Text fehlerhaft: {frenchQueue.find((r) => r.problem)?.problem}</b>}
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-[#4A7FC1]">Text ansehen</summary>
+                          <p className="mt-1 whitespace-pre-wrap">{frenchQueue[0].text}</p>
+                        </details>
+                        <button
+                          onClick={() => void start("send", NO_COURSE)}
+                          disabled={blocked || busy || frenchQueue.some((r) => r.problem)}
+                          className="mt-2 rounded-lg border border-green-600 px-3 py-1 font-semibold text-green-700 hover:bg-green-50 disabled:opacity-50"
+                        >
+                          Französisch nachfassen
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid content-start gap-2 rounded-xl border border-gray-200 p-4">
+                    <h4 className="font-semibold text-gray-900">Antworten prüfen</h4>
+                    <p className="text-sm text-gray-500">Schaut in den Chats aller, die diesen Kurs bekamen, nach Antworten. Neue erscheinen in der Pipeline unter „Antwort erhalten“. Sendet nichts.</p>
+                    <button
+                      onClick={() => void start("replies")}
+                      disabled={blocked || busy || waiting === 0}
+                      className="justify-self-start rounded-xl border border-[#4A7FC1] px-5 py-2 text-sm font-semibold text-[#4A7FC1] hover:bg-blue-50 disabled:opacity-50"
+                    >
+                      {waiting > 0 ? `${waiting} ${waiting === 1 ? "Chat" : "Chats"} prüfen` : !status.log.some((r) => r.kurs === selected.id) ? "Noch niemand angeschrieben" : "Alle haben geantwortet oder sind eingeordnet"}
                     </button>
                   </div>
-                )}
-              </div>
-              <div className="flex flex-col rounded-xl border border-gray-100 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Schritt 3 · <span className="text-amber-700">Nachfassen</span></p>
-                <h3 className="font-semibold text-gray-900">Antworten prüfen</h3>
-                <p className="mt-1 flex-1 text-sm text-gray-500">
-                  Schaut in den Chats aller, die den Kurs per Erst-Nachricht oder Nachfassen bekamen, von <b>{selected?.name || "—"}</b> nach Antworten. Neue erscheinen in der Pipeline unter „Antwort erhalten“. Sendet nichts.
-                </p>
-                <div className="mt-3">
-                  <button
-                    onClick={() => void start("replies")}
-                    disabled={blocked || busy || waiting === 0}
-                    className="rounded-xl border border-[#4A7FC1] px-5 py-2 text-sm font-semibold text-[#4A7FC1] hover:bg-blue-50 disabled:opacity-50"
-                  >
-                    {waiting > 0
-                      ? `${waiting} ${waiting === 1 ? "Chat" : "Chats"} prüfen`
-                      : !status.log.some((r) => r.kurs === selected?.id)
-                        ? "Noch niemand angeschrieben"
-                        : "Alle haben geantwortet oder sind eingeordnet"}
-                  </button>
                 </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Kursauswahl */}
-          <div className={cardClass}>
-            <div className="mb-3 flex flex-wrap items-center gap-3">
-              <h2 className="font-semibold text-gray-900">Kurse</h2>
-              <p className="text-xs text-gray-500">Kurs anklicken, um seine Pipeline zu sehen. Änderungen gelten erst nach „Speichern“.</p>
-              <label
-                className="flex items-center gap-1.5 text-xs text-gray-600"
-                title="Erst-Nachricht: Ist ein passender Kurs offen, steht der konkrete Kursblock in der Nachricht (bisherige Ausschlüsse gelten). Aus = nie ein Kursblock."
-              >
-                <input
-                  type="checkbox"
-                  checked={draft.settings.newFirstMessage}
-                  disabled={running}
-                  onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, newFirstMessage: e.target.checked } })}
-                  className="accent-[#4A7FC1]"
-                />
-                Kursblock in der Erst-Nachricht (passender Kurs offen)
-              </label>
-              <label
-                className="flex items-center gap-1.5 text-xs text-gray-600"
-                title="Erst-Nachricht ohne passenden offenen Kurs: kurzer Hinweis auf Academigo (fester Text). Für alle ausser Erwachsene ohne BM-Bezug. Aus = kein Hinweis."
-              >
-                <input
-                  type="checkbox"
-                  checked={draft.settings.kursHinweis}
-                  disabled={running}
-                  onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, kursHinweis: e.target.checked } })}
-                  className="accent-[#4A7FC1]"
-                />
-                Kurs-Hinweis in der Erst-Nachricht (kein passender Kurs offen)
-              </label>
-              <label className="flex items-center gap-2 text-sm text-gray-600" title="„ab CHF … pro Lektion“ im Kurs-Hinweis">
-                Kurspreis ab (CHF/Lektion)
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.settings.kursPreisAb}
-                  disabled={running}
-                  onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, kursPreisAb: Number(e.target.value) } })}
-                  className={`${inputClass} w-20`}
-                />
-              </label>
-              <label className="flex items-center gap-2 text-sm text-gray-600" title="Vergleichspreis im Kursblock beider Nachrichten: „CHF … pro Lektion statt CHF … im Einzelunterricht“">
-                Einzelunterricht CHF/Lektion
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.settings.privatePricePerLesson}
-                  disabled={running}
-                  onChange={(e) => setDraft({ ...draft, settings: { ...draft.settings, privatePricePerLesson: Number(e.target.value) } })}
-                  className={`${inputClass} w-20`}
-                />
-              </label>
-              {saveButton}
-            </div>
-            {draft.courses.length > 0 && !draft.courses.some((c) => c.active) && (
-              <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
-                Kein Kurs aktiv — beim Anschreiben bekommt niemand ein Angebot. Kurs auswählen und unten das Häkchen vor dem Kursnamen setzen.
-              </p>
-            )}
-            {errors.length > 0 && <p className="mb-3 rounded-lg bg-red-50 p-3 text-xs text-red-600">Ein gespeicherter Kurs hat einen Fehler, bis dahin wird nichts gesendet: {errors.join(" ")}</p>}
-            {activeCount > MAX_ACTIVE_COURSES && (
-              <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
-                {activeCount} Kurse sind gleichzeitig aktiv. Mehr als {MAX_ACTIVE_COURSES} verteilen die Anmeldungen meist zu dünn.
-              </p>
-            )}
-            <div className="flex flex-wrap gap-3">
-              {draft.courses.map((c) => {
-                const st = courseStats(c, status.log);
-                const isSel = selected?.id === c.id;
-                return (
-                  <button
-                    key={c.id}
-                    onClick={() => selectCourse(c.id)}
-                    className={`w-64 rounded-xl border p-3 text-left transition ${isSel ? "border-[#4A7FC1] bg-blue-50/40 ring-2 ring-[#4A7FC1]/20" : "border-gray-200 hover:border-gray-300"}`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="text-sm font-semibold text-gray-900">{c.name || "Kurs ohne Namen"}</span>
-                      <span className="flex shrink-0 flex-col items-end gap-1">
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${savedCourse(c.id)?.active ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-                          {savedCourse(c.id)?.active ? "aktiv" : "pausiert"}
-                        </span>
-                        {courseDirty(c.id) && (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                            {savedCourse(c.id) ? "ungespeichert" : "neu, nicht gespeichert"}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-xs text-gray-500">
-                      {c.gruppe === "offen" ? "Fragt nach der genauen Stufe" : `${formatSaturdays(c.saturdays)} · ${c.mode === "online" ? "online" : c.place || "vor Ort"}`}
-                    </p>
-                    <p className="mt-2 text-xs text-gray-600">
-                      {readyFor(c).length} bereit · {st.angeschrieben} angeschrieben · {st.geantwortet} Antworten
-                    </p>
-                    {c.gruppe !== "offen" && (
-                      <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-600">
-                        <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${AMPEL[st.ampel]}`} />
-                        <span>
-                          <b>{st.zusagen}</b>/{c.minParticipants} Zusagen · {st.bezahlt} bezahlt ·{" "}
-                          {st.tageBisSchluss >= 0 ? `noch ${st.tageBisSchluss} T. bis Anmeldeschluss` : "Anmeldeschluss vorbei"}
-                        </span>
-                      </p>
-                    )}
-                  </button>
-                );
-              })}
-              <div className="w-64 rounded-xl border border-dashed border-gray-300 p-3">
-                <p className="text-sm font-semibold text-gray-700">Neuer Kurs</p>
-                <div className="mt-2 flex flex-col gap-2">
-                  <select value={fachForNew} onChange={(e) => setNewFach(e.target.value)} className={inputClass} aria-label="Fach">
-                    {draft.settings.mySubjects.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  <select value={newGruppe} onChange={(e) => setNewGruppe(e.target.value as CourseGroup)} className={inputClass} aria-label="Kursgruppe">
-                    {COURSE_GROUPS.map((g) => <option key={g} value={g}>{GROUP_LABEL[g]}</option>)}
-                  </select>
-                  <button
-                    onClick={() => void addCourse(fachForNew, newGruppe)}
-                    disabled={running || !fachForNew}
-                    className="rounded-lg bg-[#4A7FC1] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#3a6fb1] disabled:opacity-50"
-                  >
-                    Anlegen
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Pipeline des gewaehlten Kurses */}
-          {selected && (
-            <div className={cardClass}>
-              <div className="mb-3">
-                <h2 className="font-semibold text-gray-900">Pipeline: {selected.name || "Kurs ohne Namen"}</h2>
-                <p className="text-xs text-gray-500">
-                  Name anklicken öffnet den Chat in tutor24. Mit dem Auswahlfeld ordnest du jede Person ein; sie wandert dann in die passende Spalte.
-                  {selected.gruppe === "offen" && " Wer die Stufe nennt, übernimmst du mit „In Kurs übernehmen“ in den passenden Kurs."}
-                </p>
-              </div>
-              {!selectedSaved && (
-                <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
-                  Dieser Kurs ist noch nicht gespeichert: unten „Speichern“, dann erscheint seine Pipeline.
-                </p>
-              )}
-              {selectedSaved && !selectedSaved.active && (
-                <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
-                  Dieser Kurs ist pausiert: „Bereit“ zeigt, wer ihn bekäme, gesendet wird aber erst, wenn du unten das Häkchen vor dem Kursnamen setzt.
-                </p>
-              )}
-              {selectedSaved && (
-              <CoursePipeline
-                course={selectedSaved}
-                courses={status.courses}
-                ready={readyFor(selectedSaved)}
-                log={status.log.filter((r) => r.kurs === selectedSaved.id)}
-                rows={status.rows}
-                leads={status.leads}
-                privatePrice={status.settings.privatePricePerLesson}
-                disabled={running}
-                onMark={(id, m) => void mark(id, m)}
-                onSkip={(r) => void toggleRow(r)}
-                onAssign={(id, kurs) => void assign(id, kurs)}
-                onAnrede={(id, a) => void setAnrede(id, a)}
-              />
-              )}
-              <div className="mt-4">
-                <CourseEditor
-                  course={selected}
-                  all={draft.courses}
-                  settings={draft.settings}
-                  log={status.log}
-                  open={openCourse === selected.id}
-                  disabled={running}
-                  dirty={courseDirty(selected.id)}
-                  isNew={!selectedSaved}
-                  saving={saving === selected.id}
-                  savedAt={savedAt[selected.id]}
-                  onSave={() => void saveCourse(selected.id)}
-                  onDiscard={() => discardCourse(selected.id)}
-                  onToggle={() => setOpenCourse(openCourse === selected.id ? null : selected.id)}
-                  onChange={(next) => setCourses(draft.courses.map((x) => (x.id === selected.id ? next : x)))}
-                  onDelete={() => {
-                    // Mit Angeschriebenen haette deren Pipeline keinen Kurs mehr: Antworten waeren unsichtbar.
-                    const contacted = status.log.filter((r) => r.kurs === selected.id).length;
-                    if (contacted > 0) {
-                      alert(`„${selected.name}“ hat schon ${contacted} Angeschriebene. Löschen würde ihre Antworten aus der Pipeline entfernen. Nimm stattdessen das Häkchen weg (pausieren).`);
-                      return;
-                    }
-                    if (window.confirm(`Kurs „${selected.name}“ löschen?`)) {
-                      // Loeschen gilt sofort (nicht erst mit "Speichern").
-                      const id = selected.id;
-                      setDraft({ ...draft, courses: draft.courses.filter((x) => x.id !== id) });
-                      setSelectedId(null);
-                      if (status.courses.some((x) => x.id === id))
-                        void persist("delete", { settings: status.settings, courses: status.courses.filter((x) => x.id !== id) });
-                    }
-                  }}
-                />
-              </div>
+              </details>
             </div>
           )}
         </>
@@ -1263,3 +1328,55 @@ export function Tutor24Followup({
     </div>
   );
 }
+
+export type KurseTab = "uebersicht" | "kurse" | "interessenten" | "einstellungen" | "protokoll";
+
+const AMPEL_PILL = { gruen: "bg-green-50 text-green-700", gelb: "bg-amber-50 text-amber-800", rot: "bg-red-50 text-red-700", ok: "bg-green-50 text-green-700", off: "bg-gray-100 text-gray-500" } as const;
+
+function Meter({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-gray-50 px-2 py-1.5">
+      <span className="block text-xs text-gray-500">{label}</span>
+      <b className="tabular-nums text-gray-900">{value}</b>
+    </div>
+  );
+}
+
+/** Eine Einstellung: Titel, ein Satz, was sie bewirkt, und das Feld. */
+function SettingRow({ title, help, children }: { title: string; help: string; children: React.ReactNode }) {
+  return (
+    <div className="grid items-center gap-2 border-t border-gray-100 py-3.5 first-of-type:border-t-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-6">
+      <div className="min-w-0">
+        <p className="font-semibold text-gray-900">{title}</p>
+        <p className="text-sm text-gray-500">{help}</p>
+      </div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function Toggle({ id, checked, disabled, onChange }: { id: string; checked: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      id={id}
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative h-7 w-12 rounded-full transition disabled:opacity-50 ${checked ? "bg-[#4A7FC1]" : "bg-gray-300"}`}
+    >
+      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${checked ? "left-6" : "left-1"}`} />
+      <span className="sr-only">{checked ? "an" : "aus"}</span>
+    </button>
+  );
+}
+
+function NumberField({ id, value, min, max, unit, disabled, onChange }: { id: string; value: number; min: number; max?: number; unit?: string; disabled?: boolean; onChange: (v: number) => void }) {
+  return (
+    <label className="flex items-center gap-2 text-sm text-gray-600" htmlFor={id}>
+      <input id={id} type="number" min={min} max={max} value={value} disabled={disabled} onChange={(e) => onChange(Number(e.target.value))} className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-50" />
+      {unit}
+    </label>
+  );
+}
+
