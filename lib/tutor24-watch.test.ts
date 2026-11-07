@@ -29,7 +29,7 @@ describe("Waechter", () => {
 
   it("Laptop aus, kein Durchgang: Erinnerung mit Offline-Zeit", () => {
     const d = watchDecision({ now, laptop: laptop(), runs: [], alreadySent: [] });
-    expect(d?.text).toBe("⏰ tutor24 · Heute noch kein Durchgang (fällig 9:00). Laptop ist seit Fr., 06.11.2026, 08:12 offline. Laptop öffnen, dann „Jetzt starten“.");
+    expect(d?.text).toBe("⏰ tutor24 · Heute noch kein Durchgang (fällig 9:00). Laptop ist seit Fr., 06.11.2026, 08:12 offline. Er ist aus, schläft oder hat kein Internet (Hotspot/WLAN prüfen). Danach „Jetzt starten“.");
     // dieselbe Pruefzeit nur einmal
     expect(watchDecision({ now, laptop: laptop(), runs: [], alreadySent: [d!.key] })).toBeNull();
   });

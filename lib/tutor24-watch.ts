@@ -106,7 +106,9 @@ export function watchDecision(p: {
   if (l?.modus === "aus" && l.gestoppt)
     return say(`Automatik ist seit ${fmtZurich(new Date(l.gestoppt.am))} aus: ${l.gestoppt.grund.slice(0, 160)}`);
   if (l?.pauseBis && new Date(l.pauseBis) > p.now) return say(`${RATE_LIMIT_TEXT} Pause bis ${fmtZurich(new Date(l.pauseBis))}; bis dahin läuft kein Durchgang.`);
-  if (!online) return say(`Heute noch kein Durchgang (fällig ${dueLabel}). ${offlineText(l)} Laptop öffnen, dann „Jetzt starten“.`);
+  if (!online) return say(`Heute noch kein Durchgang (fällig ${dueLabel}). ${offlineText(l)} Er ist aus, schläft oder hat kein Internet (Hotspot/WLAN prüfen). Danach „Jetzt starten“.`);
+  if (l?.abstandBis && new Date(l.abstandBis) > p.now)
+    return say(`Durchgang von ${dueLabel} verschoben: Nächster Lauf frühestens um ${hhmm(new Date(l.abstandBis))} (2 Stunden Abstand zum letzten Lauf).`);
   return say(`Laptop ist an, aber der Durchgang von ${dueLabel} fehlt (z. B. war die Automatik da noch aus oder der Laptop schlief). „Jetzt starten“ holt ihn nach.`);
 }
 

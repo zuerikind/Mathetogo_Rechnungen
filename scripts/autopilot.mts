@@ -105,6 +105,23 @@ if (soon) {
   await notify(`⏳ Durchgang nicht gestartet. ${tooSoonText(soon)}`);
   process.exit(0);
 }
+// Kein Internet: nicht als Fehler werten, sondern verschieben — alle 2 min pruefen, hoechstens 30 min.
+// Kommt es nicht zurueck, endet der Durchgang still; der Waechter (Vercel) erinnert wie bei "Laptop offline".
+const { currentSsid, hasInternet, isHotspot } = await import("../lib/tutor24-network");
+const plannedAt = new Date();
+let offlineChecks = 0;
+while (!(await hasInternet())) {
+  if (++offlineChecks > 15) {
+    log("Kein Internet seit 30 min — Durchgang ausgefallen.");
+    process.exit(0);
+  }
+  if (offlineChecks === 1) log("Kein Internet, Durchgang verschoben (prüfe alle 2 min, höchstens 30 min).");
+  await new Promise((r) => setTimeout(r, 2 * 60_000));
+}
+if (offlineChecks)
+  await notify(`📶 Um ${hhmm(plannedAt.toISOString())} kein Internet, Durchgang verschoben. Jetzt wieder verbunden — er startet.`);
+const hotspot = isHotspot(currentSsid());
+const netWarn = hotspot ? "\n⚠ Laptop hängt am iPhone-Hotspot." : "";
 // Ein Durchgang zur Zeit (Aufgabenplanung und Telegram /run koennen sich ueberschneiden).
 try {
   const release = acquireTutor24Lock(forcedProbe ? "Probelauf" : erstOnly ? "Erst-Nachrichten-Lauf" : "Automatik-Durchgang", AUTOPILOT_LOCK_PATH);
@@ -144,8 +161,10 @@ const mayContinue = () => {
 if (!asked)
   await notify(
     `${P}▶️ Geplanter Durchgang ${hhmm(pass.start)} gestartet${dryRun ? " (sendet nichts)" : ""}.\n` +
-      "Schritte: 1 neue Inserate · 2 Antworten prüfen · 3 Nachfassen. Ich melde mich nach jedem Schritt."
+      "Schritte: 1 neue Inserate · 2 Antworten prüfen · 3 Nachfassen. Ich melde mich nach jedem Schritt." +
+      netWarn
   );
+else if (hotspot) await notify(`${P}⚠ Laptop hängt am iPhone-Hotspot.`);
 // Unterwegs: der Stand in der Datenbank fuer /status ("läuft gerade"), alle 5 min erneuert.
 let schritt = "1/3 Neue Inserate";
 let zaehler = "";
