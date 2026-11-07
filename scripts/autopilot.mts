@@ -15,7 +15,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 const {
-  RATE_LIMIT_TEXT, SUMMARY_FROM_HOUR, activePause, appendPassLog, daySummary, emptyCounts, errorKey, firstName, fmtZurich, inSendWindow, is429, isBusy,
+  RATE_LIMIT_TEXT, summaryDue, activePause, appendPassLog, daySummary, emptyCounts, errorKey, firstName, fmtZurich, inSendWindow, is429, isBusy,
   loadAutopilot, localDay, nextScheduled, notify, passResult, passSummary, rateLimitUntil, readPassLog, shortError, stopReason, updateAutopilot,
 } = await import("../lib/tutor24-autopilot");
 const { loadCourses, loadLeadInfo, loadLog, loadSettings, sentToday } = await import("../lib/tutor24-followup-store");
@@ -107,7 +107,7 @@ if (soon) {
 }
 // Kein Internet: nicht als Fehler werten, sondern verschieben — alle 2 min pruefen, hoechstens 30 min.
 // Kommt es nicht zurueck, endet der Durchgang still; der Waechter (Vercel) erinnert wie bei "Laptop offline".
-const { currentSsid, hasInternet, isHotspot } = await import("../lib/tutor24-network");
+const { currentSsid, hasInternet, isHotspot, megabytes, netBytes } = await import("../lib/tutor24-network");
 const plannedAt = new Date();
 let offlineChecks = 0;
 while (!(await hasInternet())) {
@@ -143,7 +143,10 @@ const pass = {
   erst: emptyCounts(), nachfassen: emptyCounts(), antworten: 0, fehler: [] as string[], stopp: null as string | null, probe: [] as string[],
   /** z. B. "alter Text als Rueckfall" — steht in der Schlussmeldung */
   notes: [] as string[],
+  /** Datenmenge des Durchgangs (ganzer Laptop, Hotspot-Verbrauch), MB */
+  mb: null as number | null,
 };
+const bytesAtStart = netBytes();
 /** neue Antworten laut Liste "Gesendet" (runFollowup auto) */
 const listReplies: { id: string; name: string; absage: boolean }[] = [];
 
@@ -274,6 +277,7 @@ for (const r of toNotify.values()) {
 
 // Stopp-Regeln
 clearInterval(ticker);
+pass.mb = megabytes(bytesAtStart, netBytes());
 await db("Fortschritt", () => writeProgress(null));
 pass.ende = new Date().toISOString();
 const reason = stopReason({ pruefungFehler: pass.erst.pruefungFehler + pass.nachfassen.pruefungFehler, fehler: fatal, letzterFehler: state.letzterFehler });
@@ -301,23 +305,26 @@ await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
 const later = inSendWindow() ? "" : " — würde ab 8:00 gesendet";
 const list = dryRun ? `\nWürde senden:\n${pass.probe.length ? pass.probe.map((x) => `• ${x}${later}`).join("\n") : "niemand"}` : "";
 const n = dryRun ? pass.erst.wuerde : pass.erst.gesendet;
+const daten = pass.mb !== null ? `\nDaten ≈ ${pass.mb} MB (ganzer Laptop)` : "";
 await notify(
   erstOnly
     ? `${P}${pass.stopp || fatal || busy ? "■" : "✉️"} Erst-Nachrichten ${hhmm(pass.start)} fertig (${minutes(pass.start)})\n` +
         `${n} ${dryRun ? "würden angeschrieben" : "angeschrieben"}: ${pass.erst.kurs ?? 0} mit Kursblock, ${pass.erst.hinweis ?? 0} mit Hinweis, ${n - (pass.erst.kurs ?? 0) - (pass.erst.hinweis ?? 0)} ohne beides.\n` +
         `${pass.erst.uebersprungen} übersprungen${erstNote && !n ? ` · ${erstNote}` : ""} · Ergebnis: ${busy ? "vorzeitig beendet (gestoppt)" : passResult(pass)}` +
         (pass.notes.length ? `\n${pass.notes.join("\n")}` : "") +
+        daten +
         list.slice(0, 3500)
     : `${P}${pass.stopp || fatal || busy ? "■" : "✅"} Durchgang ${hhmm(pass.start)} fertig (${minutes(pass.start)})\n` +
         `Ergebnis: ${busy ? "vorzeitig beendet (gestoppt)" : passResult(pass)}\n` +
         `Erst-Nachrichten ${sentOrWould(pass.erst)} (${erstKinds()}) · Nachfassen ${sentOrWould(pass.nachfassen)} · Antworten ${pass.antworten}` +
         (pass.notes.length ? `\n${pass.notes.join("\n")}` : "") +
+        daten +
         list.slice(0, 3500)
 );
 
 // Abend-Zusammenfassung: einmal pro Tag, ab dem letzten geplanten Durchgang (nicht beim begrenzten Probelauf, nicht bei /erst)
 const today = localDay();
-if (!max && !erstOnly && new Date().getHours() >= SUMMARY_FROM_HOUR && loadAutopilot().zusammenfassungAm !== today) {
+if (!max && !erstOnly && summaryDue() && loadAutopilot().zusammenfassungAm !== today) {
   if (await notify(daySummary(today), undefined, false, START_BUTTON)) updateAutopilot({ zusammenfassungAm: today });
 }
 process.exit(0);

@@ -4,6 +4,7 @@
  * Browser (components/Tutor24Followup.tsx) benutzt dieselben Funktionen.
  * Alles regelbasiert und lokal — Inseratstexte gehen an keinen externen Dienst.
  */
+import { DEFAULT_TIMES, normTimes, timesProblem } from "./tutor24-schedule";
 
 export type Anrede = "Sie" | "du";
 
@@ -438,6 +439,8 @@ export type FollowupSettings = {
   autoNachfassLimit: number;
   /** Automatik: Nachfassen fruehestens so viele Tage nach der Erst-Nachricht */
   nachfassNachTagen: number;
+  /** Uhrzeiten der Durchgaenge (Windows-Aufgabe, Waechter), "HH:MM", je mind. 2 h auseinander */
+  durchgaenge: string[];
 };
 
 /** ganze Zahl >= 0, sonst Standard */
@@ -455,6 +458,7 @@ export function mergeSettings(saved: Partial<FollowupSettings> | null | undefine
     autoErstLimit: count(saved?.autoErstLimit, 20),
     autoNachfassLimit: Math.min(count(saved?.autoNachfassLimit, 15), MAX_SENDS_PER_DAY),
     nachfassNachTagen: Math.max(count(saved?.nachfassNachTagen, 4), MIN_AGE_DAYS),
+    durchgaenge: (!timesProblem(saved?.durchgaenge) && normTimes(saved?.durchgaenge)) || DEFAULT_TIMES,
   };
 }
 

@@ -24,7 +24,8 @@ import {
   type RunStatus,
 } from "@/lib/tutor24-followup-store";
 import { earliestNext, pidAlive, readTutor24Lock, tooSoonText } from "@/lib/tutor24-lock";
-import { activePause, loadAutopilot, localDay, nextScheduled, passView, readPassLog, updateAutopilot, type AutoMode, type PassLog } from "@/lib/tutor24-autopilot";
+import { DEFAULT_TIMES, normTimes } from "@/lib/tutor24-schedule";
+import { activePause, loadAutopilot, localDay, nextScheduled, passView, readPassLog, runTimes, updateAutopilot, type AutoMode, type PassLog } from "@/lib/tutor24-autopilot";
 import { laptopOnline } from "@/lib/tutor24-watch";
 import { lastPasses, queueCommand, readLaptop } from "@/lib/tutor24-watch-db";
 import { randomUUID } from "node:crypto";
@@ -105,7 +106,8 @@ async function overview(passes: PassLog[], settings: ReturnType<typeof loadSetti
       erstWuerde: sum((p) => p.erst.wuerde),
       nachfassenWuerde: sum((p) => p.nachfassen.wuerde),
     },
-    naechster: nextScheduled(pause ?? now).toISOString(),
+    // online (Vercel) kennt nur der Laptop die eingestellten Zeiten: aus seinem Lebenszeichen
+    naechster: nextScheduled(pause ?? now, process.env.VERCEL ? (normTimes(laptop?.zeiten) ?? DEFAULT_TIMES) : runTimes()).toISOString(),
     pauseBis: pause?.toISOString() ?? null,
     // Mindestabstand 2 h: lokal aus der Datei, online aus dem Lebenszeichen des Laptops
     abstandBis: earliestNext(now)?.toISOString() ?? (laptop?.abstandBis && new Date(laptop.abstandBis) > now ? laptop.abstandBis : null),

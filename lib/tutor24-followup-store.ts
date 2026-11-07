@@ -7,6 +7,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { join } from "node:path";
 import { appendVariante, loadLeadInfo, loadLog, sentToday, setLeadAnrede, updateLead } from "./tutor24-leads";
 import { checkCourse, followupForm, followupMessage } from "./tutor24-course-offer";
+import { TASK_NAME, timesProblem } from "./tutor24-schedule";
+import { applyWindowsSchedule } from "./tutor24-schedule-windows";
 import {
   MARKS,
   MAX_SENDS_PER_DAY,
@@ -159,7 +161,11 @@ function backupCourses(now = new Date()): void {
 
 /** Speichert Faecher + Kurse nach Pruefung und frischt Kurs und Nachricht in der Vorschau-CSV auf. */
 export async function saveConfig(input: { settings?: unknown; courses?: unknown }): Promise<{ settings: FollowupSettings; courses: Course[] }> {
-  const settings = mergeSettings(input.settings as Partial<FollowupSettings> | null);
+  const raw = input.settings as Partial<FollowupSettings> | null;
+  // Uhrzeiten: ungueltig = nicht speichern (mergeSettings wuerde still auf 09:00/17:00 zurueckfallen)
+  const zeitFehler = raw?.durchgaenge !== undefined ? timesProblem(raw.durchgaenge) : null;
+  if (zeitFehler) throw new Error(`Durchgänge: ${zeitFehler}`);
+  const settings = mergeSettings(raw);
   const courses = Array.isArray(input.courses) ? (input.courses as Course[]) : [];
   const errors = validateCourses(courses);
   // Geaenderte und neue Kurse zusaetzlich mit der vollen Pruefung von /kurse (Termine, Zeit, Zahlen, Nachrichtentext).
@@ -169,6 +175,14 @@ export async function saveConfig(input: { settings?: unknown; courses?: unknown 
     for (const e of checkCourse(c, courses, settings.privatePricePerLesson).errors) errors.push(`${c.name.trim() || "Kurs ohne Namen"}: ${e.msg}`);
   }
   if (errors.length) throw new Error(errors.join(" "));
+  // Neue Uhrzeiten zuerst in die Windows-Aufgabe; klappt das nicht, wird nichts gespeichert.
+  if (settings.durchgaenge.join() !== loadSettings().durchgaenge.join() && process.platform === "win32" && !process.env.VERCEL) {
+    try {
+      applyWindowsSchedule(settings.durchgaenge);
+    } catch (err) {
+      throw new Error(`Windows-Aufgabe „${TASK_NAME}“ nicht angepasst, nichts gespeichert: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`);
+    }
+  }
   writeChecked(SETTINGS_PATH, JSON.stringify(settings, null, 2));
   const next = JSON.stringify(courses, null, 2);
   if (existsSync(COURSES_PATH) && readFileSync(COURSES_PATH, "utf8") !== next) backupCourses();

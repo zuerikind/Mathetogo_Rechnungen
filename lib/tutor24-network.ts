@@ -29,3 +29,22 @@ export async function hasInternet(): Promise<boolean> {
     return false;
   }
 }
+
+/** Bytes, die der ganze Laptop bisher uebers Netz geschickt/empfangen hat (alle Adapter, 64-bit-Zaehler;
+ * `netstat -e` zaehlt nur bis 4 GB und springt dann zurueck). null = nicht lesbar. */
+export function netBytes(): number | null {
+  try {
+    const out = execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", "(Get-NetAdapterStatistics | ForEach-Object { $_.ReceivedBytes + $_.SentBytes } | Measure-Object -Sum).Sum"],
+      { encoding: "utf8", timeout: 20_000 }
+    ).trim();
+    return /^\d+$/.test(out) ? Number(out) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Datenmenge eines Durchgangs in MB (ganzer Laptop, also eher etwas zu hoch); null = unbekannt. */
+export const megabytes = (before: number | null, after: number | null) =>
+  before !== null && after !== null && after >= before ? Math.round((after - before) / 1e6) : null;

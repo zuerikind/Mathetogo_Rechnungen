@@ -5,40 +5,17 @@
  * Zeiten immer in Europe/Zurich (Vercel und GitHub rechnen in UTC).
  */
 import { RATE_LIMIT_TEXT, fmtZurich, type AutoMode } from "./tutor24-autopilot";
+import { DEFAULT_TIMES, LAST_REMINDER_MIN, fromMin, normTimes, toMin, watchChecks, zurichParts, zurichTime } from "./tutor24-schedule";
 
 const TZ = "Europe/Zurich";
-
-/** Datum (YYYY-MM-DD) und Uhrzeit in Zuerich */
-export function zurichParts(d: Date): { day: string; h: number; m: number } {
-  const p = Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
-      .formatToParts(d)
-      .map((x) => [x.type, x.value])
-  );
-  return { day: `${p.year}-${p.month}-${p.day}`, h: Number(p.hour), m: Number(p.minute) };
-}
-
-/** Zuercher Ortszeit (Tag + Stunde:Minute) als Zeitpunkt */
-export function zurichTime(day: string, h: number, m = 0): Date {
-  const guess = new Date(`${day}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`);
-  // Abweichung der Zuercher Uhr von UTC an diesem Zeitpunkt (1 h Winter, 2 h Sommer)
-  const z = zurichParts(guess);
-  const shown = Date.UTC(Number(z.day.slice(0, 4)), Number(z.day.slice(5, 7)) - 1, Number(z.day.slice(8, 10)), z.h, z.m);
-  return new Date(guess.getTime() - (shown - guess.getTime()));
-}
+export { zurichParts, zurichTime };
 
 const hhmm = (d: Date) => d.toLocaleTimeString("de-CH", { timeZone: TZ, hour: "2-digit", minute: "2-digit" });
 
-/** Pruefzeiten und welcher Durchgang dann faellig ist (muss zu RUN_HOURS 9/17 passen) */
-export const CHECKS = [
-  { h: 9, m: 45, due: 9 },
-  { h: 12, m: 0, due: 9 },
-  { h: 15, m: 0, due: 9 },
-  { h: 17, m: 45, due: 17 },
-  { h: 20, m: 0, due: 17 },
-] as const;
-/** Ab hier keine Erinnerung mehr (auch eine verspaetete 20:00-Pruefung von GitHub nicht) */
-export const LAST_REMINDER_HOUR = 21;
+/** Pruefzeiten: aus den eingestellten Durchgaengen (lib/tutor24-schedule.ts watchChecks), Standard 09:00/17:00 */
+export const CHECKS = watchChecks(DEFAULT_TIMES);
+/** Ab hier keine Erinnerung mehr (auch eine verspaetete Pruefung von GitHub nicht) */
+export const LAST_REMINDER_HOUR = LAST_REMINDER_MIN / 60;
 /** Laptop gilt als offline, wenn sein Lebenszeichen aelter ist */
 export const OFFLINE_AFTER_MS = 6 * 60_000;
 
@@ -51,6 +28,8 @@ export type LaptopSignal = {
   pauseBis: string | null;
   /** Mindestabstand 2 h: frühester naechster Lauf, falls noch nicht erreicht */
   abstandBis?: string | null;
+  /** eingestellte Uhrzeiten der Durchgaenge ("09:00"), Standard 09:00/17:00 */
+  zeiten?: string[];
 };
 /** Stand des laufenden Durchgangs (scripts/autopilot.mts, alle 5 min erneuert) */
 export type Progress = { start: string; modus: AutoMode; schritt: string; zaehler?: string; at: string };
@@ -61,12 +40,12 @@ export const offlineText = (l: LaptopSignal | null) =>
   l ? `Laptop ist seit ${fmtZurich(new Date(l.at))} offline.` : "Vom Laptop kam noch kein Lebenszeichen.";
 
 /** Aktuelle Pruefzeit (die letzte, die schon erreicht ist), als Schluessel "YYYY-MM-DD 09:45" */
-export function currentCheck(now: Date): { key: string; due: number; day: string } | null {
+export function currentCheck(now: Date, times: string[] = DEFAULT_TIMES): { key: string; due: string; day: string } | null {
   const z = zurichParts(now);
-  if (z.h >= LAST_REMINDER_HOUR) return null;
   const mins = z.h * 60 + z.m;
-  const hit = [...CHECKS].reverse().find((c) => c.h * 60 + c.m <= mins);
-  return hit ? { key: `${z.day} ${String(hit.h).padStart(2, "0")}:${String(hit.m).padStart(2, "0")}`, due: hit.due, day: z.day } : null;
+  if (mins >= LAST_REMINDER_MIN) return null;
+  const hit = [...watchChecks(times)].reverse().find((c) => c.min <= mins);
+  return hit ? { key: `${z.day} ${fromMin(hit.min)}`, due: hit.due, day: z.day } : null;
 }
 
 /** Durch die Automatik selbst (429, Login, Fehler) ausgeschaltet — nicht von mir */
@@ -82,13 +61,13 @@ export function watchDecision(p: {
   runs: RunRow[];
   alreadySent: string[];
 }): { key: string; text: string } | null {
-  const check = currentCheck(p.now);
+  const check = currentCheck(p.now, normTimes(p.laptop?.zeiten) ?? DEFAULT_TIMES);
   if (!check || p.alreadySent.includes(check.key)) return null;
-  const dueAt = zurichTime(check.day, check.due);
+  const dueAt = zurichTime(check.day, Math.floor(toMin(check.due) / 60), toMin(check.due) % 60);
   const runs = p.runs.filter((r) => r.startedAt >= new Date(dueAt.getTime() - 30 * 60_000));
   const last = runs[runs.length - 1];
   const online = laptopOnline(p.laptop, p.now);
-  const dueLabel = `${check.due}:00`;
+  const dueLabel = check.due.replace(/^0/, "");
   const say = (text: string) => ({ key: check.key, text: `⏰ tutor24 · ${text}` });
 
   if (last?.endedAt) {

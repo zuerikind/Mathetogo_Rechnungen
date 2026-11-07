@@ -17,7 +17,7 @@ describe("Zuercher Zeit", () => {
     expect(currentCheck(at("2026-11-06T07:45:00Z"))).toBeNull(); // 8:45 Zuerich: noch keine Pruefzeit
     expect(currentCheck(at("2026-11-06T08:47:00Z"))?.key).toBe("2026-11-06 09:45");
     expect(currentCheck(at("2026-07-06T07:50:00Z"))?.key).toBe("2026-07-06 09:45");
-    expect(currentCheck(at("2026-11-06T16:50:00Z"))).toMatchObject({ key: "2026-11-06 17:45", due: 17 });
+    expect(currentCheck(at("2026-11-06T16:50:00Z"))).toMatchObject({ key: "2026-11-06 17:45", due: "17:00" });
     expect(currentCheck(at("2026-11-06T19:20:00Z"))?.key).toBe("2026-11-06 20:00"); // verspaetet, noch ok
     expect(currentCheck(at("2026-11-06T20:05:00Z"))).toBeNull(); // 21:05: keine Erinnerung mehr
     expect(currentCheck(at("2026-11-07T11:00:00Z"))?.key).toBe("2026-11-07 12:00"); // Samstag auch

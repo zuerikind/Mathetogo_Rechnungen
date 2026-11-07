@@ -8,6 +8,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { earliestNext } from "./tutor24-lock";
+import { DEFAULT_TIMES, nextScheduled as nextAt, normTimes, toMin, zurichParts } from "./tutor24-schedule";
 
 const DIR = join(process.cwd(), "tutor24-followup");
 export const AUTOPILOT_PATH = join(DIR, "autopilot.json");
@@ -62,6 +63,8 @@ export type PassLog = {
   stopp: string | null;
   /** nur Probe: was gesendet wuerde (Vorname, Kurs) */
   probe?: string[];
+  /** Datenmenge des Durchgangs in MB (ganzer Laptop), seit 7.11. */
+  mb?: number | null;
 };
 export const emptyCounts = (): PassCounts => ({ gesendet: 0, wuerde: 0, uebersprungen: 0, pruefungFehler: 0 });
 
@@ -79,7 +82,7 @@ export type PassView = PassLog & { satz: string; fehlerKurz: string | null; deta
 export function passView(p: PassLog): PassView {
   const probe = p.modus === "probe";
   const n = (c: PassCounts) => (probe ? c.wuerde : c.gesendet);
-  const counts = `Erst-Nachrichten ${n(p.erst)}, Nachfassen ${n(p.nachfassen)}${probe ? " (würden gesendet)" : ""}, ${p.antworten} ${p.antworten === 1 ? "Antwort" : "Antworten"}`;
+  const counts = `Erst-Nachrichten ${n(p.erst)}, Nachfassen ${n(p.nachfassen)}${probe ? " (würden gesendet)" : ""}, ${p.antworten} ${p.antworten === 1 ? "Antwort" : "Antworten"}${typeof p.mb === "number" ? `, Daten ≈ ${p.mb} MB` : ""}`;
   const all = [...(p.stopp ? [p.stopp] : []), ...p.fehler];
   const fixed = KNOWN_FIXED.find((k) => all.some((f) => k.re.test(f)) && new Date(p.start) < new Date(k.am));
   const kurz = !all.length
@@ -215,6 +218,7 @@ export function passSummary(p: PassLog): string {
     `Erst-Nachricht: ${c(p.erst)}`,
     `Nachfassen: ${c(p.nachfassen)}`,
     `Neue Antworten: ${p.antworten}`,
+    ...(typeof p.mb === "number" ? [`Daten ≈ ${p.mb} MB`] : []),
     ...(p.fehler.length ? [`Fehler: ${p.fehler.join(" | ")}`] : []),
     ...(p.stopp ? [`Automatik gestoppt: ${p.stopp}`] : []),
   ].join("\n");
@@ -243,22 +247,23 @@ export const activePause = (passes: PassLog[], now = new Date()) => {
 export function laptopSignal(now = new Date()) {
   const s = loadAutopilot();
   const pause = activePause(readPassLog(50), now);
-  return { at: now.toISOString(), modus: s.modus, gestoppt: s.gestoppt, pauseBis: pause?.toISOString() ?? null, abstandBis: earliestNext(now)?.toISOString() ?? null };
+  return { at: now.toISOString(), modus: s.modus, gestoppt: s.gestoppt, pauseBis: pause?.toISOString() ?? null, abstandBis: earliestNext(now)?.toISOString() ?? null, zeiten: runTimes() };
 }
 
-/** Geplante Laeufe (Windows-Aufgabe), Ortszeit des PCs = Europe/Zurich */
-// Start mit 2 statt 3 Durchgaengen (Entscheid 5.11. nach dem 429); muss zur Windows-Aufgabe passen.
-export const RUN_HOURS = [9, 17];
-/** Abend-Zusammenfassung ab dem letzten geplanten Durchgang */
-export const SUMMARY_FROM_HOUR = RUN_HOURS[RUN_HOURS.length - 1];
-/** Naechster geplanter Lauf ab `from` (inklusive). */
-export function nextScheduled(from: Date): Date {
-  for (let day = 0; day < 3; day++)
-    for (const h of RUN_HOURS) {
-      const t = new Date(from.getFullYear(), from.getMonth(), from.getDate() + day, h, 0, 0, 0);
-      if (t >= from) return t;
-    }
-  throw new Error("unreachable");
+/** Uhrzeiten der Durchgaenge aus settings.json ("durchgaenge", /kurse → Einstellungen); ohne Datei (Vercel): 09:00/17:00. */
+export function runTimes(): string[] {
+  try {
+    return normTimes((JSON.parse(readFileSync(join(process.cwd(), "tutor24-followup", "settings.json"), "utf8")) as { durchgaenge?: unknown }).durchgaenge) ?? DEFAULT_TIMES;
+  } catch {
+    return DEFAULT_TIMES;
+  }
+}
+/** Naechster geplanter Lauf ab `from` (inklusive), Zuercher Zeit. */
+export const nextScheduled = (from: Date, times: string[] = runTimes()) => nextAt(from, times);
+/** Abend-Zusammenfassung ab dem letzten geplanten Durchgang des Tages */
+export function summaryDue(now = new Date(), times: string[] = runTimes()): boolean {
+  const z = zurichParts(now);
+  return z.h * 60 + z.m >= toMin(times[times.length - 1]);
 }
 
 // ── /status ───────────────────────────────────────────────────────────────────
@@ -286,7 +291,7 @@ export const HELP_LINES = [
 ];
 
 /** Antwort auf /status (Telegram-HTML), fuer das Handy: Zustand, letzter Lauf, naechster Lauf, Befehle. */
-export function statusHtml(s: AutoState, passes: PassLog[], now = new Date()): string {
+export function statusHtml(s: AutoState, passes: PassLog[], now = new Date(), times: string[] = runTimes()): string {
   const last = passes[passes.length - 1];
   const pause = activePause(passes, now);
   const head =
@@ -308,9 +313,9 @@ export function statusHtml(s: AutoState, passes: PassLog[], now = new Date()): s
     lines.push(
       "",
       ...(last && passResult(last) === RATE_LIMIT_TEXT ? [] : [`⏸ ${esc(RATE_LIMIT_TEXT)}`]),
-      `<b>Frühester nächster Lauf</b> ${esc(fmtZurich(s.modus === "an" ? nextScheduled(pause) : pause))}`
+      `<b>Frühester nächster Lauf</b> ${esc(fmtZurich(s.modus === "an" ? nextScheduled(pause, times) : pause))}`
     );
-  else if (s.modus !== "aus") lines.push("", `<b>Nächster geplanter Lauf</b> ${esc(fmtZurich(nextScheduled(now)))}`);
+  else if (s.modus !== "aus") lines.push("", `<b>Nächster geplanter Lauf</b> ${esc(fmtZurich(nextScheduled(now, times)))}`);
   return [...lines, "", ...HELP_LINES].join("\n");
 }
 

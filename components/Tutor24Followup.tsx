@@ -39,6 +39,7 @@ import {
   type PreviewArt,
   type PreviewWer,
 } from "@/lib/tutor24-course-offer";
+import { DEFAULT_TIMES, timesProblem } from "@/lib/tutor24-schedule";
 import { CoursePipeline } from "./Tutor24Pipeline";
 import { Overview, PassTable, card, type Attention, type AutopilotInfo, type OverviewInfo } from "./AutopilotPanel";
 
@@ -823,6 +824,22 @@ export function Tutor24Followup({
                 </SettingRow>
                 <SettingRow title="Nachfassen frühestens nach" help="So viele Tage nach der Erst-Nachricht, und nur ohne Antwort (mindestens 3).">
                   <NumberField id="set-tage" value={draft.settings.nachfassNachTagen} min={3} unit="Tagen" disabled={running} onChange={(v) => setSettings({ nachfassNachTagen: v })} />
+                </SettingRow>
+                <SettingRow title="Durchgänge um" help="Uhrzeiten, mit Komma getrennt, je mindestens 2 Stunden auseinander. Beim Speichern wird die Windows-Aufgabe angepasst; der Wächter richtet sich danach.">
+                  <div className="w-full min-w-0 sm:w-56">
+                    <input
+                      id="set-zeiten"
+                      type="text"
+                      inputMode="numeric"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                      value={(draft.settings.durchgaenge ?? DEFAULT_TIMES).join(", ")}
+                      disabled={running}
+                      onChange={(e) => setSettings({ durchgaenge: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })}
+                    />
+                    {timesProblem(draft.settings.durchgaenge ?? DEFAULT_TIMES) && (
+                      <p className="mt-1 text-xs text-red-700">{timesProblem(draft.settings.durchgaenge ?? DEFAULT_TIMES)}</p>
+                    )}
+                  </div>
                 </SettingRow>
               </div>
               <div className={card}>

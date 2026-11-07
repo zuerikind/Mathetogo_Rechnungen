@@ -9,6 +9,7 @@
  */
 import { CONFIRM_WORD, ERST_MAX, MAX_AGE_S, parseErst } from "./tutor24-bot";
 import { HELP_LINES, fmtZurich, statusHtml, type AutoState, type PassLog, type TgUpdate } from "./tutor24-autopilot";
+import { DEFAULT_TIMES, normTimes } from "./tutor24-schedule";
 import { laptopOnline, offlineText, type LaptopSignal, type Progress } from "./tutor24-watch";
 
 export type WebhookDeps = {
@@ -37,7 +38,7 @@ export function remoteStatus(l: LaptopSignal | null, passes: PassLog[], now: Dat
           `Schritt ${p.schritt}${p.zaehler ? ` · ${p.zaehler}` : ""}`,
         ]
       : [];
-  const [head, ...rest] = statusHtml(state, passes, now).split("\n");
+  const [head, ...rest] = statusHtml(state, passes, now, normTimes(l?.zeiten) ?? DEFAULT_TIMES).split("\n");
   return [head, laptop, ...running, ...rest].join("\n");
 }
 const hhmm = (d: string) => new Date(d).toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" });
