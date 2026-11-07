@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { ERST_MAX } from "@/lib/tutor24-bot";
+import { tooSoonText } from "@/lib/tutor24-lock";
 import { laptopOnline, offlineText } from "@/lib/tutor24-watch";
 import { commandStatus, queueCommand, readLaptop } from "@/lib/tutor24-watch-db";
 
@@ -27,6 +28,8 @@ export async function POST(req: NextRequest) {
 
   const laptop = await readLaptop();
   if (!laptopOnline(laptop, new Date())) return NextResponse.json({ ok: false, text: offlineText(laptop) });
+  if (laptop?.abstandBis && new Date(laptop.abstandBis) > new Date())
+    return NextResponse.json({ ok: false, text: `Nicht gestartet. ${tooSoonText(new Date(laptop.abstandBis))}` });
   const id = `web:${randomUUID()}`;
   await queueCommand(id, n ? `/erst ${n}` : "/erst");
   return NextResponse.json({ ok: true, id, text: "An den Laptop übergeben …" });

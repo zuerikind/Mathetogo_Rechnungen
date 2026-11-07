@@ -22,7 +22,7 @@ const { loadCourses, loadLeadInfo, loadLog, loadSettings, sentToday } = await im
 const { runFollowup } = await import("../lib/tutor24-followup-runner");
 const { runTutor24Messaging } = await import("../lib/tutor24");
 const { followupJobState } = await import("../lib/automation-state");
-const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock } = await import("../lib/tutor24-lock");
+const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock, earliestNext, tooSoonText } = await import("../lib/tutor24-lock");
 const { laptopSignal } = await import("../lib/tutor24-autopilot");
 const { finishRun, startRun, takeStops, writeLaptop, writeProgress } = await import("../lib/tutor24-watch-db");
 const { START_BUTTON } = await import("../lib/tutor24-watch");
@@ -98,6 +98,13 @@ if (pause) {
   if (asked) await notify(`⏸ ${RATE_LIMIT_TEXT} Pause bis ${fmtZurich(pause)} — Durchgang nicht gestartet.`);
   process.exit(0);
 }
+// Mindestabstand 2 h zum letzten tutor24-Lauf (gilt fuer alle: geplant, /run, /erst, Knopf, von Hand).
+const soon = earliestNext();
+if (soon) {
+  log(`Zu früh, nicht gestartet: ${tooSoonText(soon)}`);
+  await notify(`⏳ Durchgang nicht gestartet. ${tooSoonText(soon)}`);
+  process.exit(0);
+}
 // Ein Durchgang zur Zeit (Aufgabenplanung und Telegram /run koennen sich ueberschneiden).
 try {
   const release = acquireTutor24Lock(forcedProbe ? "Probelauf" : erstOnly ? "Erst-Nachrichten-Lauf" : "Automatik-Durchgang", AUTOPILOT_LOCK_PATH);
@@ -139,7 +146,7 @@ if (!asked)
     `${P}▶️ Geplanter Durchgang ${hhmm(pass.start)} gestartet${dryRun ? " (sendet nichts)" : ""}.\n` +
       "Schritte: 1 neue Inserate · 2 Antworten prüfen · 3 Nachfassen. Ich melde mich nach jedem Schritt."
   );
-// Unterwegs: alle 5 min "läuft noch" per Telegram, und der Stand in der Datenbank fuer /status ("läuft gerade").
+// Unterwegs: der Stand in der Datenbank fuer /status ("läuft gerade"), alle 5 min erneuert.
 let schritt = "1/3 Neue Inserate";
 let zaehler = "";
 const setStep = (s: string) => {
@@ -148,9 +155,9 @@ const setStep = (s: string) => {
   void db("Fortschritt", () => writeProgress({ start: pass.start, modus, schritt, at: new Date().toISOString() }));
 };
 setStep(schritt);
+// nur fuer /status, keine Telegram-Meldung (Start und Ende reichen, Entscheid 7.11.)
 const ticker = setInterval(() => {
   void db("Fortschritt", () => writeProgress({ start: pass.start, modus, schritt, zaehler, at: new Date().toISOString() }));
-  void notify(`${P}⏳ Läuft noch (seit ${minutes(pass.start)}) · Schritt ${schritt}${zaehler ? ` · ${zaehler}` : ""}`);
 }, 5 * 60_000);
 const sentOrWould = (c: { gesendet: number; wuerde: number }) => (dryRun ? `${c.wuerde} würden gesendet` : `${c.gesendet} gesendet`);
 const erstKinds = () => `${pass.erst.kurs ?? 0} mit Kursblock, ${pass.erst.hinweis ?? 0} mit Hinweis`;

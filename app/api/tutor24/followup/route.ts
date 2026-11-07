@@ -23,7 +23,7 @@ import {
   writeStatus,
   type RunStatus,
 } from "@/lib/tutor24-followup-store";
-import { pidAlive, readTutor24Lock } from "@/lib/tutor24-lock";
+import { earliestNext, pidAlive, readTutor24Lock, tooSoonText } from "@/lib/tutor24-lock";
 import { activePause, loadAutopilot, localDay, nextScheduled, passView, readPassLog, updateAutopilot, type AutoMode, type PassLog } from "@/lib/tutor24-autopilot";
 import { laptopOnline } from "@/lib/tutor24-watch";
 import { readLaptop } from "@/lib/tutor24-watch-db";
@@ -106,6 +106,8 @@ async function overview(passes: PassLog[], settings: ReturnType<typeof loadSetti
     },
     naechster: nextScheduled(pause ?? now).toISOString(),
     pauseBis: pause?.toISOString() ?? null,
+    // Mindestabstand 2 h: lokal aus der Datei, online aus dem Lebenszeichen des Laptops
+    abstandBis: earliestNext(now)?.toISOString() ?? (laptop?.abstandBis && new Date(laptop.abstandBis) > now ? laptop.abstandBis : null),
   };
 }
 
@@ -195,6 +197,8 @@ export async function POST(req: NextRequest) {
     if (body.action === "preview" || body.action === "send" || body.action === "replies") {
       const blocked = blocker(status);
       if (blocked) return NextResponse.json({ error: `tutor24 ist belegt: ${blocked}` }, { status: 409 });
+      const soon = earliestNext();
+      if (soon) return NextResponse.json({ error: `Nicht gestartet. ${tooSoonText(soon)}` }, { status: 409 });
       const max = body.action === "preview" ? Math.floor(Number(body.max ?? 150)) : undefined;
       if (max !== undefined && !(max >= 1)) throw new Error("max. Konversationen muss ≥ 1 sein.");
       const courseId = body.action === "preview" ? undefined : body.courseId ? String(body.courseId) : undefined;

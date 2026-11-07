@@ -7,6 +7,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { earliestNext } from "./tutor24-lock";
 
 const DIR = join(process.cwd(), "tutor24-followup");
 export const AUTOPILOT_PATH = join(DIR, "autopilot.json");
@@ -68,7 +69,7 @@ export const emptyCounts = (): PassCounts => ({ gesendet: 0, wuerde: 0, ueberspr
 export const KNOWN_FIXED: Array<{ re: RegExp; am: string; text: string }> = [
   { re: /__name is not defined/, am: "2026-11-06T21:55:00+01:00", text: "Programmfehler beim Lesen der Inserate" },
   // 429 am 5.11.: Last pro Durchgang gesenkt (f1aa50d: 2 Durchgaenge, Pausen, weniger Chats). Ein neuer 429 bleibt rot.
-  { re: /\b429\b|Too Many Requests/i, am: "2026-11-05T15:30:00+01:00", text: "tutor24 hat das Anfragelimit erreicht (Last seither gesenkt)" },
+  { re: /too many requests|zu viele anfragen/i, am: "2026-11-05T15:30:00+01:00", text: "tutor24 hat das Anfragelimit erreicht (Last seither gesenkt)" },
   { re: /tutor24_(command|signal|run)`? does not exist/, am: "2026-11-05T17:25:00+01:00", text: "Datenbank-Tabellen fehlten (vor der Migration)" },
 ];
 
@@ -222,7 +223,8 @@ export function passSummary(p: PassLog): string {
 // ── 429 und naechster Lauf ────────────────────────────────────────────────────
 
 export const RATE_LIMIT_TEXT = "Tutor24 hat das Anfragelimit erreicht. Der Lauf wurde gestoppt.";
-export const is429 = (s: string) => /\b429\b|too many requests|zu viele anfragen/i.test(s);
+/** Nur der Wortlaut der tutor24-Fehlerseite zaehlt, nicht die Zahl 429 allein (z. B. "CHF 429"). */
+export const is429 = (s: string) => /too many requests|zu viele anfragen/i.test(s);
 /** ponytail: feste Pause nach einem 429 (tutor24 nennt keine Wartezeit); verlaengern, falls 429 wiederkommt. */
 export const RATE_LIMIT_PAUSE_H = 12;
 
@@ -241,7 +243,7 @@ export const activePause = (passes: PassLog[], now = new Date()) => {
 export function laptopSignal(now = new Date()) {
   const s = loadAutopilot();
   const pause = activePause(readPassLog(50), now);
-  return { at: now.toISOString(), modus: s.modus, gestoppt: s.gestoppt, pauseBis: pause?.toISOString() ?? null };
+  return { at: now.toISOString(), modus: s.modus, gestoppt: s.gestoppt, pauseBis: pause?.toISOString() ?? null, abstandBis: earliestNext(now)?.toISOString() ?? null };
 }
 
 /** Geplante Laeufe (Windows-Aufgabe), Ortszeit des PCs = Europe/Zurich */

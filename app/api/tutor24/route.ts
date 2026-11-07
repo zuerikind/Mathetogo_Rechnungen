@@ -1,3 +1,4 @@
+import { earliestNext, tooSoonText } from "@/lib/tutor24-lock";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
@@ -46,6 +47,9 @@ export async function POST(req: NextRequest) {
   const headless = body.headless ?? false;
   const maxPages = typeof body.maxPages === "number" ? body.maxPages : 10;
   const subjects = Array.isArray(body.subjects) && body.subjects.length > 0 ? body.subjects : ["Mathematik", "Physik"];
+
+  const soon = earliestNext();
+  if (soon) return NextResponse.json({ error: `Nicht gestartet. ${tooSoonText(soon)}` }, { status: 409 });
 
   // Fire-and-forget — result lands in jobState
   runTutor24Messaging(headless, maxPages, subjects).catch((err) => {

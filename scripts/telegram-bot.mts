@@ -18,7 +18,7 @@ const { answerCallback, getUpdates, laptopSignal, loadAutopilot, notify, readPas
 const { commandResult, takeCommands, writeLaptop } = await import("../lib/tutor24-watch-db");
 const { PROBE_MAX, createBot } = await import("../lib/tutor24-bot");
 const { readStatus, requestStop } = await import("../lib/tutor24-followup-store");
-const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock, pidAlive, readTutor24Lock } = await import("../lib/tutor24-lock");
+const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock, earliestNext, pidAlive, readTutor24Lock } = await import("../lib/tutor24-lock");
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   console.error("TELEGRAM_BOT_TOKEN fehlt in .env.local");
@@ -125,6 +125,7 @@ const handle = createBot({
   startPass,
   startErst,
   requestStop,
+  gapUntil: () => earliestNext(),
   answerCallback,
 });
 

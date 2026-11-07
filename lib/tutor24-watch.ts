@@ -49,6 +49,8 @@ export type LaptopSignal = {
   gestoppt: { grund: string; am: string } | null;
   /** Ende der 429-Pause, falls aktiv */
   pauseBis: string | null;
+  /** Mindestabstand 2 h: frühester naechster Lauf, falls noch nicht erreicht */
+  abstandBis?: string | null;
 };
 /** Stand des laufenden Durchgangs (scripts/autopilot.mts, alle 5 min erneuert) */
 export type Progress = { start: string; modus: AutoMode; schritt: string; zaehler?: string; at: string };

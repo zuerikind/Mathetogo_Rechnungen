@@ -22,6 +22,7 @@ import {
   type PassLog,
   type TgUpdate,
 } from "./tutor24-autopilot";
+import { tooSoonText } from "./tutor24-lock";
 
 export const MAX_AGE_S = 120;
 export const CONFIRM_S = 120;
@@ -46,6 +47,8 @@ export type BotDeps = {
   startErst?: (n: number | null) => void;
   /** Telegram: Knopf-Druck quittieren (sonst dreht sich die Uhr am Knopf) */
   answerCallback?: (id: string, text: string) => Promise<unknown>;
+  /** Mindestabstand 2 h zum letzten tutor24-Lauf: frühester Start, null = erlaubt (lib/tutor24-lock.ts earliestNext) */
+  gapUntil?: () => Date | null;
   /** laufenden Nachfass-Lauf vor der naechsten Nachricht anhalten (stop.request) */
   requestStop: () => void;
 };
@@ -70,6 +73,12 @@ export function createBot(deps: BotDeps) {
   let pendingEnable: number | null = null;
   // Der gestartete Durchgang holt seine Sperre erst nach ein paar Sekunden: so lange gilt er schon als laufend.
   let spawnedAt = 0;
+  /** zu früh nach dem letzten Lauf: Antwort und true */
+  const tooSoon = async () => {
+    const d = deps.gapUntil?.();
+    if (d) await deps.reply(`⏳ Nicht gestartet. ${tooSoonText(d)}`);
+    return !!d;
+  };
   const busyNow = () => deps.busy() ?? (deps.now().getTime() - spawnedAt < 90_000 ? "Durchgang wurde eben gestartet" : null);
 
   /** Knopf "Jetzt starten": wie ein geplanter Durchgang — Modus, Tageslimits, 8–20 Uhr und 429-Pause gelten. */
@@ -84,6 +93,7 @@ export function createBot(deps: BotDeps) {
       await deps.reply(`⏸ ${RATE_LIMIT_TEXT}\nFrühester nächster Lauf: ${fmtZurich(pause)}. Nicht gestartet.`);
       return "start: 429-Pause";
     }
+    if (await tooSoon()) return "start: zu früh";
     const running = busyNow();
     if (running) {
       await deps.reply(`Läuft schon: ${running}. Kein zweiter Lauf gestartet.`);
@@ -165,6 +175,7 @@ export function createBot(deps: BotDeps) {
         await deps.reply(`⏸ ${RATE_LIMIT_TEXT}\nFrühester nächster Lauf: ${fmtZurich(pause)}. Probelauf nicht gestartet.`);
         return "run: 429-Pause";
       }
+      if (await tooSoon()) return "run: zu früh";
       const running = busyNow();
       if (running) {
         await deps.reply(`Läuft schon: ${running}. Kein zweiter Lauf gestartet.`);
@@ -194,6 +205,7 @@ export function createBot(deps: BotDeps) {
         await deps.reply(`⏸ ${RATE_LIMIT_TEXT}\nFrühester nächster Lauf: ${fmtZurich(pause)}. Nicht gestartet.`);
         return "erst: 429-Pause";
       }
+      if (await tooSoon()) return "erst: zu früh";
       if (s.modus === "an" && !inSendWindow(deps.now())) {
         await deps.reply("Ausserhalb 8–20 Uhr wird nichts gesendet — nicht gestartet.");
         return "erst: ausserhalb 8–20 Uhr";
