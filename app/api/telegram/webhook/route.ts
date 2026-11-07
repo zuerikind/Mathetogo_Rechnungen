@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { answerCallback, notify, type TgUpdate } from "@/lib/tutor24-autopilot";
 import { createWebhook } from "@/lib/tutor24-webhook";
 import { secretOk } from "@/lib/open-routes";
-import { lastPasses, queueCommand, readLaptop } from "@/lib/tutor24-watch-db";
+import { lastPasses, queueCommand, readLaptop, readProgress } from "@/lib/tutor24-watch-db";
 
 export const runtime = "nodejs";
 
@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
     now: () => new Date(),
     laptop: readLaptop,
     passes: () => lastPasses(20),
+    progress: readProgress,
     queue: queueCommand,
     reply: (html) => notify(html, chatId, true),
     answerCallback,

@@ -8,6 +8,7 @@ vi.mock("@/lib/tutor24-watch-db", () => ({
   readReminders: vi.fn(async () => []),
   markReminder: vi.fn(async () => {}),
   lastPasses: vi.fn(async () => []),
+  readProgress: vi.fn(async () => null),
   queueCommand: vi.fn(async () => true),
 }));
 vi.mock("@/lib/tutor24-autopilot", async (orig) => ({
@@ -23,7 +24,7 @@ import * as watch from "@/app/api/tutor24/watch/route";
 import * as webhook from "@/app/api/telegram/webhook/route";
 
 const ME = "4711";
-const SIDE_EFFECTS = [db.readLaptop, db.runsSince, db.readReminders, db.markReminder, db.lastPasses, db.queueCommand, ap.notify, ap.answerCallback];
+const SIDE_EFFECTS = [db.readLaptop, db.runsSince, db.readReminders, db.markReminder, db.lastPasses, db.readProgress, db.queueCommand, ap.notify, ap.answerCallback];
 
 function req(path: string, headers: Record<string, string>, body?: unknown, method = "POST") {
   return new NextRequest(`https://app.example${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });

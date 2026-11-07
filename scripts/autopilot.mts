@@ -24,7 +24,7 @@ const { runTutor24Messaging } = await import("../lib/tutor24");
 const { followupJobState } = await import("../lib/automation-state");
 const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock } = await import("../lib/tutor24-lock");
 const { laptopSignal } = await import("../lib/tutor24-autopilot");
-const { finishRun, startRun, takeStops, writeLaptop } = await import("../lib/tutor24-watch-db");
+const { finishRun, startRun, takeStops, writeLaptop, writeProgress } = await import("../lib/tutor24-watch-db");
 const { START_BUTTON } = await import("../lib/tutor24-watch");
 
 /** Datenbank fuer den Waechter: ein Fehler dort darf den Durchgang weder verhindern noch abbrechen. */
@@ -139,6 +139,19 @@ if (!asked)
     `${P}▶️ Geplanter Durchgang ${hhmm(pass.start)} gestartet${dryRun ? " (sendet nichts)" : ""}.\n` +
       "Schritte: 1 neue Inserate · 2 Antworten prüfen · 3 Nachfassen. Ich melde mich nach jedem Schritt."
   );
+// Unterwegs: alle 5 min "läuft noch" per Telegram, und der Stand in der Datenbank fuer /status ("läuft gerade").
+let schritt = "1/3 Neue Inserate";
+let zaehler = "";
+const setStep = (s: string) => {
+  schritt = s;
+  zaehler = "";
+  void db("Fortschritt", () => writeProgress({ start: pass.start, modus, schritt, at: new Date().toISOString() }));
+};
+setStep(schritt);
+const ticker = setInterval(() => {
+  void db("Fortschritt", () => writeProgress({ start: pass.start, modus, schritt, zaehler, at: new Date().toISOString() }));
+  void notify(`${P}⏳ Läuft noch (seit ${minutes(pass.start)}) · Schritt ${schritt}${zaehler ? ` · ${zaehler}` : ""}`);
+}, 5 * 60_000);
 const sentOrWould = (c: { gesendet: number; wuerde: number }) => (dryRun ? `${c.wuerde} würden gesendet` : `${c.gesendet} gesendet`);
 const erstKinds = () => `${pass.erst.kurs ?? 0} mit Kursblock, ${pass.erst.hinweis ?? 0} mit Hinweis`;
 let erstNote = "";
@@ -172,22 +185,28 @@ try {
   else if (!forcedProbe && loadAutopilot().modus === "aus") log("Automatik wurde ausgeschaltet — Durchgang beendet.");
   else {
     log(`Nachfassen: höchstens ${nachLimit}, frühestens ${settings.nachfassNachTagen} Tage nach der Erst-Nachricht …`);
+    setStep("1/3 Kandidaten suchen");
     await runFollowup({
       mode: "auto",
       // ponytail: 40 neue/geaenderte Chats pro Durchgang reichen bei ~20 Erst-Nachrichten am Tag; der Rest folgt beim naechsten
       maxChecks: max ?? 40,
       headless: true,
-      onLog: (l) => console.log(`  ${l}`),
+      onLog: (l) => {
+        console.log(`  ${l}`);
+        const m = /^\[(\d+)\/(\d+)\]/.exec(l);
+        if (m) zaehler = `${m[1]} von ${m[2]}`;
+      },
       auto: {
         limit: nachLimit, minAgeDays: settings.nachfassNachTagen, dryRun, mayContinue, counts: pass.nachfassen, probe: pass.probe, antworten: listReplies,
         // begrenzt: hoechstens 2 Nachlade-Runden pro Liste, der Rest kommt aus dem Zwischenspeicher
         ...(max ? { maxScrollRounds: 2, maxReplyChecks: max } : {}),
-        onStep: (step) =>
+        onStep: (step) => (
+          setStep(step === "antworten" ? "2/3 Antworten prüfen" : "3/3 Nachfassen"),
           notify(
             step === "antworten"
               ? `${P}✓ 1/3 Neue Inserate fertig (nach ${minutes(pass.start)}). ${erstNote}\n… 2/3 Antworten prüfen (höchstens ${max ?? 40} Chats).`
               : `${P}✓ 2/3 Antworten geprüft (nach ${minutes(pass.start)}).\n… 3/3 Nachfassen (höchstens ${nachLimit}).`
-          ),
+          )),
       },
     });
   }
@@ -228,6 +247,8 @@ for (const r of toNotify.values()) {
 }
 
 // Stopp-Regeln
+clearInterval(ticker);
+await db("Fortschritt", () => writeProgress(null));
 pass.ende = new Date().toISOString();
 const reason = stopReason({ pruefungFehler: pass.erst.pruefungFehler + pass.nachfassen.pruefungFehler, fehler: fatal, letzterFehler: state.letzterFehler });
 if (reason) {

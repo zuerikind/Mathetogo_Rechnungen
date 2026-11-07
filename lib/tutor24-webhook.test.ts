@@ -69,6 +69,16 @@ describe("Telegram-Webhook (Vercel)", () => {
     expect(w.replies[0]).toContain("Noch kein Lauf erfasst");
   });
 
+  it("/status zeigt einen laufenden Durchgang; alter Stand (abgestuerzt) nicht", async () => {
+    const { remoteStatus } = await import("./tutor24-webhook");
+    const p = { start: "2026-11-06T08:41:00Z", modus: "probe" as const, schritt: "1/3 Kandidaten suchen", zaehler: "31 von 40", at: "2026-11-06T08:57:00Z" };
+    const s = remoteStatus(on, [], NOW, p);
+    expect(s).toContain("⏳ <b>Durchgang läuft gerade</b> (Probe, sendet nichts) · seit 09:41 (19 min)");
+    expect(s).toContain("Schritt 1/3 Kandidaten suchen · 31 von 40");
+    expect(remoteStatus(on, [], NOW, { ...p, at: "2026-11-06T08:45:00Z" })).not.toContain("läuft gerade");
+    expect(remoteStatus(on, [], NOW, null)).not.toContain("läuft gerade");
+  });
+
   it("fremde Chats, fremde Knoepfe, alte Befehle: nichts", async () => {
     const w = setup(on);
     expect(await w.handle(w.msg("/run", { chat: 1 }))).toBe("ignoriert: fremder Chat");

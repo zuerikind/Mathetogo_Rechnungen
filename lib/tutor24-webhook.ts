@@ -9,13 +9,14 @@
  */
 import { CONFIRM_WORD, ERST_MAX, MAX_AGE_S, parseErst } from "./tutor24-bot";
 import { HELP_LINES, fmtZurich, statusHtml, type AutoState, type PassLog, type TgUpdate } from "./tutor24-autopilot";
-import { laptopOnline, offlineText, type LaptopSignal } from "./tutor24-watch";
+import { laptopOnline, offlineText, type LaptopSignal, type Progress } from "./tutor24-watch";
 
 export type WebhookDeps = {
   chatId: string;
   now: () => Date;
   laptop: () => Promise<LaptopSignal | null>;
   passes: () => Promise<PassLog[]>;
+  progress?: () => Promise<Progress | null>;
   /** false = gab es schon (doppelt zugestellt) */
   queue: (id: string, cmd: string) => Promise<boolean>;
   reply: (html: string) => Promise<unknown>;
@@ -25,12 +26,21 @@ export type WebhookDeps = {
 const FORWARD = new Set(["/run", "/enable"]);
 
 /** /status ohne Laptop: Zustand aus dem letzten Lebenszeichen, Laeufe aus Tutor24Run */
-export function remoteStatus(l: LaptopSignal | null, passes: PassLog[], now: Date): string {
+export function remoteStatus(l: LaptopSignal | null, passes: PassLog[], now: Date, p: Progress | null = null): string {
   const state: AutoState = { modus: l?.modus ?? "aus", gestoppt: l?.gestoppt ?? null, letzterFehler: null, zusammenfassungAm: null, telegramOffset: 0 };
   const laptop = laptopOnline(l, now) ? "💻 Laptop ist an." : `💻 ${offlineText(l)}`;
+  // Stand wird alle 5 min erneuert; aelter als 11 min = Durchgang abgestuerzt oder Laptop eingeschlafen
+  const running =
+    p && now.getTime() - new Date(p.at).getTime() < 11 * 60_000
+      ? [
+          `⏳ <b>Durchgang läuft gerade</b>${p.modus === "probe" ? " (Probe, sendet nichts)" : ""} · seit ${hhmm(p.start)} (${Math.max(1, Math.round((now.getTime() - new Date(p.start).getTime()) / 60000))} min)`,
+          `Schritt ${p.schritt}${p.zaehler ? ` · ${p.zaehler}` : ""}`,
+        ]
+      : [];
   const [head, ...rest] = statusHtml(state, passes, now).split("\n");
-  return [head, laptop, ...rest].join("\n");
+  return [head, laptop, ...running, ...rest].join("\n");
 }
+const hhmm = (d: string) => new Date(d).toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" });
 
 export function createWebhook(deps: WebhookDeps) {
   return async function handle(u: TgUpdate): Promise<string> {
@@ -66,7 +76,7 @@ export function createWebhook(deps: WebhookDeps) {
     const id = `u:${u.update_id}`;
 
     if (cmd === "/status") {
-      await deps.reply(remoteStatus(l, await deps.passes(), now));
+      await deps.reply(remoteStatus(l, await deps.passes(), now, (await deps.progress?.()) ?? null));
       return "status";
     }
     if (cmd === "/stop") {

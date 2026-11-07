@@ -4,7 +4,7 @@
  */
 import { prisma } from "./prisma";
 import { is429, passResult, type PassLog } from "./tutor24-autopilot";
-import type { LaptopSignal, RunRow } from "./tutor24-watch";
+import type { LaptopSignal, Progress, RunRow } from "./tutor24-watch";
 
 // ── Durchgaenge ───────────────────────────────────────────────────────────────
 
@@ -51,6 +51,10 @@ async function writeSignal(key: string, value: unknown): Promise<void> {
   const v = value as object;
   await prisma.tutor24Signal.upsert({ where: { key }, create: { key, value: v }, update: { value: v } });
 }
+
+/** Laufender Durchgang fuer /status; null = keiner */
+export const readProgress = () => readSignal<Progress>("durchgang");
+export const writeProgress = (p: Progress | null) => writeSignal("durchgang", p);
 
 export const readLaptop = () => readSignal<LaptopSignal>("laptop");
 export const writeLaptop = (s: LaptopSignal) => writeSignal("laptop", s);

@@ -50,7 +50,9 @@ export type LaptopSignal = {
   /** Ende der 429-Pause, falls aktiv */
   pauseBis: string | null;
 };
-export type RunRow = { startedAt: Date; endedAt: Date | null; ergebnis: string; stopp: string | null; is429: boolean };
+/** Stand des laufenden Durchgangs (scripts/autopilot.mts, alle 5 min erneuert) */
+export type Progress = { start: string; modus: AutoMode; schritt: string; zaehler?: string; at: string };
+export type RunRow ={ startedAt: Date; endedAt: Date | null; ergebnis: string; stopp: string | null; is429: boolean };
 
 export const laptopOnline = (l: LaptopSignal | null, now: Date) => !!l && now.getTime() - new Date(l.at).getTime() < OFFLINE_AFTER_MS;
 export const offlineText = (l: LaptopSignal | null) =>
