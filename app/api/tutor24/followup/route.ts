@@ -26,7 +26,8 @@ import {
 import { earliestNext, pidAlive, readTutor24Lock, tooSoonText } from "@/lib/tutor24-lock";
 import { activePause, loadAutopilot, localDay, nextScheduled, passView, readPassLog, updateAutopilot, type AutoMode, type PassLog } from "@/lib/tutor24-autopilot";
 import { laptopOnline } from "@/lib/tutor24-watch";
-import { readLaptop } from "@/lib/tutor24-watch-db";
+import { lastPasses, queueCommand, readLaptop } from "@/lib/tutor24-watch-db";
+import { randomUUID } from "node:crypto";
 
 export const runtime = "nodejs";
 
@@ -120,7 +121,9 @@ export async function GET() {
   const courses = loadCourses();
   const { pending, queue, budget, log, leads } = await sendQueue(courses, settings, new Date());
   const status = runStatus();
-  const passes = readPassLog(200);
+  // Laptop: Datei; online (Vercel, keine Datei): dieselben Protokolle aus der Datenbank (tutor24_run.daten)
+  const filePasses = readPassLog(200);
+  const passes = filePasses.length ? filePasses : await lastPasses(200).catch(() => []);
   return NextResponse.json({
     state: { ...status, log: status.log.slice(-40) },
     blockedBy: blocker(status),
@@ -164,6 +167,13 @@ export async function POST(req: NextRequest) {
   // Automatik-Schalter (Notbremse) auch waehrend eines Laufs: "aus" haelt den laufenden Durchgang vor der naechsten Nachricht an.
   if (body.action === "autopilot") {
     if (body.modus !== "aus" && body.modus !== "probe" && body.modus !== "an") return NextResponse.json({ error: "Modus muss aus, probe oder an sein." }, { status: 400 });
+    // Online (Vercel) liegt der Schalter nicht hier, sondern auf dem Laptop: "aus" geht als /stop an ihn (gilt auch,
+    // wenn er gerade aus ist — vor dem naechsten Durchgang); Probe/Ein nur lokal oder per Telegram /enable.
+    if (process.env.VERCEL) {
+      if (body.modus !== "aus") return NextResponse.json({ error: "Online nicht möglich: Probe/Ein auf dem Laptop (/kurse lokal) oder per Telegram /enable." }, { status: 409 });
+      await queueCommand(`web:${randomUUID()}`, "/stop");
+      return NextResponse.json({ ok: true, modus: "aus" });
+    }
     const next = updateAutopilot({ modus: body.modus, ...(body.modus === "aus" ? {} : { gestoppt: null, letzterFehler: null }) });
     if (body.modus === "aus" && runStatus().running) requestStop();
     return NextResponse.json({ ok: true, modus: next.modus });

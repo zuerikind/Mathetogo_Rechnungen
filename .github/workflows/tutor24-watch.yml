@@ -1,17 +1,14 @@
 # Waechter fuer die tutor24-Automatik: ruft die Pruefung auf Vercel auf (app/api/tutor24/watch).
-# Zuercher Pruefzeiten 9:45, 12:00, 15:00, 17:45, 20:00 — GitHub rechnet in UTC, deshalb je zwei Zeiten
-# (Winter UTC+1, Sommer UTC+2). Die Seite entscheidet selbst nach Zuercher Zeit und erinnert pro
-# Pruefzeit hoechstens einmal; ein Aufruf vor der ersten Pruefzeit tut nichts.
+# Zuercher Pruefzeiten 9:45, 12:00, 15:00, 17:45, 20:00 (entscheidet die Seite selbst nach Zuercher Zeit und erinnert
+# pro Pruefzeit hoechstens einmal). GitHub startet geplante Workflows oft verspaetet oder gar nicht (7.11.: kein
+# einziger Lauf bis 13 Uhr) — deshalb alle 20 Minuten, nie zur vollen Stunde; ein Aufruf ohne faellige Pruefzeit
+# tut nichts. 7-20 UTC deckt Winter und Sommer ab. Oeffentliches Repo: Actions-Minuten kosten nichts.
 # Noetig in GitHub: Secret WATCH_SECRET, Variable WATCH_URL (https://<app>/api/tutor24/watch).
 name: tutor24-waechter
 
 on:
   schedule:
-    - cron: "45 7,8 * * *"   # 9:45
-    - cron: "0 10,11 * * *"  # 12:00
-    - cron: "0 13,14 * * *"  # 15:00
-    - cron: "45 15,16 * * *" # 17:45
-    - cron: "0 18,19 * * *"  # 20:00
+    - cron: "7,27,47 7-20 * * *"
   workflow_dispatch: {}
 
 jobs:
