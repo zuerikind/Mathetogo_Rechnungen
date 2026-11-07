@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { assertNoAutomationRunning, tutor24JobState as jobState } from "./automation-state";
 import { acquireTutor24Lock } from "./tutor24-lock";
+import { savedSession, signIn } from "./tutor24-session";
 import {
   personalSentenceChecked,
   generateTutor24Message,
@@ -22,7 +23,6 @@ import {
   isSameSearchResultsPage,
   acceptTutor24Cookies,
   jsClick,
-  loginToTutor24,
   resolveTargetLanguage,
   sendMessageOnListing,
   sleep,
@@ -137,6 +137,7 @@ export async function runTutor24Messaging(
   const context = await browser.newContext({
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    storageState: savedSession(),
   });
   // Unter tsx (Automatik, scripts/*.mts) fuegt esbuild in Browser-Funktionen __name(...) ein; ohne diese
   // Definition scheitert jedes page.evaluate mit "__name is not defined" (Probelauf 6.11., alle Inserate).
@@ -144,7 +145,7 @@ export async function runTutor24Messaging(
   const page = await context.newPage();
 
   try {
-    await loginToTutor24(page, email, password, (s) => result.log.push(s));
+    result.log.push(`${ts()} ${await signIn(page, email, password)}`);
     await acceptTutor24Cookies(page, (s) => result.log.push(s));
     await assertPageOk(page, "nach dem Login");
 

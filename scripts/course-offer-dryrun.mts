@@ -21,7 +21,8 @@ const { parseJobText, toCsv, parseCsv } = await import("../lib/tutor24-followup"
 const { composeFirstMessage } = await import("../lib/tutor24");
 const { StopRun, assertPageOk, BLOCKED_URLS } = await import("../lib/tutor24-followup-runner");
 const { acquireTutor24Lock } = await import("../lib/tutor24-lock");
-const { TUTOR24_BASE_URL, acceptTutor24Cookies, gotoTutor24, loginToTutor24, sleep } = await import("../lib/tutor24-messaging");
+const { TUTOR24_BASE_URL, acceptTutor24Cookies, gotoTutor24, sleep } = await import("../lib/tutor24-messaging");
+const { savedSession, signIn } = await import("../lib/tutor24-session");
 
 const arg = (name: string, def: number) => {
   const i = process.argv.indexOf(name);
@@ -65,19 +66,15 @@ const rows = new Map(prevRows.map((r) => [r.conversation_id, r]));
 try {
   const page = await browser.newPage({
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    storageState: savedSession(),
   });
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Network.enable");
   await cdp.send("Network.setBlockedURLs", { urls: BLOCKED_URLS });
   const needsBrowser = batch.some((r) => !cache[r.conversation_id]?.info);
   if (needsBrowser) {
-    // Das Login-Feld bleibt gelegentlich leer (Seite noch nicht fertig): einmal wiederholen.
-    const login = () => loginToTutor24(page, process.env.TUTOR24_EMAIL ?? "", process.env.TUTOR24_PASSWORD ?? "", () => {});
-    await login().catch(async (err) => {
-      console.log(`Login-Versuch 1: ${(err as Error).message} — neuer Versuch`);
-      await sleep(5_000);
-      await login();
-    });
+    // gespeicherte Sitzung, sonst hoechstens einmal neu anmelden (lib/tutor24-session.ts)
+    console.log(await signIn(page, process.env.TUTOR24_EMAIL ?? "", process.env.TUTOR24_PASSWORD ?? ""));
     await acceptTutor24Cookies(page, () => {});
     await assertPageOk(page, "nach dem Login");
     console.log("Angemeldet.");

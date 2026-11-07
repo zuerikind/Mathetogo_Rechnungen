@@ -80,6 +80,7 @@ import {
   writeStatus,
 } from "./tutor24-followup-store";
 import { acquireTutor24Lock, readTutor24Lock } from "./tutor24-lock";
+import { savedSession, signIn } from "./tutor24-session";
 import { fromPreview, recordSend, syncPreviewLeads } from "./tutor24-leads";
 import { autoEligible, firstName, type PassCounts } from "./tutor24-autopilot";
 import {
@@ -88,7 +89,6 @@ import {
   acceptTutor24Cookies,
   closeCookieBanner,
   gotoTutor24,
-  loginToTutor24,
   sleep,
 } from "./tutor24-messaging";
 
@@ -993,6 +993,7 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
     const page = await browser.newPage({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      storageState: savedSession(),
     });
     // tsx/esbuild: __name in Browser-Funktionen (auch in lib/tutor24-messaging.ts beim Senden), siehe lib/tutor24.ts
     await page.addInitScript({ content: "globalThis.__name = globalThis.__name || function (f) { return f; };" });
@@ -1002,8 +1003,8 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Network.enable");
     await cdp.send("Network.setBlockedURLs", { urls: BLOCKED_URLS });
-    // Login-Log bleibt stumm: loginToTutor24 nennt die E-Mail-Adresse.
-    await loginToTutor24(page, email, password, () => {});
+    // Login-Log bleibt stumm (nennt die E-Mail-Adresse); nur das Ergebnis: wiederverwendet oder neu angemeldet.
+    log(await signIn(page, email, password));
     await acceptTutor24Cookies(page, () => {});
     await assertPageOk(page, "nach dem Login");
     log("Angemeldet.");
