@@ -27,6 +27,8 @@ if errorlevel 1 (
 echo %STAND%> ".next\gebaut-von.txt"
 
 :start
+rem Auth.js vertraut im Entwicklungsmodus localhost von selbst, in der fertigen Version erst mit dieser Angabe
+set AUTH_TRUST_HOST=true
 echo App startet: http://localhost:3000/kurse
 start "" cmd /c "timeout /t 6 >nul & start http://localhost:3000/kurse"
 call npm start
