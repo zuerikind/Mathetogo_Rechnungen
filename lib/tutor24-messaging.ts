@@ -621,6 +621,13 @@ async function hasMessageTextarea(page: import("playwright").Page): Promise<bool
   return !!(await waitForMessageTextarea(page, 1500));
 }
 
+/**
+ * Absaetze fuer tutor24: zwischen zwei Absaetzen eine Zeile mit einem geschuetzten Leerzeichen statt einer leeren Zeile.
+ * So bleibt die Leerzeile sichtbar, auch wenn tutor24 leere Zeilen zusammenzieht (Luanas alte Nachricht, 9.11.).
+ * Gespeichert (Tutor24Message) und geprueft wird immer der Text ohne diese Umwandlung.
+ */
+export const forTutor24 = (text: string) => text.trim().replace(/\n{2,}/g, "\n\u00A0\n");
+
 async function fillMessageTextarea(
   page: import("playwright").Page,
   textarea: import("playwright").ElementHandle,
@@ -628,23 +635,24 @@ async function fillMessageTextarea(
   pushLog: (s: string) => void,
   tutor24Id: string
 ): Promise<void> {
+  const typed = forTutor24(message);
   await textarea.click();
   await textarea.fill("");
-  await textarea.fill(message);
+  await textarea.fill(typed);
   await textarea.evaluate((el, v) => {
     const t = el as HTMLTextAreaElement;
     t.value = v;
     t.dispatchEvent(new Event("input", { bubbles: true }));
     t.dispatchEvent(new Event("change", { bubbles: true }));
-  }, message);
-
-  const len = await textarea.evaluate((el) => (el as HTMLTextAreaElement).value.length);
-  if (len < 20) {
-    pushLog(`${ts()} [${tutor24Id}] ⚠ Textfeld kurz (${len} Zeichen) — tippe erneut`);
-    const sel =
-      'textarea[name="message[content]"], textarea.js-message-form-input';
-    await page.locator(sel).first().pressSequentially(message.slice(0, 500), { delay: 5 });
+  }, typed);
+  // Nie einen halben Text senden (frueher: nach 500 Zeichen abgeschnitten nachgetippt).
+  const value = await textarea.evaluate((el) => (el as HTMLTextAreaElement).value);
+  if (value.trim() !== typed) {
+    pushLog(`${ts()} [${tutor24Id}] ⚠ Text nicht vollständig im Feld (${value.length} von ${typed.length} Zeichen) — nicht gesendet`);
+    await textarea.fill("").catch(() => {});
+    throw new Error(`Text liess sich nicht vollständig eintragen (${tutor24Id}) — nicht gesendet`);
   }
+  void page;
 }
 
 async function scrollToSendMessageAnchor(page: import("playwright").Page): Promise<void> {

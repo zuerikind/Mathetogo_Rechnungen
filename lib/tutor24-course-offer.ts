@@ -42,6 +42,7 @@ const CHILD: Record<"Tochter" | "Sohn" | "Kind", { nom: string; akk: string; dat
   Sohn: { nom: "Ihr Sohn", akk: "Ihren Sohn", dat: "Ihrem Sohn" },
   Kind: { nom: "Ihr Kind", akk: "Ihr Kind", dat: "Ihrem Kind" },
 };
+export const CHILD_FORMS = CHILD;
 
 /** Welche Fassung: Eltern ohne genau ein genanntes Kind bekommen die neutrale; Englisch hat nur eine. */
 /** "fr": nur Nachfassen (die franzoesische Erst-Nachricht schreibt weiter die KI, in der vous-Form). */
@@ -100,9 +101,26 @@ function parts(f: Form): Parts {
       kontakt: "If you are interested, feel free to contact me on WhatsApp to arrange a lesson (078 693 68 98).",
       infos: "More information: www.mathetogo.xyz",
     };
+  // Franzoesisch (seit 9.11. fester Text statt KI-Uebersetzung der alten du-Vorlage): vous-Form, gross nach "Bonjour,".
+  if (f.typ === "fr")
+    return {
+      intro: "Je serais ravi de vous aider en mathématiques et en physique, en ligne ou à Zurich, en allemand ou en anglais.",
+      credentials:
+        "J'enseigne depuis plus de 12 ans, j'ai étudié à l'ETH et j'accompagne actuellement plus de 30 élèves, la plupart au niveau du gymnase ou de l'université. Je connais donc bien les exigences, les erreurs typiques et les thèmes importants à tous les niveaux.",
+      lehrmittel:
+        "Pour mes cours, j'ai développé mon propre matériel pédagogique pour la préparation à l'examen d'entrée au gymnase, la préparation à la maturité professionnelle (BM) ainsi que pour différents niveaux du gymnase et de la BM. J'ai également programmé la plateforme d'apprentissage Mathetogo (www.platform.mathetogo.xyz).",
+      plattform:
+        "On y travaille avec des contenus clairement structurés : exercices ciblés, démarche de résolution notée et retour personnalisé. Des quiz complémentaires permettent d'évaluer le niveau de manière réaliste et de progresser de façon ciblée.",
+      meet: "Les cours en ligne ont lieu via Google Meet. J'explique la matière de manière claire et visuelle sur l'iPad, et après chaque leçon, vous recevez les notes annotées afin de pouvoir tout revoir tranquillement.",
+      wichtig:
+        "Il me tient à cœur que la matière actuelle soit bien comprise et que l'on apprenne à aborder les mathématiques de manière réfléchie et durable. J'aide également pour la méthode de travail, l'organisation et la motivation.",
+      wichtigKurz: "Il me tient à cœur que la matière actuelle soit bien comprise et que l'on apprenne à aborder les mathématiques de manière durable.",
+      kontakt: "Pour convenir d'une leçon, vous pouvez me contacter par WhatsApp (078 693 68 98).",
+      infos: "Plus d'informations : www.mathetogo.xyz",
+    };
   if (f.typ === "du")
     return {
-      intro: "gerne unterstütze ich dich in Mathematik und der Physik, entweder online oder in Zürich, auf Deutsch oder Englisch.",
+      intro: "gerne unterstütze ich dich in Mathematik und Physik, entweder online oder in Zürich, auf Deutsch oder Englisch.",
       credentials: CREDENTIALS,
       lehrmittel: LEHRMITTEL,
       plattform: "Dort arbeitest du mit klar strukturierten Inhalten, löst gezielte Aufgaben, hältst deinen Lösungsweg fest und erhältst persönliches Feedback. Ergänzende Quizzes helfen dir, deinen Lernstand realistisch einzuschätzen und gezielt Fortschritte zu machen.",
@@ -119,7 +137,7 @@ function parts(f: Form): Parts {
       lehrmittel: LEHRMITTEL,
       plattform: `Dort arbeitet ${f.nom} mit klar strukturierten Inhalten, löst gezielte Aufgaben, hält den Lösungsweg fest und erhält persönliches Feedback. Ergänzende Quizzes helfen, den Lernstand realistisch einzuschätzen und gezielt Fortschritte zu machen.`,
       meet: `Online-Lektionen finden über Google Meet statt. Ich erkläre den Stoff verständlich und visuell mit dem iPad, und nach jeder Lektion erhält ${f.nom} die bearbeiteten Unterlagen, damit sich alles nochmals in Ruhe nachvollziehen lässt.`,
-      wichtig: `Mir ist wichtig, dass ${f.nom} nicht nur den aktuellen Stoff versteht, sondern auch lernt, wie man Mathematik sinnvoll und nachhaltig angeht. Dabei unterstütze ich auch in Bezug auf Lernstrategie, Struktur und Motivation.`,
+      wichtig: `Mir ist wichtig, dass ${f.nom} nicht nur den aktuellen Stoff versteht, sondern auch lernt, wie man Mathematik sinnvoll und nachhaltig angeht. Dabei unterstütze ich ${f.akk} auch bei Lernstrategie, Struktur und Motivation.`,
       wichtigKurz: `Mir ist wichtig, dass ${f.nom} nicht nur den aktuellen Stoff versteht, sondern lernt, Mathematik nachhaltig anzugehen.`,
       kontakt: "Wenn Sie Interesse haben, melden Sie sich gerne per WhatsApp für eine Terminvereinbarung (078 693 68 98).",
       infos: "Weitere Infos finden Sie hier: www.mathetogo.xyz",
@@ -130,7 +148,7 @@ function parts(f: Form): Parts {
     lehrmittel: LEHRMITTEL,
     plattform: "Dort wird mit klar strukturierten Inhalten gearbeitet: gezielte Aufgaben lösen, den Lösungsweg festhalten und persönliches Feedback erhalten. Ergänzende Quizzes helfen, den Lernstand realistisch einzuschätzen und gezielt Fortschritte zu machen.",
     meet: "Online-Lektionen finden über Google Meet statt. Ich erkläre den Stoff verständlich und visuell mit dem iPad, und nach jeder Lektion gibt es die bearbeiteten Unterlagen, damit sich alles nochmals in Ruhe nachvollziehen lässt.",
-    wichtig: "Mir ist wichtig, dass nicht nur der aktuelle Stoff verstanden wird, sondern dass man auch lernt, wie man Mathematik sinnvoll und nachhaltig angeht. Dabei unterstütze ich auch in Bezug auf Lernstrategie, Struktur und Motivation.",
+    wichtig: "Mir ist wichtig, dass nicht nur der aktuelle Stoff verstanden wird, sondern auch ein sinnvoller und nachhaltiger Umgang mit Mathematik entsteht. Dabei helfe ich auch bei Lernstrategie, Struktur und Motivation.",
     wichtigKurz: "Mir ist wichtig, dass nicht nur der aktuelle Stoff sitzt, sondern auch ein nachhaltiger Umgang mit Mathematik entsteht.",
     kontakt: "Wenn Sie Interesse haben, melden Sie sich gerne per WhatsApp für eine Terminvereinbarung (078 693 68 98).",
     infos: "Weitere Infos finden Sie hier: www.mathetogo.xyz",
@@ -163,6 +181,8 @@ export function fallbackSentence(a: Analysis, f: Form): string {
     const topic = isOfferLevel(a.kategorie) ? THEMA_EN[a.kategorie] : "tutoring";
     return `Especially for ${topic}, it pays off to work specifically on typical exercises and the most important topics, and that is exactly how I structure my lessons.`;
   }
+  if (f.typ === "fr")
+    return "Il vaut la peine de travailler de manière ciblée sur les exercices typiques et les thèmes essentiels, et c'est exactement ainsi que je construis mes leçons.";
   const thema = isOfferLevel(a.kategorie) ? THEMA[a.kategorie] : "die Nachhilfe";
   const mit = f.typ === "du" ? " mit dir" : f.typ === "eltern" ? ` mit ${f.dat}` : "";
   return `Gerade für ${thema} lohnt es sich, gezielt an den typischen Aufgaben und den wichtigsten Themen zu arbeiten, und genau so baue ich die Lektionen${mit} auf.`;
@@ -336,15 +356,69 @@ const GOALS: Array<{ name: string; satz: RegExp; inserat: RegExp }> = [
   { name: "Probezeit", satz: /probezeit|probation/i, inserat: /probezeit|probation/i },
 ];
 
+const re = (s: string) => new RegExp(s, "u");
+/** Falsche Fälle bei "Ihr Kind / Ihr Sohn / Ihre Tochter" (z. B. KI: "übe mit Ihr Kind"). */
+const WRONG_CHILD_CASE = [
+  re("(?<!\\p{L})(mit|bei|von|zu|nach|aus|seit|gegenüber) (Ihr|Ihre|Ihren) (Kind|Sohn|Tochter)(?!\\p{L})"),
+  re("(?<!\\p{L})(Ihr Tochter|Ihre (Sohn|Kind)|Ihren (Tochter|Kind)|Ihrem Tochter|Ihrer (Sohn|Kind))(?!\\p{L})"),
+  re("(?<!\\p{L})(für|um|ohne|gegen|durch) (Ihr Sohn|Ihrem (Sohn|Kind)|Ihrer Tochter)(?!\\p{L})"),
+];
+const OTHER_SUBJECT = new RegExp(
+  "(?<!\\p{L})(deutsch\\p{L}*|französisch\\p{L}*|englisch\\p{L}*|Latein|Chemie|Biologie|English|German|French|allemand|anglais|français|linguistique\\p{L}*)(?!\\p{L})",
+  "iu"
+);
+const PLURAL_STUDENTS = new RegExp("(?<!\\p{L})(Schüler(innen)?|Lernenden|students|élèves)(?!\\p{L})", "iu");
+/** deutsche Woerter und Schulbegriffe in einem englischen/franzoesischen Satz */
+const FOREIGN_GERMAN = new RegExp(
+  "(?<!\\p{L})(der|die|das|und|ich|ist|wird|wenn|wir|mit|für|Primarschule|Primarklasse|Sekundarstufe|Sekundarschule|Oberstufe|Bezirksschule|Bezirkschule)(?!\\p{L})",
+  "iu"
+);
+const PLACEHOLDER = re("\\[|\\]|\\{|\\}|undefined|(?<!\\p{L})null(?!\\p{L})|NaN|TODO|KI-SATZ");
+
+/**
+ * Rechtschreib- und Formfehler, die nie rausgehen duerfen (fester Text, KI-Satz, Kursdaten); null = in Ordnung.
+ * fr: Leerzeichen vor : ; ? ! ist dort richtig.
+ */
+export function formProblem(text: string, lang: "de" | "en" | "fr" = "de"): string | null {
+  if (/ß/.test(text)) return "„ß“ statt „ss“";
+  if (/[^\S\n]{2,}/.test(text)) return "doppeltes Leerzeichen";
+  if (/[ \t]+\n|\n[ \t]+\S/.test(text)) return "Leerzeichen am Zeilenanfang oder -ende";
+  if (/\n{3,}/.test(text)) return "leerer Absatz";
+  if ((text.match(/\(/g)?.length ?? 0) !== (text.match(/\)/g)?.length ?? 0)) return "Klammer nicht geschlossen";
+  if (re("\\d\\.\\p{Lu}\\p{Ll}").test(text)) return "fehlendes Leerzeichen nach Satzzeichen";
+  // ".," bleibt erlaubt: "Anmeldeschluss ist der 14.11., der Kurs …"
+  if (/(?<!\.)\.\.(?!\.)|,,|,\.|!!|\?\?/.test(text)) return "doppelte Satzzeichen";
+  if ((lang === "fr" ? / [.,]/ : / [.,;:!?]/).test(text)) return "Leerzeichen vor Satzzeichen";
+  // "Stoff.Ich" / "Stoff,ich": fehlendes Leerzeichen (Links wie www.mathetogo.xyz und Daten 21.11. bleiben erlaubt)
+  if (re("\\p{Ll}{2}[.!?,;]\\p{Lu}").test(text) || re("\\p{L}{2},\\p{L}").test(text)) return "fehlendes Leerzeichen nach Satzzeichen";
+  const dbl = text.match(new RegExp("(?<!\\p{L})(\\p{L}{2,})\\s+\\1(?!\\p{L})", "iu"));
+  if (dbl && !/^(die|das|der|sie|que|nous|vous)$/i.test(dbl[1])) return `doppeltes Wort „${dbl[1]}“`;
+  if (PLACEHOLDER.test(text)) return "leerer oder nicht ersetzter Platzhalter";
+  if (/Hallo zusammen|Bonjour à tous|Hello everyone/i.test(text)) return "Gruss an mehrere („Hallo zusammen“)";
+  if (lang === "de") {
+    const wrong = WRONG_CHILD_CASE.map((r) => text.match(r)?.[0]).find(Boolean);
+    if (wrong) return `falscher Fall: „${wrong.trim()}“`;
+  }
+  return null;
+}
+
 /** Pruefung des persoenlichen KI-Satzes; null = in Ordnung. inserat: Titel, Stufe und Text (fuer erfundene Ziele). */
 export function sentenceProblem(s: string, f: Form, inserat?: string): string | null {
   const t = s.trim();
   if (!t) return "leer";
+  if (!/[.!?]$/.test(t)) return "Satz endet ohne Punkt";
+  const form = formProblem(t, f.typ === "en" ? "en" : f.typ === "fr" ? "fr" : "de");
+  if (form) return form;
   if (t.split(/\s+/).length > 45) return "zu lang";
   if (/https?:|www\.|@|\d{3} ?\d{3}/.test(t)) return "Link oder Nummer";
   if (/\b(ETH|12 Jahre|12 years|Plattform|platform|Mathetogo|Google Meet|Gruppe|group|Kurs|course|CHF|Preis|price)\b/i.test(t)) return "wiederholt festen Text oder Kurs";
   // Der feste Text davor beginnt schon mit "gerne unterstütze ich …" / "I would be happy to help".
-  if (/^(gerne|ich|i would|i'd)\b|unterstütze ich|happy to help/i.test(t)) return "wiederholt den Anfang";
+  if (/^(gerne|ich|i would|i'd|je serais|je suis ravi)\b|unterstütze ich|happy to help|ravi de vous aider/i.test(t)) return "wiederholt den Anfang";
+  // 9.11.: "compétences linguistiques en allemand", "erkläre … in Englisch"; nur Mathematik/Physik
+  if (OTHER_SUBJECT.test(t)) return "nennt ein anderes Fach oder eine Sprache";
+  // Einzelunterricht: nicht "mit den Schülern" / "I help students"
+  if (PLURAL_STUDENTS.test(t)) return "spricht von Schülern/Lernenden statt von dieser Person";
+  if ((f.typ === "en" || f.typ === "fr") && FOREIGN_GERMAN.test(t)) return "Satz nicht in der Sprache der Nachricht";
   if (inserat !== undefined) {
     const invented = GOALS.find((g) => g.satz.test(t) && !g.inserat.test(inserat));
     if (invented) return `nennt „${invented.name}“, das Inserat aber nicht`;
@@ -382,6 +456,8 @@ function anredeProblem(text: string, f: Form): string | null {
 export function messageCheck(art: keyof typeof CHECK_RULES, text: string, f: Form, course: Course | null, privatePrice: number): string | null {
   const rule = CHECK_RULES[art];
   if (/\{[a-zäöü]+\}/.test(text)) return "nicht ersetzter Platzhalter";
+  const form = formProblem(text, f.typ === "en" ? "en" : f.typ === "fr" ? "fr" : "de");
+  if (form) return form;
   if (!rule.kontaktErlaubt && containsForbiddenContact(text)) return "enthält Link, E-Mail oder Telefonnummer (im Nachfassen nicht erlaubt)";
   if (rule.bezugAufErstNachricht && !hasFollowupMarker(text)) return "Bezug auf die Erst-Nachricht fehlt";
   if (!text.startsWith(greeting(f))) return `beginnt nicht mit „${greeting(f)}“`;
@@ -404,7 +480,6 @@ export function firstMessageProblem(text: string, f: Form, course: Course | null
   }
   const bad = HINT_FORBIDDEN.find((re) => re.test(text));
   if (bad) return "deutet an, dass man die Kurse auf der Website findet oder sich dort anmeldet";
-  if (f.typ === "fr") return null; // franzoesisch: KI-Text, nur der Hinweis wird geprueft
   return messageCheck("erst", text, f, course, privatePrice);
 }
 
@@ -425,15 +500,19 @@ export function planFirstMessage(
   settings: FollowupSettings,
   log: Array<Partial<LogRow>>,
   now = new Date(),
-  spracheListing: string = "de"
+  spracheListing: string = "de",
+  /** Batch-Vorschau: Anrede von Hand umgestellt */
+  anredeOverride?: Addressee
 ) {
   const analysis = analyzeListing(info);
-  const addressee = detectAddressee(info.description);
-  // Franzoesisch: eigene Form (vous); der Text selbst kommt weiter von der KI, nur der Hinweis ist fest.
+  const addressee = anredeOverride ?? detectAddressee(info.description);
+  // Franzoesisch: eigene Form (vous), fester Text wie de/en (seit 9.11.).
   const form: Form = spracheListing === "fr" ? { typ: "fr" } : formFor(addressee, spracheListing);
   const offer = pickCourse(analysis, courses, settings, log, now);
   // Schalter "Kursblock": nur dann ein konkreter Kurs (bisherige Ausschluesse in pickCourse). Franzoesisch: nie.
-  const course = settings.newFirstMessage && offer.kind === "kurs" && form.typ !== "fr" ? offer.course : null;
+  // Englisch ohne englischen Kursnamen: Hinweis statt eines deutschen Kursnamens im englischen Text.
+  const course =
+    settings.newFirstMessage && offer.kind === "kurs" && form.typ !== "fr" && !(form.typ === "en" && !offer.course.nameEn?.trim()) ? offer.course : null;
   // Schalter "Kurs-Hinweis": ohne Kursblock, fuer alle ausser Erwachsene ohne BM-Bezug.
   const hint = settings.kursHinweis && !hintExcluded(info, analysis.kategorie) ? courseHint(form, settings.kursPreisAb) : null;
   return {

@@ -1346,7 +1346,7 @@ export function Tutor24Followup({
   );
 }
 
-export type KurseTab = "uebersicht" | "kurse" | "interessenten" | "einstellungen" | "protokoll";
+export type KurseTab = "uebersicht" | "batch" | "kurse" | "interessenten" | "einstellungen" | "protokoll";
 
 const AMPEL_PILL = { gruen: "bg-green-50 text-green-700", gelb: "bg-amber-50 text-amber-800", rot: "bg-red-50 text-red-700", ok: "bg-green-50 text-green-700", off: "bg-gray-100 text-gray-500" } as const;
 

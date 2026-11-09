@@ -258,11 +258,16 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
   });
 
   it("Englisch: Erst-Nachricht und Nachfassen in derselben Sprache", () => {
-    const p = planFirstMessage(listing("I am in my final year and will write the Matura this year"), [matura()], settings, [], NOW, "en");
+    const enName = matura({ nameEn: "Matura maths preparation course" });
+    const p = planFirstMessage(listing("I am in my final year and will write the Matura this year"), [enName], settings, [], NOW, "en");
     const m = assembleFirstMessage(p, null);
     expect(m.problem).toBeNull();
     expect(m.text.startsWith("Hello,")).toBe(true);
-    expect(m.text).toContain(courseBlock(matura(), 89, "en"));
+    expect(m.text).toContain(courseBlock(enName, 89, "en"));
+    // ohne englischen Kursnamen: Hinweis statt deutschem Kursnamen im englischen Text (9.11.)
+    const ohne = assembleFirstMessage(planFirstMessage(listing("I am in my final year and will write the Matura this year"), [matura()], settings, [], NOW, "en"), null);
+    expect(ohne.course).toBeNull();
+    expect(ohne.text).not.toContain("Vorbereitungskurs");
     expect(m.text.endsWith("Best regards\nOmid")).toBe(true);
     const n = followupMessage("erinnerung", { typ: "en" }, "Sam", matura(), 89);
     expect(n.text).toMatch(/^Hello,\n\nI got in touch with you a while ago/);
@@ -388,5 +393,32 @@ describe("Kurs-Hinweis (Academigo, Entscheid 6.11.)", () => {
     expect(firstMessageProblem(t, { typ: "fr" }, null, 89, hint)).toBeNull();
     expect(firstMessageProblem(ki, { typ: "fr" }, null, 89, hint)).toMatch(/wortgleich/);
     expect(planFirstMessage(listing("Je cherche de l'aide en maths pour mon fils"), [matura()], S({}), [], NOW, "fr")).toMatchObject({ course: null, hint });
+  });
+});
+
+describe("Formfehler vor dem Senden (9.11.)", () => {
+  it("findet Rechtschreib- und Formfehler, laesst richtige Texte durch", async () => {
+    const { formProblem, buildFirstMessage, courseHint } = await import("./tutor24-course-offer");
+    expect(formProblem("Ich übe mit Ihr Kind.")).toMatch(/falscher Fall/);
+    expect(formProblem("Ich übe mit Ihrem Kind.")).toBeNull();
+    expect(formProblem("Gerne für Ihr Sohn.")).toMatch(/falscher Fall/);
+    expect(formProblem("Gerne für Ihren Sohn und Ihr Kind.")).toBeNull();
+    expect(formProblem("Das ist  gut.")).toMatch(/doppeltes Leerzeichen/);
+    expect(formProblem("Das ist gut..")).toMatch(/doppelte Satzzeichen/);
+    expect(formProblem("Das ist gut .")).toMatch(/vor Satzzeichen/);
+    expect(formProblem("Der Stoff.Ich erkläre")).toMatch(/fehlendes Leerzeichen/);
+    expect(formProblem("Ich ich erkläre.")).toMatch(/doppeltes Wort/);
+    expect(formProblem("Mit [KI-SATZ] hier.")).toMatch(/Platzhalter/);
+    expect(formProblem("Hallo zusammen,")).toMatch(/Hallo zusammen/);
+    expect(formProblem("Strasse und Grüße")).toMatch(/ß/);
+    expect(formProblem("a\n\n\nb")).toMatch(/leerer Absatz/);
+    expect(formProblem("Anmeldeschluss ist der 14.11., der Kurs. Infos: www.mathetogo.xyz, z.B. 2. Sek")).toBeNull();
+    expect(formProblem("Plus d'informations : www.mathetogo.xyz", "fr")).toBeNull();
+    // alle festen Fassungen bestehen
+    const forms = [{ typ: "du" }, { typ: "eltern", nom: "Ihr Kind", akk: "Ihr Kind", dat: "Ihrem Kind" }, { typ: "neutral" }, { typ: "en" }, { typ: "fr" }] as const;
+    for (const f of forms) {
+      const t = buildFirstMessage(f, "Beim Bruchrechnen setze ich bei den Grundlagen an.", null, 89, courseHint(f, 55));
+      expect(formProblem(t, f.typ === "en" ? "en" : f.typ === "fr" ? "fr" : "de")).toBeNull();
+    }
   });
 });

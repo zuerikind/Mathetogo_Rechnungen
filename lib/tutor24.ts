@@ -7,7 +7,7 @@ import {
   generateTutor24Message,
   TUTOR24_MESSAGE_TEMPLATE,
 } from "./tutor24-message-prompt";
-import { assembleFirstMessage, firstMessageProblem, insertHintBeforeClosing, planFirstMessage } from "./tutor24-course-offer";
+import { assembleFirstMessage, planFirstMessage } from "./tutor24-course-offer";
 import { courseSnapshot, parseJobText, type ListingInfo } from "./tutor24-followup";
 import { loadCourses, loadLog, loadSettings } from "./tutor24-followup-store";
 import { listingHash, recordSend, type LeadFields } from "./tutor24-leads";
@@ -47,14 +47,31 @@ export type AutoErst = {
   notes?: string[];
   /** begrenzter Probelauf: hoechstens so viele Inserate oeffnen (auch uebersprungene zaehlen) */
   maxOpen?: number;
+  /** Batch vorbereiten (scripts/batch.mts): Nachricht nur sammeln, nichts senden */
+  collect?: (item: CollectedListing) => void;
+};
+export type CollectedListing = {
+  tutor24Id: string;
+  href: string;
+  title: string;
+  info: ListingInfo;
+  plan: ReturnType<typeof planFirstMessage>;
+  composed: Awaited<ReturnType<typeof composeFirstMessage>>;
+  language: "de" | "en" | "fr";
 };
 export { tutor24JobState as jobState } from "./automation-state";
 
 export const MESSAGE_TEMPLATE = TUTOR24_MESSAGE_TEMPLATE;
 
 /** Erst-Nachricht (de/en): Analyse, Kurswahl, KI-Satz, Pruefung. Auch vom Probelauf (scripts/course-offer-dryrun.mts) genutzt. */
-export async function composeFirstMessage(info: ListingInfo, log: (s: string) => void, now = new Date(), sprache: "de" | "en" = "de") {
-  const plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), now, sprache);
+export async function composeFirstMessage(
+  info: ListingInfo,
+  log: (s: string) => void,
+  now = new Date(),
+  sprache: "de" | "en" | "fr" = "de",
+  anredeOverride?: import("./tutor24-followup").Addressee
+) {
+  const plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), now, sprache, anredeOverride);
   const f = plan.form;
   // Abgelehnt → zweiter Versuch mit dem Grund; erst danach der Ersatzsatz.
   const ki = await personalSentenceChecked(info, f, log);
@@ -366,29 +383,23 @@ export async function runTutor24Messaging(
             const info = parseJobText(await page.evaluate(() => document.body.innerText), listingTitle);
             // Analyse immer (ohne KI): die Person kommt so oder so in Tutor24Lead.
             let plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), new Date(), language);
-            if (language === "de" || language === "en") {
-              const composed = await composeFirstMessage(info, tag, new Date(), language);
-              plan = composed.plan;
-              if (composed.problem) {
-                altText = composed.problem;
-                tag(`⚠ Neuer Text besteht die Prüfung nicht (${composed.problem}) — alter Text als Rückfall`);
-                message = await generateTutor24Message(profile, tag);
-              } else {
-                message = composed.text;
-                kursId = composed.course?.id ?? null;
-                hint = composed.hint;
-              }
-            } else {
+            // Seit 9.11. auch Franzoesisch mit festem Text (vous) statt KI-Uebersetzung der alten du-Vorlage.
+            const composed = await composeFirstMessage(info, tag, new Date(), language);
+            plan = composed.plan;
+            if (auto?.collect) {
+              // Batch: nur vorbereiten, nie den alten Text; fehlerhafte erscheinen mit Grund in der Vorschau (nicht sendbar).
+              auto.collect({ tutor24Id, href, title: info.title, info, plan, composed, language });
+              auto.counts.wuerde++;
+              continue;
+            }
+            if (composed.problem) {
+              altText = composed.problem;
+              tag(`⚠ Neuer Text besteht die Prüfung nicht (${composed.problem}) — alter Text als Rückfall`);
               message = await generateTutor24Message(profile, tag);
-              if (plan.hint) {
-                const withHint = insertHintBeforeClosing(message, plan.hint);
-                const problem = firstMessageProblem(withHint, plan.form, null, plan.privatePrice, plan.hint);
-                if (problem) tag(`⚠ Kurs-Hinweis nicht eingefügt (${problem})`);
-                else {
-                  message = withHint;
-                  hint = plan.hint;
-                }
-              }
+            } else {
+              message = composed.text;
+              kursId = composed.course?.id ?? null;
+              hint = composed.hint;
             }
             const kindLabel = kursId ? "Kursblock" : hint ? "Hinweis" : "ohne Kurs";
             /** nur fuer Gesendetes bzw. im Probemodus "wuerde gesendet" */
@@ -482,4 +493,86 @@ export async function runTutor24Messaging(
   }
 
   return result;
+}
+
+/**
+ * Batch senden (scripts/batch.mts): genau die freigegebenen Erst-Nachrichten, Text wie in der Vorschau.
+ * Vor jedem Inserat nochmals: schon angeschrieben (Tutor24Contact) oder Konversation vorhanden → übersprungen.
+ * 8–15 s zwischen den Inseraten; 429/Captcha/Login (StopRun, isHardStop) beenden sofort.
+ */
+export async function sendBatchErst(
+  items: import("./tutor24-batch").BatchItem[],
+  log: (s: string) => void,
+  onResult: (item: import("./tutor24-batch").BatchItem) => void
+): Promise<void> {
+  const email = process.env.TUTOR24_EMAIL;
+  const password = process.env.TUTOR24_PASSWORD;
+  if (!email || !password) throw new Error("TUTOR24_EMAIL and TUTOR24_PASSWORD must be set in .env.local");
+  const { addresseeFor } = await import("./tutor24-batch");
+  const releaseLock = acquireTutor24Lock("Batch (Erst-Nachrichten senden)");
+  const { chromium } = await import("playwright");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      storageState: savedSession(),
+    });
+    await context.addInitScript({ content: "globalThis.__name = globalThis.__name || function (f) { return f; };" });
+    const page = await context.newPage();
+    log(await signIn(page, email, password));
+    await acceptTutor24Cookies(page, log);
+    await assertPageOk(page, "nach dem Login");
+    let opened = 0;
+    for (const item of items) {
+      const done = (ergebnis: "gesendet" | "übersprungen" | "fehler", meldung: string) => {
+        item.ergebnis = ergebnis;
+        item.meldung = meldung;
+        log(`[${item.id}] ${ergebnis}: ${meldung}`);
+        onResult(item);
+      };
+      if (await prisma.tutor24Contact.findUnique({ where: { tutor24Id: item.id } })) {
+        done("übersprungen", "schon angeschrieben");
+        continue;
+      }
+      if (opened++ > 0) await sleep(8_000 + Math.random() * 7_000);
+      try {
+        await gotoTutor24(page, item.link, log);
+        await waitForJobListingReady(page, item.id, log);
+        await assertPageOk(page, `Inserat ${item.id}`);
+        if (await findVisible(page, EXISTING_CONVO_SEL)) {
+          done("übersprungen", "Konversation schon vorhanden");
+          continue;
+        }
+        const outcome = await sendMessageOnListing(page, item.text, item.id, item.titel, log, item.link);
+        if (outcome !== "sent") {
+          done(outcome === "skipped_no_button" ? "übersprungen" : "fehler", outcome);
+          continue;
+        }
+        await prisma.tutor24Contact.create({ data: { tutor24Id: item.id, name: item.titel, profileUrl: item.link, kursId: item.kursId } });
+        const info = item.info!;
+        const plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), new Date(), item.sprache, addresseeFor(item.anrede));
+        const course = item.kursId ? loadCourses().find((c) => c.id === item.kursId) ?? null : null;
+        await recordSend({
+          inseratId: item.id,
+          conversationId: await conversationIdOnPage(page),
+          name: item.titel,
+          art: "erst",
+          kursId: item.kursId,
+          variante: course ? `${course.name}/${plan.addressee.anrede}` : item.hint ? `hinweis/${plan.addressee.anrede}` : `ohne Kurs/${plan.addressee.anrede}`,
+          text: item.text,
+          status: "gesendet",
+          kursDaten: course ? courseSnapshot(course) : null,
+          lead: leadFields(info, plan, item.sprache),
+        });
+        done("gesendet", "✓");
+        await sleep(1500);
+      } catch (err) {
+        if (err instanceof StopRun || err instanceof CookieBannerError || isHardStop(err instanceof Error ? err.message : String(err))) throw err;
+        done("fehler", err instanceof Error ? err.message.slice(0, 200) : String(err));
+      }
+    }
+  } finally {
+    await browser.close();
+    releaseLock();
+  }
 }

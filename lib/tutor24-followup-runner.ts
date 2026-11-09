@@ -88,6 +88,7 @@ import {
   TUTOR24_BASE_URL,
   acceptTutor24Cookies,
   closeCookieBanner,
+  forTutor24,
   gotoTutor24,
   sleep,
 } from "./tutor24-messaging";
@@ -123,6 +124,10 @@ export type AutoSend = {
   maxReplyChecks?: number;
   /** Ausgabe: neue Antworten laut Liste "Gesendet" (auch auf Erst-Nachrichten ohne Kurs) */
   antworten: { id: string; name: string; absage: boolean }[];
+  /** Batch: nur diese Konversationen (in der Vorschau freigegeben) */
+  onlyIds?: string[];
+  /** Batch: Text, wie er in der Vorschau stand; weicht der aktuelle ab, wird nicht gesendet */
+  expectedText?: Record<string, string>;
   /** Zwischenmeldung, bevor ein Schritt beginnt (Telegram) */
   onStep?: (step: "antworten" | "nachfassen") => Promise<unknown>;
 };
@@ -553,7 +558,8 @@ async function send(page: Page, log: Log, courseId?: string, auto?: AutoSend): P
   const invalid = validateCourses(courses);
   if (invalid.length) throw new StopRun(`Kurse fehlerhaft, nichts gesendet: ${invalid.join(" ")}`);
   const q = await sendQueue(courses, loadSettings(), new Date(), courseId);
-  const pending = auto ? q.pending.filter(autoEligible) : q.pending;
+  // Batch (scripts/batch.mts): nur die in der Vorschau freigegebenen Chats.
+  const pending = (auto ? q.pending.filter(autoEligible) : q.pending).filter((r) => !auto?.onlyIds || auto.onlyIds.includes(r.conversation_id));
   let queue = auto ? pending.slice(0, Math.min(q.budget, auto.limit)) : q.queue;
   if (auto && q.pending.length > pending.length) log(`${q.pending.length - pending.length} offene nicht automatisch (unsicher, Stufen-Frage, ohne Kurs) — nur von Hand.`);
   // Alle Texte VOR der ersten Nachricht pruefen: der Lauf bricht nie mittendrin wegen eines Textes ab.
@@ -586,6 +592,11 @@ async function send(page: Page, log: Log, courseId?: string, auto?: AutoSend): P
     state.done = sentCount;
     state.progress = `${row.name} (${row.conversation_id}), Nr. ${i + 1} von ${queue.length}, ${sentCount} gesendet`;
     const text = row.text;
+    if (auto?.expectedText && auto.expectedText[row.conversation_id] !== text) {
+      log(`[${i + 1}/${queue.length}] ${row.name}: übersprungen (Text weicht von der Vorschau ab)`);
+      auto.counts.uebersprungen++;
+      continue;
+    }
 
     // Zwischen Probelauf und Senden kann eine Antwort gekommen sein: neu pruefen.
     const convo = await readConversation(page, row.conversation_id);
@@ -619,8 +630,10 @@ async function send(page: Page, log: Log, courseId?: string, auto?: AutoSend): P
     // Cookie-Fenster vor jedem Klick schliessen (es erscheint oft erst nach dem Laden und verdeckt den Knopf).
     await closeCookieBanner(page, log);
     await input.click();
-    await input.fill(text);
-    if ((await input.inputValue()).trim() !== text) throw new StopRun(`Text liess sich nicht vollständig eintragen (${row.conversation_id}).`);
+    // Absaetze mit geschuetztem Leerzeichen (forTutor24), damit die Leerzeilen sichtbar bleiben; gespeichert wird text.
+    const typed = forTutor24(text);
+    await input.fill(typed);
+    if ((await input.inputValue()).trim() !== typed) throw new StopRun(`Text liess sich nicht vollständig eintragen (${row.conversation_id}).`);
     await closeCookieBanner(page, log);
     try {
       await button.click({ timeout: 10_000 });
@@ -1008,7 +1021,7 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
     await acceptTutor24Cookies(page, () => {});
     await assertPageOk(page, "nach dem Login");
     log("Angemeldet.");
-    if (opts.mode === "send") await send(page, log, opts.courseId);
+    if (opts.mode === "send") await send(page, log, opts.courseId, opts.auto);
     else if (opts.mode === "replies") await replies(page, log, opts.courseId);
     else if (opts.mode === "compare") await compare(page, opts.maxChecks ?? 20, log);
     else if (opts.mode === "replycheck") await replyCheck(page, opts.maxChecks ?? 30, log);

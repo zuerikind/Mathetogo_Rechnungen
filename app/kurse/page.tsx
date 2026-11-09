@@ -5,10 +5,12 @@ import { useSearchParams } from "next/navigation";
 import { DashboardShell } from "@/components/DashboardShell";
 import { Tutor24Followup, type KurseTab } from "@/components/Tutor24Followup";
 import { InterestList } from "@/components/InterestList";
+import { BatchPanel } from "@/components/BatchPanel";
 import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 
 const TABS: Array<[KurseTab, string]> = [
   ["uebersicht", "Übersicht"],
+  ["batch", "Batch"],
   ["kurse", "Kurse"],
   ["interessenten", "Interessenten"],
   ["einstellungen", "Einstellungen"],
@@ -17,7 +19,7 @@ const TABS: Array<[KurseTab, string]> = [
 const isTab = (h: string): h is KurseTab => TABS.some(([t]) => t === h);
 
 /**
- * /kurse: Reiter Übersicht · Kurse · Interessenten · Einstellungen · Protokoll (#hash merkt den Reiter).
+ * /kurse: Reiter Übersicht · Batch · Kurse · Interessenten · Einstellungen · Protokoll (#hash merkt den Reiter).
  * ?course=<id>: "Kurs anlegen" im Nachfassen-Tab von /tutor24 springt direkt auf die Kursseite.
  * Tutor24Followup bleibt ueber alle Reiter hinweg geladen: ungespeicherte Eingaben gehen beim Wechsel nicht verloren.
  */
@@ -62,6 +64,7 @@ function Courses() {
       </div>
       <Tutor24Followup key={course ?? "kurse"} view="kurse" tab={tab} onTab={setTab} focusCourse={course} />
       {tab === "interessenten" && <InterestList />}
+      {tab === "batch" && <BatchPanel />}
     </div>
   );
 }

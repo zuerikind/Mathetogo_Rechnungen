@@ -4,7 +4,7 @@
  */
 
 import type { ListingProfile } from "./tutor24-messaging";
-import { listingText, sentenceProblem, type Form } from "./tutor24-course-offer";
+import { CHILD_FORMS, listingText, sentenceProblem, type Form } from "./tutor24-course-offer";
 
 /** Fixed intro — always before {{LEVEL_INSERT}}; do not personalize this block. */
 export const TUTOR24_CREDENTIALS_BLOCK = `gerne unterstütze ich dich in Mathematik und der Physik, entweder online oder in Zürich, auf Deutsch oder Englisch. Ich unterrichte seit über 12 Jahren, habe an der ETH studiert und begleite aktuell mehr als 30 aktive Schüler, die meisten auf Gymi- oder Universitätsniveau. Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.`;
@@ -185,6 +185,155 @@ export async function generatePersonalSentence(
   }
 }
 
+/**
+ * Stilbeispiele fuer v2 (ganze Saetze, je mit dem, was im Beispiel-Inserat stand). Pro Aufruf 3 zufaellige:
+ * wechselnde Anfaenge, ohne die starren [Klammer]-Vorlagen (die erzwangen "Bei der Primarschule", "Bis zur 5. Klasse").
+ */
+function examplePool(f: Form): string[] {
+  const k = f.typ === "eltern" ? f : { nom: "Ihr Kind", akk: "Ihr Kind", dat: "Ihrem Kind" };
+  const pool =
+    f.typ === "en"
+      ? [
+          `(listing: fractions, 6th grade) "Fractions in 6th grade get much easier once the basics sit, so that is where I start."`,
+          `(listing: Probezeit at the Gymnasium) "For the Probezeit at the Gymnasium, I go through the current topics with you and check what the next test will ask."`,
+          `(listing: only "math help, secondary school") "At secondary school, I work through the current material step by step."`,
+          `(listing: exam in March) "Until the exam in March, I plan the lessons so that every topic is covered once more."`,
+        ]
+      : f.typ === "fr"
+        ? [
+            `(annonce : fractions, 6e année) "Pour les fractions en 6e année, je reprends d'abord les bases et nous avançons pas à pas."`,
+            `(annonce : examen d'entrée au gymnase) "Pour l'examen d'entrée au gymnase, je travaille les exercices typiques de mathématiques."`,
+            `(annonce : seulement "aide en maths, secondaire") "Au secondaire, j'explique la matière actuelle en petites étapes claires."`,
+          ]
+        : f.typ === "du"
+          ? [
+              `(Inserat: Bruchrechnen, 6. Klasse) "Beim Bruchrechnen setze ich bei den Grundlagen an und übe mit dir Schritt für Schritt."`,
+              `(Inserat: ZAP im März) "Für die ZAP im März gehe ich mit dir die typischen Prüfungsaufgaben durch."`,
+              `(Inserat: Probezeit am Gymnasium) "Für einen guten Start in der Probezeit schauen wir gemeinsam auf die nächsten Prüfungen."`,
+              `(Inserat: nur "Mathe-Hilfe, Sek") "Den aktuellen Sek-Stoff erkläre ich dir in kleinen, klaren Schritten."`,
+              `(Inserat: Lücken seit der Oberstufe) "Deine Lücken aus der Oberstufe schliessen wir der Reihe nach, damit der neue Stoff wieder Sinn ergibt."`,
+            ]
+          : f.typ === "eltern"
+            ? [
+                `(Inserat: Bruchrechnen, 6. Klasse) "Beim Bruchrechnen setze ich bei den Grundlagen an und übe mit ${k.dat} Schritt für Schritt."`,
+                `(Inserat: Gymiprüfung im März) "Bis zur Gymiprüfung im März gehe ich mit ${k.dat} die typischen Aufgaben durch."`,
+                `(Inserat: wenig Selbstvertrauen in Mathe) "Damit ${k.nom} wieder Vertrauen in Mathematik fasst, beginne ich mit Aufgaben, die gelingen."`,
+                `(Inserat: nur "Mathe-Hilfe, Primarschule") "Den Stoff der Primarschule erkläre ich ruhig und mit vielen Beispielen."`,
+                `(Inserat: 2. Sek, Prüfungen) "Auf die nächsten Prüfungen der 2. Sek bereite ich ${k.akk} gezielt vor."`,
+              ]
+            : [
+                `(Inserat: Bruchrechnen, 6. Klasse) "Beim Bruchrechnen in der 6. Klasse setze ich bei den Grundlagen an und übe Schritt für Schritt."`,
+                `(Inserat: Kanti-Aufnahmeprüfung) "Für die Kanti-Aufnahmeprüfung gehe ich die typischen Prüfungsaufgaben in Mathematik durch."`,
+                `(Inserat: Physik in der Berufslehre) "Physik in der Berufslehre erkläre ich an Beispielen aus dem Berufsalltag."`,
+                `(Inserat: nur "Mathe-Hilfe, Sek") "Den aktuellen Sek-Stoff erkläre ich in kleinen, klaren Schritten."`,
+              ];
+  return pool;
+}
+const examplesV2 = (f: Form) => [...examplePool(f)].sort(() => Math.random() - 0.5).slice(0, 3);
+/** Saetze aller Stilbeispiele: eine woertliche Kopie wird abgelehnt (9.11.: 3x "In der Primarschule erkläre ich den Stoff ruhig …"). */
+const EXAMPLE_SENTENCES = new Set(
+  ([{ typ: "du" }, { typ: "neutral" }, { typ: "en" }, { typ: "fr" }, ...(["Tochter", "Sohn", "Kind"] as const).map((k) => ({ typ: "eltern" as const, ...CHILD_FORMS[k] }))] as Form[])
+    .flatMap(examplePool)
+    .map((e) => e.match(/"([^"]+)"$/)?.[1] ?? e)
+);
+
+/**
+ * v2 des persoenlichen Satzes: EIN konkretes Detail aus dem Inserat, aktiv und in der ersten Person,
+ * wechselnde Anfaenge; ohne Detail ein kurzer Satz zur Stufe. Gleiche Pruefung wie v1 plus stilProblemV2.
+ * Eltern: alle drei Faelle im Prompt ("Ihr Kind" / "Ihrem Kind"), sonst schrieb die KI "mit Ihr Kind" (26 von 274 am 7.11.).
+ */
+async function generateSentenceV2(
+  apiKey: string,
+  listing: { title: string; schulstufe: string; description: string },
+  f: Form,
+  pushLog: (s: string) => void,
+  retry?: { satz: string; grund: string }
+): Promise<string | null> {
+  const lang = f.typ === "en" ? "English" : f.typ === "fr" ? "French" : 'Swiss standard German (use "ss", never "ß")';
+  const rule =
+    f.typ === "en"
+      ? `Write in English and address the reader as "you". Do not mention a son or daughter. Use correct prepositions ("at primary school", "at secondary school", "at the Gymnasium").`
+      : f.typ === "fr"
+        ? `Write in French, formal "vous". Do not mention a son or daughter. Never use "tu".`
+        : f.typ === "du"
+          ? `Address the student directly with "du" (informal). Never use "Sie".`
+          : f.typ === "eltern"
+            ? `The parent wrote the listing. Use formal "Sie"/"Ihr". Refer to the child only with these exact forms and correct German case: ` +
+              `subject (Nominativ) "${f.nom}", object (Akkusativ, also after "für") "${f.akk}", after "mit", "bei", "von", "zu" (Dativ) "${f.dat}". ` +
+              `Example: "übe ich mit ${f.dat}", "bereite ich ${f.akk} vor". Never use "du".`
+            : `It is unclear who wrote it. Use formal "Sie" but do NOT mention a child, son or daughter. Never use "du".`;
+  const examples = examplesV2(f).join(" ");
+  const banned =
+    f.typ === "en" ? `"Since you"` : f.typ === "fr" ? `"Comme vous", "Puisque"` : f.typ === "du" ? `"Da du"` : `"Da ${f.typ === "eltern" ? f.nom : "Ihr Kind"}", "Da Ihr Kind"`;
+  const before =
+    f.typ === "en"
+      ? `The message before your sentence already says "I would be happy to help with mathematics and physics": do NOT start with "I" and do NOT repeat "happy to help". `
+      : f.typ === "fr"
+        ? `The message before your sentence already says "Je serais ravi de vous aider en mathématiques et en physique": do NOT start with "Je serais" and do NOT repeat "ravi de vous aider". `
+        : `The message before your sentence already says "gerne unterstütze ich ... in Mathematik und Physik": do NOT start with "Ich" or "Gerne" and do NOT repeat "unterstütze". `;
+  try {
+    const { default: OpenAI } = await import("openai");
+    const client = new OpenAI({ apiKey });
+    const resp = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 160,
+      temperature: 0.6,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            `You are Omid, a math and physics tutor in Switzerland. Write exactly ONE sentence in ${lang}, max 30 words, ending with a period, that proves you read THIS listing. ` +
+            `Step 1: find ONE concrete detail that is literally in the listing: class or year, a topic (e.g. fractions, functions, vectors), an exam (Gymiprüfung, ZAP, Matura, BM, Probezeit, a test), a date or deadline, a stated difficulty, or a goal. ` +
+            `Prefer the MOST specific detail: a named topic, a difficulty (e.g. Dyskalkulie, gaps, exam anxiety), an exam or a date beats a class/year, which beats the bare school level. ` +
+            `Step 2: build the sentence around that detail, in ACTIVE voice, first person and PRESENT tense (e.g. "erkläre ich", "übe ich mit …", "gehe ich … durch"; not "werde ich"): say what you concretely do with it. Professional and calm. ` +
+            `Avoid empty phrases: "begeistern", "Spass machen", "optimal", "gezielte Unterstützung", "Fortschritte erzielen", "make learning fun". ` +
+            `If the listing has no concrete detail beyond "needs help in math/physics": write a SHORT sentence (max 15 words) about how you work at that school level. ` +
+            `${rule} ` +
+            `Never use passive voice (no "wird angeboten", "kann unterstützt werden", "is offered"). Do not merely restate that they need tutoring. Only Mathematik/Physik. ` +
+            `NEVER name a goal, exam, topic, class or date that is not in the listing. ` +
+            `Do NOT mention: ETH, years of experience, number of students, platform, Google Meet, group courses, prices, the city, other subjects. ` +
+            before +
+            `Do NOT start with ${banned}${f.typ === "en" || f.typ === "fr" ? "" : `, and do NOT start with the bare school level ("In der Primarschule", "In der Sekundarstufe", "In der Berufslehre", "In Mathematik")`}. ` +
+            `Open with the detail itself, e.g. the topic or exam as the first words ("Bruchrechnen übe ich …", "Für die ZAP …", "Bis zur Matura …", "Den Stoff der 2. Sek …", "Damit …"). ` +
+            `Use correct prepositions ("in der Primarschule", "am Gymnasium", "in der Berufslehre"). ` +
+            `Talk to this one person about what you do; never mention "die Schüler", "die Lernenden" or "students". ` +
+            (f.typ === "en" ? `Translate Swiss school terms into English (Primarschule = primary school, Sekundarstufe/Sek/Bezirksschule = secondary school); keep Gymnasium, Gymi, Matura, BM, Probezeit. ` : "") +
+            (f.typ === "fr" ? `Translate Swiss school terms into French (Primarschule = école primaire, Sekundarstufe = secondaire, Gymnasium = gymnase). ` : "") +
+            `Do NOT copy a style example; write a new sentence for THIS listing. ` +
+            `Style examples — each for a DIFFERENT listing; never copy their topics, exams or dates unless THIS listing has them: ${examples} ` +
+            `No em dashes, no brackets, no marketing fluff. Respond as JSON: {"detail":"<the detail you used, or none>","satz":"..."}`,
+        },
+        { role: "user", content: `Titel: ${listing.title}\nSchulstufe: ${listing.schulstufe}\nBeschreibung: ${listing.description.slice(0, 700)}` },
+        ...(retry
+          ? [
+              { role: "assistant" as const, content: JSON.stringify({ satz: retry.satz }) },
+              { role: "user" as const, content: `This sentence was rejected: ${retry.grund}. Write a new one that fixes exactly this, following all rules above.` },
+            ]
+          : []),
+      ],
+    });
+    const satz = (JSON.parse(resp.choices[0]?.message?.content ?? "") as { satz?: unknown }).satz;
+    return typeof satz === "string" ? satz.replace(/ß/g, "ss").replace(/\s+/g, " ").trim() : null;
+  } catch (err) {
+    pushLog(`⚠ OpenAI (persönlicher Satz v2): ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/** Zusaetzliche Pruefung fuer v2: kein Passiv, nicht der verbotene Anfang. null = in Ordnung. */
+export function stilProblemV2(satz: string): string | null {
+  if (/\b(wird|werden|kann|können)\b[^.]{0,60}\b(angeboten|unterstützt|gefördert|vermittelt|geboten|erklärt|geübt|aufgearbeitet|behandelt)\b/i.test(satz) || /\b(is|are|can be) (offered|provided|supported)\b/i.test(satz))
+    return "Passiv — bitte aktiv in der ersten Person";
+  // nur die blosse Stufe ("In der Primarschule …" stand am 7.11. vor 53 % der Saetze); "In der 5. Klasse …" bleibt erlaubt
+  if (/^(In der (Primarschule|Sekundarstufe|Sekundarschule|Oberstufe|Berufslehre|Erwachsenenbildung|Mathematik)|In Mathematik)\b/.test(satz.trim()))
+    return "beginnt mit „In der Primarschule/Sekundarstufe …“ — bitte mit dem konkreten Detail beginnen";
+  // auch die zweite Satzhaelfte zaehlt ("Au gymnase, j'explique la matière actuelle en petites étapes claires.")
+  if (Array.from(EXAMPLE_SENTENCES).some((e) => satz.trim().endsWith(e.slice(-40)))) return "kopiert ein Stilbeispiel — bitte einen eigenen Satz zu diesem Inserat";
+  if (/^(Da (Ihr Kind|du|Ihr Sohn|Ihre Tochter)|Since you|Comme vous|Puisque)\b/i.test(satz.trim())) return "beginnt mit „Da …“ — bitte anders beginnen";
+  return null;
+}
+
 /** Original Tutor24 personalisation — Schüler-Gesuche, Mathe/Physik. */
 export async function generateTutor24Message(
   profile: ListingProfile,
@@ -288,16 +437,22 @@ export async function generateTutor24Message(
 export async function personalSentenceChecked(
   listing: { title: string; schulstufe: string; description: string },
   form: Form,
-  pushLog: (s: string) => void
+  pushLog: (s: string) => void,
+  /** v2 (Standard seit 9.11.): ein konkretes Detail, aktiv, erste Person, wechselnde Anfaenge; v1 = alter Satz (nur Vergleich) */
+  stil: "v1" | "v2" = "v2"
 ): Promise<{ satz: string | null; versuche: number; gruende: string[] }> {
   const anrede = form.typ === "fr" ? "neutral" : form.typ;
   const child = form.typ === "eltern" ? form.nom : null;
+  const apiKey = process.env.OPENAI_API_KEY;
   const gruende: string[] = [];
   let last: { satz: string; grund: string } | undefined;
   for (let versuch = 1; versuch <= 2; versuch++) {
-    const satz = await generatePersonalSentence(listing, anrede, child, pushLog, last);
+    const satz =
+      stil === "v2"
+        ? apiKey ? await generateSentenceV2(apiKey, listing, form, pushLog, last) : null
+        : await generatePersonalSentence(listing, anrede, child, pushLog, last);
     if (!satz) return { satz: null, versuche: versuch, gruende: [...gruende, "KI lieferte nichts"] };
-    const grund = sentenceProblem(satz, form, listingText(listing));
+    const grund = sentenceProblem(satz, form, listingText(listing)) ?? (stil === "v2" ? stilProblemV2(satz) : null);
     if (!grund) return { satz, versuche: versuch, gruende };
     gruende.push(grund);
     last = { satz, grund };
