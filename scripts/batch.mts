@@ -61,6 +61,9 @@ if (!SEND) {
   saveBatch(batch);
   const soon = earliestNext();
   if (soon) await fail(tooSoonText(soon));
+  // Ohne Internet gar nicht erst anfangen (Hotspot)
+  const { hasInternet } = await import("../lib/tutor24-network");
+  if (!(await hasInternet())) await fail("Kein Internet (Hotspot?) — nicht gestartet.");
   const counts = emptyCounts();
   let stopp: string | null = null;
   try {
@@ -85,13 +88,19 @@ if (!SEND) {
     log(`✖ ${stopp}`);
   }
   // Faelliges Nachfassen (z. B. Kursangebot mit Anmeldeschluss): ohne tutor24-Aufruf aus der Vorschau-Liste.
-  const q = await sendQueue(loadCourses(), loadSettings());
-  for (const r of q.pending.filter(autoEligible)) {
-    batch.items.push({
-      id: r.conversation_id, art: "nachfassen", titel: r.name, stufe: r.stufe, ort: r.ortsname, link: r.link || `https://www.tutor24.ch/de/conversations/${r.conversation_id}?tab=sent`,
-      sprache: "de", anrede: r.anrede === "du" ? "du" : "unklar", block: r.course ? `Nachfassen: ${r.course.name}` : "Nachfassen",
-      kursId: r.course?.id ?? null, hint: null, satz: "-", text: r.text, problem: r.problem, ausgewaehlt: !r.problem,
-    });
+  // Hotspot weg (9.11. 13:24): ohne Datenbank kein Nachfassen in der Liste, aber kein Absturz mit haengendem Stand.
+  try {
+    const q = await sendQueue(loadCourses(), loadSettings());
+    for (const r of q.pending.filter(autoEligible)) {
+      batch.items.push({
+        id: r.conversation_id, art: "nachfassen", titel: r.name, stufe: r.stufe, ort: r.ortsname, link: r.link || `https://www.tutor24.ch/de/conversations/${r.conversation_id}?tab=sent`,
+        sprache: "de", anrede: r.anrede === "du" ? "du" : "unklar", block: r.course ? `Nachfassen: ${r.course.name}` : "Nachfassen",
+        kursId: r.course?.id ?? null, hint: null, satz: "-", text: r.text, problem: r.problem, ausgewaehlt: !r.problem,
+      });
+    }
+  } catch (err) {
+    stopp = [stopp, `Nachfassen nicht geladen: ${(err instanceof Error ? err.message : String(err)).split("\n").find((l) => /reach|fetch|timeout/i.test(l)) ?? "Datenbank nicht erreichbar"}`].filter(Boolean).join(" · ");
+    log(`✖ ${stopp}`);
   }
   batch.vorbereitetBis = lastRunEnd()?.toISOString() ?? null;
   batch.zustand = stopp && !batch.items.length ? "fehler" : "bereit";
