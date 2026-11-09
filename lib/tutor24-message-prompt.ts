@@ -4,7 +4,7 @@
  */
 
 import type { ListingProfile } from "./tutor24-messaging";
-import { CHILD_FORMS, listingText, sentenceProblem, type Form } from "./tutor24-course-offer";
+import { CHILD_FORMS, VERBOTEN_IM_SATZ, detailImInserat, nurStufe, listingText, sentenceProblem, type Form } from "./tutor24-course-offer";
 
 /** Fixed intro — always before {{LEVEL_INSERT}}; do not personalize this block. */
 export const TUTOR24_CREDENTIALS_BLOCK = `gerne unterstütze ich dich in Mathematik und der Physik, entweder online oder in Zürich, auf Deutsch oder Englisch. Ich unterrichte seit über 12 Jahren, habe an der ETH studiert und begleite aktuell mehr als 30 aktive Schüler, die meisten auf Gymi- oder Universitätsniveau. Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.`;
@@ -458,4 +458,107 @@ export async function personalSentenceChecked(
     last = { satz, grund };
   }
   return { satz: null, versuche: 2, gruende };
+}
+
+// ── Persoenlicher Satz v3 (9.11., Schalter satzV3, erst nach Omids OK) ────────
+
+/**
+ * v3: Die KI schreibt nur, wenn das Inserat ein konkretes Detail hat (Klasse, Thema, Pruefung, Termin, Schwierigkeit):
+ * hoechstens 20 Woerter, wie ein Lehrer im Chat. Sonst, oder wenn der Satz abgelehnt wird: Omids fester Satz der Stufe.
+ * Ohne bekannte Stufe: kein Satz ("").
+ */
+export async function personalSentenceV3(
+  listing: { title: string; schulstufe: string; description: string },
+  form: Form,
+  fest: string,
+  pushLog: (s: string) => void
+): Promise<{ satz: string; quelle: "ki" | "fest" | "ohne"; detail: string | null; gruende: string[] }> {
+  const mitFest = (gruende: string[], detail: string | null = null) => ({ satz: fest, quelle: fest ? ("fest" as const) : ("ohne" as const), detail, gruende });
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return mitFest(["kein OPENAI_API_KEY"]);
+  const inserat = listingText(listing);
+  const gruende: string[] = [];
+  let last: { satz: string; grund: string } | undefined;
+  let detail: string | null = null;
+  for (let versuch = 1; versuch <= 2; versuch++) {
+    const r = await generateSentenceV3(apiKey, listing, form, pushLog, last);
+    if (!r) return mitFest([...gruende, "KI lieferte nichts"]);
+    detail = r.detail && !/^(none|keins?|kein detail|-)$/i.test(r.detail.trim()) ? r.detail.trim() : null;
+    if (!detail || nurStufe(detail)) return mitFest([...gruende, detail ? `nur Stufe/Fach („${detail}“), kein Detail` : "kein konkretes Detail im Inserat"], detail);
+    if (!detailImInserat(detail, inserat)) return mitFest([...gruende, `Detail „${detail}“ steht nicht im Inserat`], detail);
+    const satz = r.satz.replace(/ß/g, "ss").replace(/\s+/g, " ").trim();
+    const grund =
+      (satz.split(" ").length > 20 ? "mehr als 20 Wörter" : null) ??
+      (satz.match(VERBOTEN_IM_SATZ) ? `verbotenes Wort „${satz.match(VERBOTEN_IM_SATZ)![0]}“` : null) ??
+      // Zweck-Anhang klingt nach KI: "…, um den Stoff besser zu bewältigen." / "to help you …"
+      (/,? um [^,.]{3,80} zu [a-zäöü]+\.$|,? (to help|in order to|so as to) [^.]+\.$|,? afin de [^.]+\.$/i.test(satz) ? "Anhang „um … zu …“ (klingt nach KI)" : null) ??
+      sentenceProblem(satz, form, inserat) ??
+      stilProblemV2(satz);
+    if (!grund) return { satz, quelle: "ki", detail, gruende };
+    gruende.push(grund);
+    last = { satz, grund };
+  }
+  return mitFest(gruende, detail);
+}
+
+async function generateSentenceV3(
+  apiKey: string,
+  listing: { title: string; schulstufe: string; description: string },
+  f: Form,
+  pushLog: (s: string) => void,
+  retry?: { satz: string; grund: string }
+): Promise<{ detail: string; satz: string } | null> {
+  const lang = f.typ === "en" ? "English" : f.typ === "fr" ? "French (formal vous)" : 'Swiss standard German (use "ss", never "ß")';
+  const anrede =
+    f.typ === "du"
+      ? `Address the student with "du". Never "Sie".`
+      : f.typ === "eltern"
+        ? `A parent wrote it. Formal "Sie". The child: "${f.nom}" (subject), "${f.akk}" (object, after "für"), "${f.dat}" (after "mit", "bei"). Never "du".`
+        : f.typ === "neutral"
+          ? `Formal "Sie", but do not mention a child. Never "du".`
+          : `Address the reader as "you"/"vous".`;
+  const examples = [
+    "Für die Gymiprüfung arbeite ich mit alten Prüfungen, damit die typischen Aufgaben vertraut werden.",
+    "Für die Matura üben wir mit alten Maturaaufgaben, damit die Prüfung keine Überraschungen bringt.",
+    "In der Sek kommt der Stoff schnell hintereinander, da hilft es, Lücken früh zu schliessen.",
+    "Für die Prüfung im Dezember gehen wir die Bruchrechnung nochmals von Grund auf durch.",
+  ];
+  try {
+    const { default: OpenAI } = await import("openai");
+    const client = new OpenAI({ apiKey });
+    const resp = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 120,
+      temperature: 0.5,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            `You are Omid, a math and physics tutor in Switzerland, writing ONE sentence in a tutor24 chat message, in ${lang}. ` +
+            `Step 1: find ONE concrete detail that is literally in the listing: a class or year (e.g. "5. Klasse", "2. Sek"), a math/physics topic (e.g. Bruchrechnen, Vektoren), an exam or test (Gymiprüfung, ZAP, Matura, BM-Prüfung, Probezeit), a date or deadline, or a stated difficulty (e.g. Dyskalkulie, Prüfungsangst, Lücken). ` +
+            `A school level alone ("Primarschule", "Sekundarstufe", "Gymnasium") or "needs help in math" is NOT a detail. If there is no detail, answer {"detail":"none","satz":""}. ` +
+            `Step 2: max 20 words. Pick up the detail and say what you concretely do with it, like a teacher writing in a chat, not like advertising. First person, present tense, active. ` +
+            `${anrede} Only mathematics/physics. Never invent anything that is not in the listing. ` +
+            `Never use these words: verständlich, klar, Konzepte, gezielt, unterstützen, fördern, regelmässig, optimal, individuell, nachhaltig, Verständnis, vertiefen, stärken, Herausforderungen ` +
+            `(nor their English/French equivalents: clear, concepts, targeted, support, foster, regular, individual, sustainable, understanding, deepen, strengthen, challenges). ` +
+            `Do not start with "Ich", "Gerne", "Da", "I", "Since", "Je serais". The message before already says "gerne unterstütze ich ... in Mathematik und Physik"; do not repeat it. ` +
+            `Style of Omid's own sentences (for other listings, never copy them): ${examples.join(" ")} ` +
+            `Respond as JSON: {"detail":"<the detail, quoted from the listing, or none>","satz":"..."}`,
+        },
+        { role: "user", content: `Titel: ${listing.title}\nSchulstufe: ${listing.schulstufe}\nBeschreibung: ${listing.description.slice(0, 700)}` },
+        ...(retry
+          ? [
+              { role: "assistant" as const, content: JSON.stringify({ satz: retry.satz }) },
+              { role: "user" as const, content: `Rejected: ${retry.grund}. Write a new sentence that fixes exactly this, following all rules.` },
+            ]
+          : []),
+      ],
+    });
+    const j = JSON.parse(resp.choices[0]?.message?.content ?? "") as { detail?: unknown; satz?: unknown };
+    return { detail: typeof j.detail === "string" ? j.detail : "none", satz: typeof j.satz === "string" ? j.satz : "" };
+  } catch (err) {
+    pushLog(`⚠ OpenAI (persönlicher Satz v3): ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
 }

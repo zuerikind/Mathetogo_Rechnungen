@@ -76,7 +76,18 @@ export async function POST(req: NextRequest) {
   if (!b || b.zustand !== "bereit" || !item || item.ergebnis) return NextResponse.json({ error: "Eintrag nicht (mehr) änderbar." }, { status: 400 });
   if (body.action === "select") item.ausgewaehlt = !!body.ausgewaehlt && !item.problem;
   else if (body.action === "remove") b.items = b.items.filter((i) => i !== item);
-  else if (body.action === "anrede") {
+  else if (body.action === "anrede" && item.art === "nachfassen") {
+    // Nachfassen: Anrede der Person in der Datenbank (Tutor24Lead), dann Text neu wie beim Senden (sendQueue)
+    if (body.anrede !== "du" && body.anrede !== "unklar") return NextResponse.json({ error: "Nachfassen: du oder Sie." }, { status: 400 });
+    const { prisma } = await import("@/lib/prisma");
+    const { sendQueue } = await import("@/lib/tutor24-followup-store");
+    const lead = await prisma.tutor24Lead.findFirst({ where: { conversationId: item.id } });
+    if (!lead) return NextResponse.json({ error: "Person nicht in der Datenbank." }, { status: 400 });
+    await prisma.tutor24Lead.update({ where: { id: lead.id }, data: body.anrede === "du" ? { anrede: "du", wer: "schueler" } : { anrede: "Sie", wer: lead.wer === "schueler" ? "unklar" : lead.wer } });
+    const row = (await sendQueue()).pending.find((r) => r.conversation_id === item.id);
+    if (!row) return NextResponse.json({ error: "Nachfassen nicht mehr fällig." }, { status: 400 });
+    Object.assign(item, { anrede: body.anrede, text: row.text, problem: row.problem, ausgewaehlt: !row.problem });
+  } else if (body.action === "anrede") {
     if (item.art !== "erst" || item.sprache !== "de" || !item.info || !ANREDE_WAHL.includes(body.anrede as AnredeWahl))
       return NextResponse.json({ error: "Anrede nur bei deutschen Erst-Nachrichten umstellbar." }, { status: 400 });
     // Neu zusammensetzen samt KI-Satz in der neuen Anrede (gleiche Pruefung wie beim Vorbereiten).

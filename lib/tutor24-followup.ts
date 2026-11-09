@@ -441,7 +441,67 @@ export type FollowupSettings = {
   nachfassNachTagen: number;
   /** Uhrzeiten der Durchgaenge (Windows-Aufgabe, Waechter), "HH:MM", je mind. 2 h auseinander */
   durchgaenge: string[];
+  /**
+   * Persoenlicher Satz v3 (9.11., erst nach Omids OK einschalten): KI nur bei konkretem Detail im Inserat,
+   * sonst der feste Satz der Stufe (festeSaetze). Aus = KI-Satz v2 wie bisher.
+   */
+  satzV3: boolean;
+  /** Feste Saetze pro Stufe (de/en/fr), auf /kurse unter Einstellungen bearbeitbar */
+  festeSaetze: Record<SatzStufe, { de: string; en: string; fr: string }>;
 };
+
+export type SatzStufe = "primar" | "sek" | "gymi" | "gymipruefung" | "bm" | "matura" | "uni";
+export const SATZ_STUFEN: Array<[SatzStufe, string]> = [
+  ["primar", "Primarschule"], ["sek", "Sek"], ["gymi", "Gymnasium/Kantonsschule"], ["gymipruefung", "Gymiprüfung"],
+  ["bm", "BM"], ["matura", "Matura"], ["uni", "Uni/FH"],
+];
+/** Omids Saetze vom 9.11.; en/fr sinngemaess uebersetzt (zur Freigabe) */
+export const DEFAULT_FESTE_SAETZE: FollowupSettings["festeSaetze"] = {
+  primar: {
+    de: "Gerade in der Primarschule lohnt es sich, die Grundlagen in Ruhe aufzubauen, bevor neuer Stoff dazukommt.",
+    en: "Especially at primary school, it pays to build the basics calmly before new material comes along.",
+    fr: "À l'école primaire, il vaut la peine de construire les bases tranquillement avant que la nouvelle matière n'arrive.",
+  },
+  sek: {
+    de: "In der Sek kommt der Stoff schnell hintereinander, da hilft es, Lücken früh zu schliessen.",
+    en: "At secondary school, new topics follow each other quickly, so it helps to close gaps early.",
+    fr: "Au secondaire, la matière avance vite, c'est pourquoi il aide de combler les lacunes tôt.",
+  },
+  gymi: {
+    de: "Am Gymnasium zieht das Tempo an, deshalb lohnt es sich, Unklarheiten gleich zu klären, statt sie mitzunehmen.",
+    en: "At the Gymnasium the pace picks up, so it pays to clear up questions right away instead of carrying them along.",
+    fr: "Au gymnase, le rythme s'accélère, c'est pourquoi il vaut la peine de clarifier les questions tout de suite plutôt que de les traîner.",
+  },
+  gymipruefung: {
+    de: "Für die Gymiprüfung arbeite ich mit alten Prüfungen, damit die typischen Aufgaben vertraut werden.",
+    en: "For the Gymnasium entrance exam, I work with past exams so that the typical tasks become familiar.",
+    fr: "Pour l'examen d'entrée au gymnase, je travaille avec d'anciens examens, afin que les exercices typiques deviennent familiers.",
+  },
+  bm: {
+    de: "In der BM ist der Stoff dicht, deshalb arbeiten wir mit den Aufgaben, die in den Prüfungen wirklich vorkommen.",
+    en: "In the BM the material is dense, so we work with the tasks that really come up in the exams.",
+    fr: "En maturité professionnelle, la matière est dense, c'est pourquoi nous travaillons avec les exercices qui reviennent vraiment aux examens.",
+  },
+  matura: {
+    de: "Für die Matura üben wir mit alten Maturaaufgaben, damit die Prüfung keine Überraschungen bringt.",
+    en: "For the Matura, we practise with past Matura exams so that the exam holds no surprises.",
+    fr: "Pour la maturité, nous nous entraînons avec d'anciens examens de maturité, afin que l'examen ne réserve pas de surprises.",
+  },
+  uni: {
+    de: "Im Studium schauen wir uns am besten direkt die Übungsblätter und alten Prüfungen an.",
+    en: "At university, it works best to look directly at the problem sheets and past exams.",
+    fr: "Pendant les études, le mieux est de regarder directement les séries d'exercices et les anciens examens.",
+  },
+};
+function mergeFesteSaetze(saved: unknown): FollowupSettings["festeSaetze"] {
+  const s = (saved ?? {}) as Partial<Record<SatzStufe, Partial<Record<"de" | "en" | "fr", unknown>>>>;
+  return Object.fromEntries(
+    SATZ_STUFEN.map(([k]) => [
+      k,
+      Object.fromEntries((["de", "en", "fr"] as const).map((l) => [l, typeof s[k]?.[l] === "string" && String(s[k]?.[l]).trim() ? String(s[k]?.[l]).trim() : DEFAULT_FESTE_SAETZE[k][l]])),
+    ])
+  ) as FollowupSettings["festeSaetze"];
+}
 
 /** ganze Zahl >= 0, sonst Standard */
 const count = (v: unknown, def: number) => (Number.isInteger(Number(v)) && Number(v) >= 0 && v !== null && v !== "" ? Number(v) : def);
@@ -459,6 +519,8 @@ export function mergeSettings(saved: Partial<FollowupSettings> | null | undefine
     autoNachfassLimit: Math.min(count(saved?.autoNachfassLimit, 15), MAX_SENDS_PER_DAY),
     nachfassNachTagen: Math.max(count(saved?.nachfassNachTagen, 4), MIN_AGE_DAYS),
     durchgaenge: (!timesProblem(saved?.durchgaenge) && normTimes(saved?.durchgaenge)) || DEFAULT_TIMES,
+    satzV3: saved?.satzV3 === true,
+    festeSaetze: mergeFesteSaetze(saved?.festeSaetze),
   };
 }
 

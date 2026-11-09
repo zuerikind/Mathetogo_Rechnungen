@@ -4,10 +4,11 @@ import { acquireTutor24Lock } from "./tutor24-lock";
 import { savedSession, signIn } from "./tutor24-session";
 import {
   personalSentenceChecked,
+  personalSentenceV3,
   generateTutor24Message,
   TUTOR24_MESSAGE_TEMPLATE,
 } from "./tutor24-message-prompt";
-import { assembleFirstMessage, planFirstMessage } from "./tutor24-course-offer";
+import { assembleFirstMessage, festerSatz, planFirstMessage, satzStufe } from "./tutor24-course-offer";
 import { courseSnapshot, parseJobText, type ListingInfo } from "./tutor24-followup";
 import { loadCourses, loadLog, loadSettings } from "./tutor24-followup-store";
 import { listingHash, recordSend, type LeadFields } from "./tutor24-leads";
@@ -74,10 +75,22 @@ export async function composeFirstMessage(
   const plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), now, sprache, anredeOverride);
   const f = plan.form;
   // Abgelehnt → zweiter Versuch mit dem Grund; erst danach der Ersatzsatz.
-  const ki = await personalSentenceChecked(info, f, log);
-  const personal = ki.satz;
-  if (ki.gruende.length) log(`KI-Satz: ${ki.versuche} Versuch(e), abgelehnt: ${ki.gruende.join("; ")}`);
-  const m = assembleFirstMessage(plan, personal);
+  const settings = loadSettings();
+  let personal: string | null;
+  let v3: "ki" | "fest" | "ohne" | null = null;
+  if (settings.satzV3) {
+    // v3 (nach Omids OK): KI nur mit konkretem Detail, sonst fester Satz der Stufe, ohne Stufe kein Satz
+    const r = await personalSentenceV3(info, f, festerSatz(satzStufe(plan.analysis, info), f, settings.festeSaetze), log);
+    personal = r.satz;
+    v3 = r.quelle;
+    if (r.gruende.length) log(`Satz v3: ${r.quelle}${r.detail ? ` (Detail „${r.detail}“)` : ""}, Gründe: ${r.gruende.join("; ")}`);
+  } else {
+    const ki = await personalSentenceChecked(info, f, log);
+    personal = ki.satz;
+    if (ki.gruende.length) log(`KI-Satz: ${ki.versuche} Versuch(e), abgelehnt: ${ki.gruende.join("; ")}`);
+  }
+  const assembled = assembleFirstMessage(plan, personal);
+  const m = v3 && assembled.satz === "ki" ? { ...assembled, satz: v3 } : assembled;
   log(
     `Anrede=${plan.addressee.wer}${plan.addressee.kind ? `/${plan.addressee.kind}` : ""} Stufe=${plan.analysis.kategorie}/${plan.analysis.kursgruppe || "-"} ` +
       `(${plan.analysis.sicherheit}) → ${m.course ? `Kurs „${m.course.name}“` : m.hint ? "Kurs-Hinweis" : plan.offer.kind === "nachfrage" ? `Nachfrage: ${plan.offer.grund}` : `kein Kurs (${plan.offer.kind === "nichts" ? plan.offer.grund : "Prüfung"})`}, Satz=${m.satz}`

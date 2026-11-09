@@ -8,6 +8,7 @@ import {
   LEVEL_LABEL,
   MAX_ACTIVE_COURSES,
   NO_COURSE,
+  SATZ_STUFEN,
   SUBJECTS,
   courseStats,
   followedUpIds,
@@ -813,6 +814,34 @@ export function Tutor24Followup({
                 <SettingRow title="Einzelunterricht" help="Vergleichspreis im Kursblock beider Nachrichten: „CHF … pro Lektion statt CHF … im Einzelunterricht“.">
                   <NumberField id="set-einzel" value={draft.settings.privatePricePerLesson} min={1} unit="CHF" disabled={running} onChange={(v) => setSettings({ privatePricePerLesson: v })} />
                 </SettingRow>
+              </div>
+              <div className={card}>
+                <h3 className="font-semibold text-gray-900">Persönlicher Satz</h3>
+                <SettingRow
+                  title="Satz v3"
+                  help="Aus: KI-Satz wie bisher (v2). Ein: KI-Satz nur, wenn das Inserat ein konkretes Detail hat (Klasse, Thema, Prüfung, Termin, Schwierigkeit), sonst der feste Satz der Stufe unten; ohne erkannte Stufe kein Satz."
+                >
+                  <Toggle id="set-satzv3" checked={draft.settings.satzV3} disabled={running} onChange={(v) => setSettings({ satzV3: v })} />
+                </SettingRow>
+                <div className="mt-3 space-y-4">
+                  {SATZ_STUFEN.map(([k, label]) => (
+                    <div key={k}>
+                      <p className="text-sm font-semibold text-gray-800">{label}</p>
+                      {(["de", "en", "fr"] as const).map((l) => (
+                        <label key={l} className="mt-1 flex items-start gap-2 text-xs text-gray-500">
+                          <span className="w-6 pt-2 uppercase">{l}</span>
+                          <textarea
+                            rows={2}
+                            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-800"
+                            value={draft.settings.festeSaetze[k][l]}
+                            disabled={running}
+                            onChange={(e) => setSettings({ festeSaetze: { ...draft.settings.festeSaetze, [k]: { ...draft.settings.festeSaetze[k], [l]: e.target.value } } })}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className={card}>
                 <h3 className="font-semibold text-gray-900">Automatik</h3>

@@ -16,6 +16,7 @@ const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock, earliestNext, lastRunEnd, tooSo
 const { loadCourses, loadSettings, sendQueue } = await import("../lib/tutor24-followup-store");
 const { runTutor24Messaging, sendBatchErst } = await import("../lib/tutor24");
 const { runFollowup } = await import("../lib/tutor24-followup-runner");
+const { agenturVerdacht } = await import("../lib/tutor24-course-offer");
 const { followupJobState } = await import("../lib/automation-state");
 const { prisma } = await import("../lib/prisma");
 
@@ -72,12 +73,13 @@ if (!SEND) {
       limit: n!, dryRun: true, mayContinue: () => null, counts, probe: [], notes: [], maxOpen: n! * 3,
       collect: ({ tutor24Id, href, info, plan, composed, language }) => {
         const course = composed.course;
+        const agentur = agenturVerdacht(info);
         batch.items.push({
           id: tutor24Id, art: "erst", titel: info.title, stufe: info.schulstufe, ort: plan.analysis.ortsname || info.ort || "",
           link: href, sprache: language, anrede: wahlOf(plan.addressee),
           block: course ? `Kursblock: ${course.name}` : composed.hint ? "Kurs-Hinweis" : "ohne",
           kursId: course?.id ?? null, hint: composed.hint, satz: composed.satz, text: composed.text, problem: composed.problem,
-          ausgewaehlt: !composed.problem, info,
+          ausgewaehlt: !composed.problem && !agentur, info, agentur,
         });
         log(`[${tutor24Id}] vorbereitet: ${info.title}${composed.problem ? ` — ⚠ ${composed.problem}` : ""}`);
       },

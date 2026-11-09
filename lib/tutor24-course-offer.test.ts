@@ -441,3 +441,26 @@ describe("Absaetze und Websites (9.11.)", () => {
     expect(ok).not.toContain("platform.mathetogo");
   });
 });
+
+describe("Satz v3, Agentur (9.11.)", () => {
+  it("feste Saetze, verbotene Woerter, blosse Stufe, ohne Satz, Agentur nur am Text", async () => {
+    const O = await import("./tutor24-course-offer");
+    const { DEFAULT_FESTE_SAETZE, mergeSettings } = await import("./tutor24-followup");
+    expect(mergeSettings({}).satzV3).toBe(false);
+    expect(mergeSettings({}).festeSaetze.matura.de).toBe(DEFAULT_FESTE_SAETZE.matura.de);
+    expect(O.festerSatz("primar", { typ: "en" }, DEFAULT_FESTE_SAETZE)).toBe(DEFAULT_FESTE_SAETZE.primar.en);
+    expect(O.festerSatz(null, { typ: "du" }, DEFAULT_FESTE_SAETZE)).toBe("");
+    expect(O.VERBOTEN_IM_SATZ.test("Ich erkläre die Konzepte verständlich.")).toBe(true);
+    expect(O.VERBOTEN_IM_SATZ.test("Für die Prüfung im Dezember gehen wir die Bruchrechnung nochmals durch.")).toBe(false);
+    expect(O.nurStufe("Primarschulstufe")).toBe(true);
+    expect(O.nurStufe("6. Klasse")).toBe(false);
+    for (const [, s] of Object.entries(DEFAULT_FESTE_SAETZE)) for (const l of ["de", "en", "fr"] as const) expect(O.formProblem(s[l], l)).toBeNull();
+    const f = { typ: "du" } as const;
+    const ohne = O.buildFirstMessage(f, "", null, 89, O.courseHint(f, 55));
+    expect(O.firstMessageProblem(ohne, f, null, 89, O.courseHint(f, 55))).toBeNull();
+    const info = (description: string, title = "Are you a tutor? We need you for Maths!") => ({ title, fach: "", schulstufe: "", description });
+    expect(O.agenturVerdacht(info("Altendorf. Tutoring needed. Maths. Individual lessons, at home."))).toBeNull();
+    expect(O.agenturVerdacht(info("Stellvertreter gesucht für eine Klasse im Gymnasium. Bildungszentrum Zürich."))).toMatch(/Lehrpersonen/);
+    expect(O.agenturVerdacht(info("Wir vermitteln Nachhilfe. Bewerben Sie sich mit Lebenslauf."))).toMatch(/Lehrpersonen/);
+  });
+});

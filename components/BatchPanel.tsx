@@ -7,6 +7,7 @@ type State = { batch: Batch | null; laeuft: boolean; pause: string | null; vorbe
 
 const btn = "rounded-lg px-3 py-1.5 text-sm font-semibold disabled:opacity-50";
 const SPRACHE = { de: "Deutsch", en: "Englisch", fr: "Französisch" } as const;
+const SATZ: Record<string, string> = { ki: "KI", fallback: "Ersatzsatz", fest: "fester Satz", ohne: "ohne" };
 const ANREDE: Record<string, string> = { du: "du (Schüler/in)", Tochter: "Eltern · Ihre Tochter", Sohn: "Eltern · Ihr Sohn", Kind: "Eltern · Ihr Kind", unklar: "unklar (Sie, neutral)" };
 
 /**
@@ -105,7 +106,7 @@ function Item({ it, locked, post }: { it: BatchItem; locked: boolean; post: (b: 
             <span className="font-semibold text-gray-900">{it.titel}</span>
             <span className="block text-xs text-gray-500">
               {it.art === "erst" ? "Erst-Nachricht" : "Nachfassen"} · Stufe: {it.stufe || "–"} · Ort: {it.ort || "–"} · {SPRACHE[it.sprache]} · {it.block}
-              {it.art === "erst" && ` · Satz: ${it.satz === "ki" ? "KI" : "Ersatzsatz"}`} ·{" "}
+              {it.art === "erst" && ` · Satz: ${SATZ[it.satz] ?? it.satz}`} ·{" "}
               <a href={it.link} target="_blank" rel="noreferrer" className="text-[#4A7FC1] underline">
                 {it.art === "erst" ? "Inserat" : "Chat"}
               </a>
@@ -121,8 +122,13 @@ function Item({ it, locked, post }: { it: BatchItem; locked: boolean; post: (b: 
                 </option>
               ))}
             </select>
+          ) : it.art === "nachfassen" ? (
+            <select className="rounded-lg border border-gray-300 px-2 py-1 text-xs" value={it.anrede === "du" ? "du" : "unklar"} disabled={fixed} onChange={(e) => post({ action: "anrede", id: it.id, anrede: e.target.value })}>
+              <option value="du">du</option>
+              <option value="unklar">Sie</option>
+            </select>
           ) : (
-            <span className="text-xs text-gray-500">{it.sprache === "de" ? ANREDE[it.anrede] : "Anrede: Sie/you/vous"}</span>
+            <span className="text-xs text-gray-500">Anrede: you/vous</span>
           )}
           {!fixed && (
             <button className="rounded-lg border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-600 hover:border-red-400 hover:text-red-700" onClick={() => post({ action: "remove", id: it.id })}>
@@ -132,6 +138,7 @@ function Item({ it, locked, post }: { it: BatchItem; locked: boolean; post: (b: 
         </div>
       </div>
       {it.problem && <p className="mt-2 text-sm font-semibold text-red-700">Nicht sendbar: {it.problem}</p>}
+      {it.agentur && <p className="mt-2 text-sm font-semibold text-amber-700">⚠ Möglicherweise Agentur: {it.agentur}</p>}
       {it.ergebnis && (
         <p className={`mt-2 text-sm font-semibold ${it.ergebnis === "gesendet" ? "text-green-700" : it.ergebnis === "fehler" ? "text-red-700" : "text-amber-700"}`}>
           {it.ergebnis === "gesendet" ? "✓ Gesendet" : it.ergebnis === "fehler" ? `Fehler: ${it.meldung}` : `Übersprungen: ${it.meldung}`}

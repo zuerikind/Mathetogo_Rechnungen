@@ -244,7 +244,10 @@ export function buildFirstMessage(f: Form, personal: string, course: Course | nu
     p.kontakt,
     p.infos,
     signature(f),
-  ].join("\n\n");
+  ]
+    // persoenlicher Satz leer (weggelassen): kein leerer Absatz
+    .filter((x) => x !== "")
+    .join("\n\n");
 }
 
 // ── Nachfassen ────────────────────────────────────────────────────────────────
@@ -363,7 +366,7 @@ const OTHER_SUBJECT = new RegExp(
   "(?<!\\p{L})(deutsch\\p{L}*|französisch\\p{L}*|englisch\\p{L}*|Latein|Chemie|Biologie|English|German|French|allemand|anglais|français|linguistique\\p{L}*)(?!\\p{L})",
   "iu"
 );
-const PLURAL_STUDENTS = new RegExp("(?<!\\p{L})(Schüler(innen)?|Lernenden|students|élèves)(?!\\p{L})", "iu");
+const PLURAL_STUDENTS = new RegExp("(?<!\\p{L})(Schüler(innen|n)?|Lernenden|students|élèves)(?!\\p{L})", "iu");
 /** deutsche Woerter und Schulbegriffe in einem englischen/franzoesischen Satz */
 const FOREIGN_GERMAN = new RegExp(
   "(?<!\\p{L})(der|die|das|und|ich|ist|wird|wenn|wir|mit|für|Primarschule|Primarklasse|Sekundarstufe|Sekundarschule|Oberstufe|Bezirksschule|Bezirkschule)(?!\\p{L})",
@@ -530,8 +533,9 @@ export function planFirstMessage(
  */
 export function assembleFirstMessage(plan: ReturnType<typeof planFirstMessage>, personal: string | null) {
   const fallback = fallbackSentence(plan.analysis, plan.form);
-  const kiOk = personal && !sentenceProblem(personal, plan.form, plan.inserat);
-  const sentence = kiOk ? personal! : fallback;
+  // "" = bewusst ohne persoenlichen Satz (v3: weder Detail noch Stufe)
+  const kiOk = personal === "" || (!!personal && !sentenceProblem(personal, plan.form, plan.inserat));
+  const sentence = kiOk ? (personal as string) : fallback;
   const variants: Array<{ course: Course | null; hint: string | null }> = plan.course
     ? [{ course: plan.course, hint: null }, { course: null, hint: plan.hint }]
     : [{ course: null, hint: plan.hint }];
@@ -539,7 +543,7 @@ export function assembleFirstMessage(plan: ReturnType<typeof planFirstMessage>, 
     for (const s of kiOk ? [sentence, fallback] : [fallback]) {
       const text = buildFirstMessage(plan.form, s, v.course, plan.privatePrice, v.hint);
       if (!firstMessageProblem(text, plan.form, v.course, plan.privatePrice, v.hint))
-        return { text, course: v.course, hint: v.hint, satz: s === fallback ? "fallback" : "ki", problem: null as string | null };
+        return { text, course: v.course, hint: v.hint, satz: s === "" ? "ohne" : s === fallback ? "fallback" : "ki", problem: null as string | null };
     }
   }
   const last = variants[variants.length - 1];
@@ -653,4 +657,60 @@ export function checkCourse(c: Course, all: Course[], privatePrice: number, now 
     }
   }
   return { errors, warnings };
+}
+
+// ── Persoenlicher Satz v3 (9.11., Schalter satzV3) ───────────────────────────
+
+/** Stufe fuer den festen Satz; null = unbekannt (dann ohne Satz). */
+export function satzStufe(a: Analysis, info: ListingInfo): import("./tutor24-followup").SatzStufe | null {
+  if (/uni|fh|hochschule|studium|eth/i.test(info.schulstufe)) return "uni";
+  if (a.kategorie === "matura") return "matura";
+  if (a.kategorie === "bm") return "bm";
+  if (a.kategorie === "gymivorbereitung") return "gymipruefung";
+  if (a.kategorie === "gymi") return "gymi";
+  if (a.kategorie === "sek") return "sek";
+  if (/primar/i.test(info.schulstufe)) return "primar";
+  return null;
+}
+
+/** Fester Satz der Stufe in der Sprache der Nachricht ("" = keine Stufe bekannt). Die Saetze sind anredefrei. */
+export function festerSatz(stufe: import("./tutor24-followup").SatzStufe | null, f: Form, saetze: FollowupSettings["festeSaetze"]): string {
+  if (!stufe) return "";
+  return saetze[stufe][f.typ === "en" ? "en" : f.typ === "fr" ? "fr" : "de"];
+}
+
+/** Woerter, die im persoenlichen Satz nach KI klingen (Omid, 9.11.): abgelehnt → fester Satz. */
+export const VERBOTEN_IM_SATZ = new RegExp(
+  "(?<!\\p{L})(verständlich\\p{L}*|klar|klare|klaren|klarer|klares|Konzept\\p{L}*|gezielt\\p{L}*|unterstütz\\p{L}*|förder\\p{L}*|regelmässig\\p{L}*|optimal\\p{L}*|individuell\\p{L}*|nachhaltig\\p{L}*|Verständnis|vertief\\p{L}*|stärk\\p{L}*|Herausforderung\\p{L}*|spezifisch\\p{L}*|verbesser\\p{L}*|Kenntnisse|Fähigkeit\\p{L}*|anschaulich\\p{L}*|Anforderung\\p{L}*" +
+    "|clear|clearly|concepts?|targeted|support\\p{L}*|foster\\p{L}*|regular\\p{L}*|individual\\p{L}*|sustainabl\\p{L}*|understanding|deepen\\p{L}*|strengthen\\p{L}*|challenges?|specific|improv\\p{L}*|skills?" +
+    "|clair\\p{L}*|ciblé\\p{L}*|soutien|soutenir|favoriser|régulier\\p{L}*|individuel\\p{L}*|durable\\p{L}*|compréhension|approfondir|renforcer|défis?)(?!\\p{L})",
+  "iu"
+);
+
+/** Blosse Stufe oder blosses Fach ist kein Detail ("Primarschulstufe", "Gymnasium", "Mathematik"). */
+const NUR_STUFE = new RegExp("(?<!\\p{L})(die|der|das|auf|im|in|am|für|und|primar\\p{L}*|sekundar\\p{L}*|sek|gymnasi\\p{L}*|gymi|kanti|kantonsschul\\p{L}*|oberstufe|mittelstufe|unterstufe|stufe|schule|schulstufe|berufs\\p{L}*|lehre|bms?|jeweiligen|stufen|mathematik|mathe|physik|nachhilfe|primary|secondary|school|maths?|lycée|secondaire|primaire|gymnase|mathématiques)(?!\\p{L})", "giu");
+export const nurStufe = (detail: string) => !detail.replace(NUR_STUFE, "").replace(new RegExp("[^\\p{L}\\d]+", "gu"), "").trim();
+
+/** Steht das genannte Detail wirklich im Inserat? (mind. ein Wort ab 4 Buchstaben oder eine Zahl) */
+export function detailImInserat(detail: string, inserat: string): boolean {
+  const t = inserat.toLowerCase();
+  const words = detail.toLowerCase().match(new RegExp("\\p{L}{4,}|\\d+", "gu")) ?? [];
+  return words.some((w) => t.includes(w));
+}
+
+// ── Agentur / Vermittler (9.11., nur Hinweis in der Batch-Vorschau, nie automatisch ausgeschlossen) ──
+
+/** tutor24 setzt diese Saetze selbst unter jedes Inserat: zaehlen nicht */
+const T24_BOILERPLATE = /Jetzt als Erster bewerben!|Neues Jobangebot!|je schneller sie sich bewerben[^.]*\.?/gi;
+/** Text wirbt Lehrpersonen an (Lohn, Bewerbung, "unsere Schueler", Schule sucht Stellvertretung) */
+const AGENTUR_TEXT =
+  /bewerben sie|ihre bewerbung|lebenslauf|\bcv\b|für unsere (schüler|kunden|familien)|unsere(n)? (schüler|kunden|familien)|nachhilfeschule|lernstudio|nachhilfeinstitut|agentur|wir vermitteln|vermittlung|team (verstärken|erweitern)|stellvertret|stellvetret|vikariat|klasse (übernehmen|unterrichten)|lehrperson gesucht|we are hiring|join our team|our (students|clients|families)|tutors? wanted for|apply now|send (us )?your cv|gmbh|bildungszentrum|(?<![a-zäöü])ag(?![a-zäöü])/i;
+/** null = sieht nach einer echten Anfrage aus; sonst der Grund fuer "⚠ Möglicherweise Agentur". */
+export function agenturVerdacht(info: ListingInfo): string | null {
+  const text = info.description.replace(T24_BOILERPLATE, " ");
+  const hit = text.match(AGENTUR_TEXT)?.[0];
+  if (hit) return `Text wirbt Lehrpersonen an („${hit}“)`;
+  // ponytail: Titel zaehlen nicht. tutor24 schreibt auch echte Elterninserate so ("Are you a tutor? We need you…",
+  // "Haben Sie Lust auf einen Nachhilfejob?"): am 9.11. waren alle 20 so betitelten Familien oder Lernende.
+  return null;
 }

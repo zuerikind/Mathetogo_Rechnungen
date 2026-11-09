@@ -41,6 +41,8 @@ export type BatchItem = {
   /** Pruefung vor dem Senden; != null → nicht sendbar */
   problem: string | null;
   ausgewaehlt: boolean;
+  /** "⚠ Möglicherweise Agentur": Grund (agenturVerdacht); dann ohne Haekchen, Omid entscheidet */
+  agentur?: string | null;
   /** nur erst: fuer Anrede umstellen und Lead-Daten beim Senden */
   info?: ListingInfo;
   ergebnis?: "gesendet" | "übersprungen" | "fehler";
