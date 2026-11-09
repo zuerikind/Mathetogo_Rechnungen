@@ -9,7 +9,7 @@ import { config } from "dotenv";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 config({ path: ".env.local" });
 const { readPreview, loadLeadInfo, FOLLOWUP_DIR } = await import("../lib/tutor24-followup-store");
-const { detectAddressee } = await import("../lib/tutor24-followup");
+const { detectAddressee, findDuForm } = await import("../lib/tutor24-followup");
 const { followupForm } = await import("../lib/tutor24-course-offer");
 const { prisma } = await import("../lib/prisma");
 
@@ -19,19 +19,59 @@ const cache: Record<string, { info?: { description?: string } | null }> = exists
 const leads = await loadLeadInfo();
 const rows = readPreview();
 const firstDu = new Date("2026-11-07T00:00:00Z");
+/**
+ * Regel (Omid, 9.11.): Es gilt die Anrede der letzten Nachricht, die die Person von mir bekommen hat.
+ * Wer schon ein Nachfassen (seit 28.10.) oder eine neue Erst-Nachricht bekam, bleibt dabei. Nur wer bisher
+ * ausschliesslich die alte du-Erst-Nachricht bekam (vor dem 7.11., nicht in Tutor24Message) und selbst schreibt
+ * (Inserat in der Ich-Form), wechselt auf du.
+ */
+const msgs = await prisma.tutor24Message.findMany({
+  select: { art: true, variante: true, text: true, sentAt: true, lead: { select: { conversationId: true } } },
+  orderBy: { sentAt: "asc" },
+});
+const lastMsg = new Map<string, (typeof msgs)[number]>();
+for (const m of msgs) if (m.lead.conversationId) lastMsg.set(m.lead.conversationId, m);
+const anredeOf = (m: (typeof msgs)[number]) =>
+  /\/du(\/|$)/.test(m.variante) ? "du" : /\/Sie(\/|$)/.test(m.variante) ? "Sie" : findDuForm(m.text) ? "du" : "Sie";
+const fmt = (d: Date) => d.toLocaleDateString("de-CH");
 const changes: { id: string; name: string; jetzt: string; grund: string }[] = [];
+const bleibt: { id: string; name: string; letzte: string }[] = [];
 for (const r of rows) {
   const lead = leads[r.conversation_id];
-  if (lead?.quelle === "erstnachricht" && lead.erstAm && new Date(lead.erstAm) >= firstDu) continue; // neue Erst-Nachricht: Anrede steht schon richtig
   const f = followupForm(lead, r.anrede);
   if (f.typ === "du" || f.typ === "en" || f.typ === "fr") continue;
   const text = cache[r.conversation_id]?.info?.description ?? "";
-  const ausText = text ? detectAddressee(text).wer : null;
-  const grund = lead?.wer === "schueler" ? "gespeichert: Schüler/in" : ausText === "schueler" ? "Inserat in der Ich-Form (Schüler/in)" : null;
-  if (grund) changes.push({ id: r.conversation_id, name: r.name, jetzt: f.typ === "eltern" ? "Eltern (Sie)" : "unklar (Sie)", grund });
+  const selbst = lead?.wer === "schueler" || (!!text && detectAddressee(text).wer === "schueler");
+  const m = lastMsg.get(r.conversation_id);
+  const jetzt = f.typ === "eltern" ? "Eltern (Sie)" : "unklar (Sie)";
+  if (m) {
+    const letzte = `${m.art === "erst" ? "Erst-Nachricht" : "Nachfassen"} am ${fmt(m.sentAt)}, ${anredeOf(m)}-Form`;
+    // letzte Nachricht war du, geplant waere jetzt Sie: zurueck auf du (unabhaengig von der Ich-Form)
+    if (anredeOf(m) === "du") changes.push({ id: r.conversation_id, name: r.name, jetzt, grund: `letzte Nachricht: ${letzte}` });
+    else if (selbst) bleibt.push({ id: r.conversation_id, name: r.name, letzte });
+    continue;
+  }
+  if (selbst) changes.push({ id: r.conversation_id, name: r.name, jetzt, grund: "letzte Nachricht: nur die alte Erst-Nachricht (vor 7.11., du-Form); Inserat in der Ich-Form" });
 }
-const md = `# Nachfassen: du statt Sie (Vorschlag ${new Date().toLocaleString("de-CH")})\n\n${changes.length} von ${rows.length} Personen in der Pipeline.\n\n| Name | Chat | heute | Grund |\n|---|---|---|---|\n` +
-  changes.map((c) => `| ${c.name} | https://www.tutor24.ch/de/conversations/${c.id}?tab=sent | ${c.jetzt} | ${c.grund} |`).join("\n") + "\n";
+const link = (id: string) => `https://www.tutor24.ch/de/conversations/${id}?tab=sent`;
+const md =
+  `# Nachfassen: Anrede nach der letzten Nachricht (${new Date().toLocaleString("de-CH")})
+
+` +
+  `## Wechsel auf du (${changes.length})
+
+| Name | Chat | Nachfassen heute | Grund |
+|---|---|---|---|
+` +
+  changes.map((c) => `| ${c.name} | ${link(c.id)} | ${c.jetzt} | ${c.grund} |`).join("\n") +
+  `
+
+## Bleibt bei Sie (${bleibt.length}) (letzte Nachricht in der Sie-Form)
+
+| Name | Chat | letzte Nachricht |
+|---|---|---|
+` +
+  bleibt.map((c) => `| ${c.name} | ${link(c.id)} | ${c.letzte} |`).join("\n") + "\n";
 writeFileSync(`${FOLLOWUP_DIR}/anrede_liste.md`, md);
 console.log(md);
 if (SAVE) {

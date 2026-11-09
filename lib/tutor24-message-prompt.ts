@@ -540,6 +540,12 @@ async function generateSentenceV3(
             `A school level alone ("Primarschule", "Sekundarstufe", "Gymnasium") or "needs help in math" is NOT a detail. If there is no detail, answer {"detail":"none","satz":""}. ` +
             `Step 2: max 20 words. Pick up the detail and say what you concretely do with it, like a teacher writing in a chat, not like advertising. First person, present tense, active. ` +
             `${anrede} Only mathematics/physics. Never invent anything that is not in the listing. ` +
+            `Do not copy words from the listing that are misspelled, abbreviated or unusual (e.g. "niveau" in lower case, "gymni", "Kusnacht"): use the correct, common term instead ("Niveau", "Gymnasium", "Küsnacht"). ` +
+            (f.typ === "en"
+              ? `In English, use English or generally understood terms (e.g. "probation period at the Gymnasium", "entrance exam", "secondary school"), never German school slang. `
+              : f.typ === "fr"
+                ? `In French, use French terms (e.g. "période d'essai au gymnase", "examen d'entrée", "secondaire"). `
+                : "") +
             `Never use these words: verständlich, klar, Konzepte, gezielt, unterstützen, fördern, regelmässig, optimal, individuell, nachhaltig, Verständnis, vertiefen, stärken, Herausforderungen ` +
             `(nor their English/French equivalents: clear, concepts, targeted, support, foster, regular, individual, sustainable, understanding, deepen, strengthen, challenges). ` +
             `Do not start with "Ich", "Gerne", "Da", "I", "Since", "Je serais". The message before already says "gerne unterstütze ich ... in Mathematik und Physik"; do not repeat it. ` +

@@ -369,9 +369,10 @@ const OTHER_SUBJECT = new RegExp(
 const PLURAL_STUDENTS = new RegExp("(?<!\\p{L})(Schüler(innen|n)?|Lernenden|students|élèves)(?!\\p{L})", "iu");
 /** deutsche Woerter und Schulbegriffe in einem englischen/franzoesischen Satz */
 const FOREIGN_GERMAN = new RegExp(
-  "(?<!\\p{L})(der|die|das|und|ich|ist|wird|wenn|wir|mit|für|Primarschule|Primarklasse|Sekundarstufe|Sekundarschule|Oberstufe|Bezirksschule|Bezirkschule)(?!\\p{L})",
+  "(?<!\\p{L})(der|die|das|und|ich|ist|wird|wenn|wir|mit|für|Primarschule|Primarklasse|Sekundarstufe|Sekundarschule|Oberstufe|Bezirksschule|Bezirkschule|Probezeit|Gymiprüfung|Gymi|gymni|Kanti|Sek|Aufnahmeprüfung)(?!\\p{L})",
   "iu"
 );
+const ABGESCHRIEBEN = new RegExp("(?<!\\p{L})(niveau|gymni|Kusnacht|Kussnacht|kanti|sek-stufe|matur(?!a|ität|\\p{L}))(?!\\p{L})", "u");
 const PLACEHOLDER = re("\\[|\\]|\\{|\\}|undefined|(?<!\\p{L})null(?!\\p{L})|NaN|TODO|KI-SATZ");
 
 /**
@@ -418,6 +419,9 @@ export function sentenceProblem(s: string, f: Form, inserat?: string): string | 
   // Einzelunterricht: nicht "mit den Schülern" / "I help students"
   if (PLURAL_STUDENTS.test(t)) return "spricht von Schülern/Lernenden statt von dieser Person";
   if ((f.typ === "en" || f.typ === "fr") && FOREIGN_GERMAN.test(t)) return "Satz nicht in der Sprache der Nachricht";
+  // aus dem Inserat abgeschriebene Fehl- oder Kurzformen (9.11.: "niveau Fachmaturität", "Kusnacht gymni")
+  const abgeschrieben = t.match(ABGESCHRIEBEN)?.[0];
+  if (abgeschrieben) return `übernimmt „${abgeschrieben}“ aus dem Inserat — bitte den korrekten Begriff`;
   if (inserat !== undefined) {
     const invented = GOALS.find((g) => g.satz.test(t) && !g.inserat.test(inserat));
     if (invented) return `nennt „${invented.name}“, das Inserat aber nicht`;

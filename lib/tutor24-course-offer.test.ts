@@ -464,3 +464,13 @@ describe("Satz v3, Agentur (9.11.)", () => {
     expect(O.agenturVerdacht(info("Wir vermitteln Nachhilfe. Bewerben Sie sich mit Lebenslauf."))).toMatch(/Lehrpersonen/);
   });
 });
+
+describe("keine abgeschriebenen Fehlformen (9.11.)", () => {
+  it("niveau, gymni, Probezeit im englischen Satz werden abgelehnt", async () => {
+    const { sentenceProblem } = await import("./tutor24-course-offer");
+    expect(sentenceProblem("Für die Ergänzungsprüfung niveau Fachmaturität arbeite ich an Funktionen.", { typ: "neutral" })).toMatch(/niveau/);
+    expect(sentenceProblem("Für die Ergänzungsprüfung der Fachmaturität arbeite ich an Funktionen.", { typ: "neutral" })).toBeNull();
+    expect(sentenceProblem("For your Probezeit at the Kusnacht gymni, I focus on the areas you find difficult.", { typ: "en" })).not.toBeNull();
+    expect(sentenceProblem("For the probation period at the Gymnasium, I go through the current topics with you.", { typ: "en" })).toBeNull();
+  });
+});

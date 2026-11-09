@@ -465,7 +465,7 @@ export const DEFAULT_FESTE_SAETZE: FollowupSettings["festeSaetze"] = {
   sek: {
     de: "In der Sek kommt der Stoff schnell hintereinander, da hilft es, Lücken früh zu schliessen.",
     en: "At secondary school, new topics follow each other quickly, so it helps to close gaps early.",
-    fr: "Au secondaire, la matière avance vite, c'est pourquoi il aide de combler les lacunes tôt.",
+    fr: "Au secondaire, la matière avance vite, il est donc utile de combler les lacunes tôt.",
   },
   gymi: {
     de: "Am Gymnasium zieht das Tempo an, deshalb lohnt es sich, Unklarheiten gleich zu klären, statt sie mitzunehmen.",
