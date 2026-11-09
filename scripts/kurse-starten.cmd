@@ -5,7 +5,11 @@ cd /d "%~dp0.."
 title Mathetogo App - localhost:3000 (Fenster offen lassen)
 
 rem Laeuft schon etwas auf Port 3000 (z. B. alter Entwicklungsserver)? Beenden.
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr /r /c:":3000 .*LISTENING"') do taskkill /PID %%p /T /F >nul 2>&1
+rem (netstat zeigt auf deutschem Windows "ABHOEREN" statt LISTENING, darum ueber PowerShell)
+for /f %%p in ('powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue).OwningProcess | Sort-Object -Unique"') do (
+  echo Beende alten Server auf Port 3000 (PID %%p^) ...
+  taskkill /PID %%p /T /F >nul 2>&1
+)
 
 for /f %%h in ('git rev-parse HEAD') do set STAND=%%h
 set GEBAUT=
