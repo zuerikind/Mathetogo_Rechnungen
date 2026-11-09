@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FESTE_SAETZE,
+  DEFAULT_ZWEI_SAETZE,
   analyzeListing,
   assignCourse,
   classifyListing,
@@ -409,9 +410,9 @@ describe("Antworten", () => {
 
 describe("Einstellungen", () => {
   it("Standard: Mathe und Physik, N = 20; altes Format wird ersetzt", () => {
-    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false, kursHinweis: false, kursPreisAb: 55, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4, durchgaenge: ["09:00", "17:00"], satzV3: false, festeSaetze: DEFAULT_FESTE_SAETZE });
-    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false, kursHinweis: false, kursPreisAb: 55, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4, durchgaenge: ["09:00", "17:00"], satzV3: false, festeSaetze: DEFAULT_FESTE_SAETZE });
-    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5, listingOnDemand: false, newFirstMessage: false, kursHinweis: false, kursPreisAb: 55, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4, durchgaenge: ["09:00", "17:00"], satzV3: false, festeSaetze: DEFAULT_FESTE_SAETZE });
+    expect(mergeSettings(null)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false, kursHinweis: false, kursPreisAb: 55, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4, durchgaenge: ["09:00", "17:00"], satzV3: false, festeSaetze: DEFAULT_FESTE_SAETZE, satzV4: false, zweiSaetze: DEFAULT_ZWEI_SAETZE });
+    expect(mergeSettings({ gymi: { enabled: true } } as never)).toEqual({ mySubjects: ["Mathe", "Physik"], recommendMin: 20, listingOnDemand: false, newFirstMessage: false, kursHinweis: false, kursPreisAb: 55, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4, durchgaenge: ["09:00", "17:00"], satzV3: false, festeSaetze: DEFAULT_FESTE_SAETZE, satzV4: false, zweiSaetze: DEFAULT_ZWEI_SAETZE });
+    expect(mergeSettings({ mySubjects: ["Chemie"], recommendMin: 5 })).toEqual({ mySubjects: ["Chemie"], recommendMin: 5, listingOnDemand: false, newFirstMessage: false, kursHinweis: false, kursPreisAb: 55, privatePricePerLesson: 89, autoErstLimit: 20, autoNachfassLimit: 15, nachfassNachTagen: 4, durchgaenge: ["09:00", "17:00"], satzV3: false, festeSaetze: DEFAULT_FESTE_SAETZE, satzV4: false, zweiSaetze: DEFAULT_ZWEI_SAETZE });
     expect(mergeSettings({ privatePricePerLesson: 95 }).privatePricePerLesson).toBe(95);
   });
 });

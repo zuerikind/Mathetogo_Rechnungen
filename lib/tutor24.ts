@@ -8,7 +8,7 @@ import {
   generateTutor24Message,
   TUTOR24_MESSAGE_TEMPLATE,
 } from "./tutor24-message-prompt";
-import { assembleFirstMessage, festerSatz, planFirstMessage, satzStufe } from "./tutor24-course-offer";
+import { assembleFirstMessage, festerSatz, festeZweiSaetze, planFirstMessage, satzStufe } from "./tutor24-course-offer";
 import { courseSnapshot, parseJobText, type ListingInfo } from "./tutor24-followup";
 import { loadCourses, loadLog, loadSettings } from "./tutor24-followup-store";
 import { listingHash, recordSend, type LeadFields } from "./tutor24-leads";
@@ -78,7 +78,13 @@ export async function composeFirstMessage(
   const settings = loadSettings();
   let personal: string | null;
   let v3: "ki" | "fest" | "ohne" | null = null;
-  if (settings.satzV3) {
+  if (settings.satzV4) {
+    // v4 (nach Omids OK): zwei Saetze (verstanden + Anpassung), ohne Detail die festen zwei Saetze der Stufe
+    const r = await personalSentenceV3(info, f, festeZweiSaetze(satzStufe(plan.analysis, info), f, settings.zweiSaetze), log, true);
+    personal = r.satz;
+    v3 = r.quelle;
+    if (r.gruende.length) log(`Zwei Sätze v4: ${r.quelle}${r.detail ? ` (Detail „${r.detail}“)` : ""}, Gründe: ${r.gruende.join("; ")}`);
+  } else if (settings.satzV3) {
     // v3 (nach Omids OK): KI nur mit konkretem Detail, sonst fester Satz der Stufe, ohne Stufe kein Satz
     const r = await personalSentenceV3(info, f, festerSatz(satzStufe(plan.analysis, info), f, settings.festeSaetze), log);
     personal = r.satz;

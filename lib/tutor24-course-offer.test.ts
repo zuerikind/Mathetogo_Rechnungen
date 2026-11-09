@@ -462,6 +462,7 @@ describe("Satz v3, Agentur (9.11.)", () => {
     expect(O.agenturVerdacht(info("Altendorf. Tutoring needed. Maths. Individual lessons, at home."))).toBeNull();
     expect(O.agenturVerdacht(info("Stellvertreter gesucht für eine Klasse im Gymnasium. Bildungszentrum Zürich."))).toMatch(/Lehrpersonen/);
     expect(O.agenturVerdacht(info("Wir vermitteln Nachhilfe. Bewerben Sie sich mit Lebenslauf."))).toMatch(/Lehrpersonen/);
+    expect(O.agenturVerdacht(info("Für unsere Lerngruppe suchen wir eine Lehrperson für 2 1/2 Arbeitstage (50-60%). Marktübliche Entlöhnung."))).toMatch(/Lehrpersonen/);
   });
 });
 
@@ -472,5 +473,31 @@ describe("keine abgeschriebenen Fehlformen (9.11.)", () => {
     expect(sentenceProblem("Für die Ergänzungsprüfung der Fachmaturität arbeite ich an Funktionen.", { typ: "neutral" })).toBeNull();
     expect(sentenceProblem("For your Probezeit at the Kusnacht gymni, I focus on the areas you find difficult.", { typ: "en" })).not.toBeNull();
     expect(sentenceProblem("For the probation period at the Gymnasium, I go through the current topics with you.", { typ: "en" })).toBeNull();
+  });
+});
+
+describe("Zwei Saetze v4 (9.11.)", () => {
+  it("alle festen Texte bestehen in jeder Anrede die Pruefung; ganze Nachricht mit gekuerztem 'Mir ist wichtig'", async () => {
+    const O = await import("./tutor24-course-offer");
+    const { DEFAULT_ZWEI_SAETZE, mergeSettings, SATZ_STUFEN } = await import("./tutor24-followup");
+    expect(mergeSettings({}).satzV4).toBe(false);
+    expect(O.satzAnzahl("Bis zum 14.11. bleibt Zeit. In der 5. Klasse fange ich bei den Brüchen an.")).toBe(2);
+    expect(O.satzAnzahl("Ein Satz.")).toBe(1);
+    const forms: import("./tutor24-course-offer").Form[] = [{ typ: "du" }, { typ: "eltern", ...O.CHILD_FORMS.Tochter }, { typ: "eltern", ...O.CHILD_FORMS.Sohn }, { typ: "eltern", ...O.CHILD_FORMS.Kind }, { typ: "neutral" }, { typ: "en" }, { typ: "fr" }];
+    for (const [k] of SATZ_STUFEN)
+      for (const f of forms) {
+        const s = O.festeZweiSaetze(k, f, DEFAULT_ZWEI_SAETZE);
+        expect(s, `${k}/${f.typ}`).not.toMatch(/\{|\}/);
+        expect(O.satzAnzahl(s), `${k}/${f.typ}: ${s}`).toBe(2);
+        expect(s.split(" ").length, s).toBeLessThanOrEqual(40);
+        expect(s.match(O.VERBOTEN_IM_SATZ)?.[0], s).toBeUndefined();
+        expect(O.sentenceProblem(s, f), `${k}/${f.typ}: ${s}`).toBeNull();
+        const hint = O.courseHint(f, 55);
+        const text = O.buildFirstMessage(f, s, null, 89, hint, true);
+        expect(O.firstMessageProblem(text, f, null, 89, hint), `${k}/${f.typ}`).toBeNull();
+        expect(text).not.toMatch(/Mir ist wichtig|It matters to me|Il me tient/);
+      }
+    expect(O.festeZweiSaetze("sek", { typ: "eltern", ...O.CHILD_FORMS.Sohn }, DEFAULT_ZWEI_SAETZE)).toContain("bei Ihrem Sohn hakt");
+    expect(O.festeZweiSaetze(null, { typ: "du" }, DEFAULT_ZWEI_SAETZE)).toBe("");
   });
 });

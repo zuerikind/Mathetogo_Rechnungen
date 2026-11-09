@@ -82,7 +82,7 @@ const CREDENTIALS =
 const LEHRMITTEL =
   "Für meinen Unterricht habe ich eigene Lehrmittel für die Gymi- und BM-Vorbereitung und alle Gymi- und BM-Stufen entwickelt. Zusätzlich habe ich die Lernplattform Mathetogo programmiert.";
 
-type Parts = { intro: string; credentials: string; lehrmittel: string; plattform: string; meet: string; wichtig: string; wichtigKurz: string; kontakt: string; infos: string };
+type Parts = { intro: string; credentials: string; lehrmittel: string; plattform: string; meet: string; wichtig: string; wichtigKurz: string; wichtigV4: string; kontakt: string; infos: string };
 
 function parts(f: Form): Parts {
   if (f.typ === "en")
@@ -98,6 +98,7 @@ function parts(f: Form): Parts {
       wichtig:
         "It matters to me that you not only understand the current material, but also learn how to approach mathematics in a sensible and lasting way. I also help with learning strategy, structure and motivation.",
       wichtigKurz: "It matters to me that you not only understand the current material, but learn to approach mathematics in a lasting way.",
+      wichtigV4: "Besides the material itself, I also help with learning strategy, structure and motivation.",
       kontakt: "If you are interested, feel free to contact me on WhatsApp to arrange a lesson (078 693 68 98).",
       infos: "More information: www.mathetogo.xyz",
     };
@@ -115,6 +116,7 @@ function parts(f: Form): Parts {
       wichtig:
         "Il me tient à cœur que la matière actuelle soit bien comprise et que l'on apprenne à aborder les mathématiques de manière réfléchie et durable. J'aide également pour la méthode de travail, l'organisation et la motivation.",
       wichtigKurz: "Il me tient à cœur que la matière actuelle soit bien comprise et que l'on apprenne à aborder les mathématiques de manière durable.",
+      wichtigV4: "En plus de la matière, j'aide également pour la méthode de travail, l'organisation et la motivation.",
       kontakt: "Pour convenir d'une leçon, vous pouvez me contacter par WhatsApp (078 693 68 98).",
       infos: "Plus d'informations : www.mathetogo.xyz",
     };
@@ -127,6 +129,7 @@ function parts(f: Form): Parts {
       meet: "Online-Lektionen finden über Google Meet statt. Ich erkläre den Stoff verständlich und visuell mit dem iPad, und nach jeder Lektion erhältst du die bearbeiteten Unterlagen, damit du alles nochmals in Ruhe nachvollziehen kannst.",
       wichtig: "Mir ist wichtig, dass du nicht nur den aktuellen Stoff verstehst, sondern auch lernst, wie man Mathematik sinnvoll und nachhaltig angeht. Dabei unterstütze ich dich auch in Bezug auf Lernstrategie, Struktur und Motivation.",
       wichtigKurz: "Mir ist wichtig, dass du nicht nur den aktuellen Stoff verstehst, sondern lernst, Mathematik nachhaltig anzugehen.",
+      wichtigV4: "Neben dem Stoff helfe ich dir auch bei Lernstrategie, Struktur und Motivation.",
       kontakt: "Wenn du deine Mathematikkenntnisse in einer ruhigen, unterstützenden Atmosphäre verbessern möchtest, melde dich gerne per WhatsApp für eine Terminvereinbarung (078 693 68 98).",
       infos: "Weitere Infos findest du hier: www.mathetogo.xyz",
     };
@@ -139,6 +142,7 @@ function parts(f: Form): Parts {
       meet: `Online-Lektionen finden über Google Meet statt. Ich erkläre den Stoff verständlich und visuell mit dem iPad, und nach jeder Lektion erhält ${f.nom} die bearbeiteten Unterlagen, damit sich alles nochmals in Ruhe nachvollziehen lässt.`,
       wichtig: `Mir ist wichtig, dass ${f.nom} nicht nur den aktuellen Stoff versteht, sondern auch lernt, wie man Mathematik sinnvoll und nachhaltig angeht. Dabei unterstütze ich ${f.akk} auch bei Lernstrategie, Struktur und Motivation.`,
       wichtigKurz: `Mir ist wichtig, dass ${f.nom} nicht nur den aktuellen Stoff versteht, sondern lernt, Mathematik nachhaltig anzugehen.`,
+      wichtigV4: `Neben dem Stoff helfe ich ${f.dat} auch bei Lernstrategie, Struktur und Motivation.`,
       kontakt: "Wenn Sie Interesse haben, melden Sie sich gerne per WhatsApp für eine Terminvereinbarung (078 693 68 98).",
       infos: "Weitere Infos finden Sie hier: www.mathetogo.xyz",
     };
@@ -150,6 +154,7 @@ function parts(f: Form): Parts {
     meet: "Online-Lektionen finden über Google Meet statt. Ich erkläre den Stoff verständlich und visuell mit dem iPad, und nach jeder Lektion gibt es die bearbeiteten Unterlagen, damit sich alles nochmals in Ruhe nachvollziehen lässt.",
     wichtig: "Mir ist wichtig, dass nicht nur der aktuelle Stoff verstanden wird, sondern auch ein sinnvoller und nachhaltiger Umgang mit Mathematik entsteht. Dabei helfe ich auch bei Lernstrategie, Struktur und Motivation.",
     wichtigKurz: "Mir ist wichtig, dass nicht nur der aktuelle Stoff sitzt, sondern auch ein nachhaltiger Umgang mit Mathematik entsteht.",
+    wichtigV4: "Neben dem Stoff helfe ich auch bei Lernstrategie, Struktur und Motivation.",
     kontakt: "Wenn Sie Interesse haben, melden Sie sich gerne per WhatsApp für eine Terminvereinbarung (078 693 68 98).",
     infos: "Weitere Infos finden Sie hier: www.mathetogo.xyz",
   };
@@ -231,7 +236,8 @@ export function insertHintBeforeClosing(text: string, hint: string): string {
   return paras.join("\n\n");
 }
 
-export function buildFirstMessage(f: Form, personal: string, course: Course | null, privatePrice: number, hint: string | null = null): string {
+/** v4 = zwei Saetze (satzV4): "Mir ist wichtig …" wiederholt sie sonst, darum die kurze Fassung (Vorschlag 9.11.). */
+export function buildFirstMessage(f: Form, personal: string, course: Course | null, privatePrice: number, hint: string | null = null, v4 = false): string {
   const p = parts(f);
   return [
     `${greeting(f)},`,
@@ -240,7 +246,7 @@ export function buildFirstMessage(f: Form, personal: string, course: Course | nu
     ...(course ? [courseBlock(course, privatePrice, sprache(f))] : hint ? [hint] : []),
     `${p.lehrmittel} ${p.plattform}`,
     p.meet,
-    course || hint ? p.wichtigKurz : p.wichtig,
+    v4 ? p.wichtigV4 : course || hint ? p.wichtigKurz : p.wichtig,
     p.kontakt,
     p.infos,
     signature(f),
@@ -527,7 +533,7 @@ export function planFirstMessage(
   const hint = settings.kursHinweis && !hintExcluded(info, analysis.kategorie) ? courseHint(form, settings.kursPreisAb) : null;
   return {
     analysis, addressee, form, offer, course, hint,
-    privatePrice: settings.privatePricePerLesson, inserat: listingText(info),
+    privatePrice: settings.privatePricePerLesson, inserat: listingText(info), v4: settings.satzV4,
   };
 }
 
@@ -545,13 +551,13 @@ export function assembleFirstMessage(plan: ReturnType<typeof planFirstMessage>, 
     : [{ course: null, hint: plan.hint }];
   for (const v of variants) {
     for (const s of kiOk ? [sentence, fallback] : [fallback]) {
-      const text = buildFirstMessage(plan.form, s, v.course, plan.privatePrice, v.hint);
+      const text = buildFirstMessage(plan.form, s, v.course, plan.privatePrice, v.hint, plan.v4);
       if (!firstMessageProblem(text, plan.form, v.course, plan.privatePrice, v.hint))
         return { text, course: v.course, hint: v.hint, satz: s === "" ? "ohne" : s === fallback ? "fallback" : "ki", problem: null as string | null };
     }
   }
   const last = variants[variants.length - 1];
-  const text = buildFirstMessage(plan.form, fallback, null, plan.privatePrice, last.hint);
+  const text = buildFirstMessage(plan.form, fallback, null, plan.privatePrice, last.hint, plan.v4);
   return { text, course: null, hint: last.hint, satz: "fallback", problem: firstMessageProblem(text, plan.form, null, plan.privatePrice, last.hint) };
 }
 
@@ -667,9 +673,10 @@ export function checkCourse(c: Course, all: Course[], privatePrice: number, now 
 
 /** Stufe fuer den festen Satz; null = unbekannt (dann ohne Satz). */
 export function satzStufe(a: Analysis, info: ListingInfo): import("./tutor24-followup").SatzStufe | null {
-  if (/uni|fh|hochschule|studium|eth/i.test(info.schulstufe)) return "uni";
   if (a.kategorie === "matura") return "matura";
   if (a.kategorie === "bm") return "bm";
+  // tutor24 schreibt "Berufslehre, Uni/FH und Erwachsenenbildung" auch fuer Lernende: Uni nur, wenn der Text es sagt
+  if (new RegExp("(?<!\\p{L})(uni|universität|fh|fachhochschule|hochschule|studium|epfl|university|université)(?!\\p{L})", "iu").test(`${info.title} ${info.description}`)) return "uni";
   if (a.kategorie === "gymivorbereitung") return "gymipruefung";
   if (a.kategorie === "gymi") return "gymi";
   if (a.kategorie === "sek") return "sek";
@@ -702,13 +709,23 @@ export function detailImInserat(detail: string, inserat: string): boolean {
   return words.some((w) => t.includes(w));
 }
 
+/** Feste zwei Saetze (v4) der Stufe in Sprache und Anrede der Nachricht ("" = keine Stufe bekannt). */
+export function festeZweiSaetze(stufe: import("./tutor24-followup").SatzStufe | null, f: Form, saetze: FollowupSettings["zweiSaetze"]): string {
+  if (!stufe) return "";
+  const t = saetze[stufe][f.typ === "eltern" ? "eltern" : f.typ];
+  return f.typ === "eltern" ? t.replace(/\{nom\}/g, f.nom).replace(/\{akk\}/g, f.akk).replace(/\{dat\}/g, f.dat) : t;
+}
+
+/** Saetze zaehlen (v4: genau zwei). Punkt nach Zahl ("5. Klasse", "14.11.") trennt nicht. */
+export const satzAnzahl = (t: string) => t.trim().split(new RegExp("(?<!\\d)[.!?]\\s+(?=\\p{Lu})", "u")).length;
+
 // ── Agentur / Vermittler (9.11., nur Hinweis in der Batch-Vorschau, nie automatisch ausgeschlossen) ──
 
 /** tutor24 setzt diese Saetze selbst unter jedes Inserat: zaehlen nicht */
 const T24_BOILERPLATE = /Jetzt als Erster bewerben!|Neues Jobangebot!|je schneller sie sich bewerben[^.]*\.?/gi;
 /** Text wirbt Lehrpersonen an (Lohn, Bewerbung, "unsere Schueler", Schule sucht Stellvertretung) */
 const AGENTUR_TEXT =
-  /bewerben sie|ihre bewerbung|lebenslauf|\bcv\b|für unsere (schüler|kunden|familien)|unsere(n)? (schüler|kunden|familien)|nachhilfeschule|lernstudio|nachhilfeinstitut|agentur|wir vermitteln|vermittlung|team (verstärken|erweitern)|stellvertret|stellvetret|vikariat|klasse (übernehmen|unterrichten)|lehrperson gesucht|we are hiring|join our team|our (students|clients|families)|tutors? wanted for|apply now|send (us )?your cv|gmbh|bildungszentrum|(?<![a-zäöü])ag(?![a-zäöü])/i;
+  /bewerben sie|ihre bewerbung|lebenslauf|\bcv\b|für unsere (schüler|kunden|familien)|unsere(n)? (schüler|kunden|familien)|nachhilfeschule|lernstudio|nachhilfeinstitut|agentur|wir vermitteln|vermittlung|team (verstärken|erweitern)|stellvertret|stellvetret|vikariat|klasse (übernehmen|unterrichten)|lehrperson gesucht|we are hiring|join our team|our (students|clients|families)|tutors? wanted for|apply now|send (us )?your cv|gmbh|bildungszentrum|entlöhnung|arbeitstage|pensum|lehrperson für|(?<![a-zäöü])ag(?![a-zäöü])/i;
 /** null = sieht nach einer echten Anfrage aus; sonst der Grund fuer "⚠ Möglicherweise Agentur". */
 export function agenturVerdacht(info: ListingInfo): string | null {
   const text = info.description.replace(T24_BOILERPLATE, " ");

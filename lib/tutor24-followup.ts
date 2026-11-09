@@ -448,6 +448,70 @@ export type FollowupSettings = {
   satzV3: boolean;
   /** Feste Saetze pro Stufe (de/en/fr), auf /kurse unter Einstellungen bearbeitbar */
   festeSaetze: Record<SatzStufe, { de: string; en: string; fr: string }>;
+  /**
+   * Zwei Saetze v4 (9.11. abends, erst nach Omids OK): 1. was ich aus dem Inserat verstanden habe, 2. wie ich den
+   * Unterricht daran anpasse (zusammen max. 40 Woerter). Ohne Detail: zweiSaetze der Stufe. Geht vor satzV3.
+   */
+  satzV4: boolean;
+  /** Feste zwei Saetze pro Stufe und Anrede; {nom}/{akk}/{dat} = "Ihre Tochter"/"Ihre Tochter"/"Ihrer Tochter" usw. */
+  zweiSaetze: Record<SatzStufe, Record<ZweiAnrede, string>>;
+};
+
+export type ZweiAnrede = "du" | "eltern" | "neutral" | "en" | "fr";
+export const ZWEI_ANREDEN: Array<[ZweiAnrede, string]> = [
+  ["du", "du"], ["eltern", "Eltern ({nom}/{akk}/{dat} = Ihre Tochter/Ihren Sohn/Ihrem Kind …)"], ["neutral", "neutral (Sie, ohne Kind)"], ["en", "Englisch"], ["fr", "Französisch"],
+];
+/** Entwurf vom 9.11. (Primar-Eltern und Sek-du von Omid), zur Freigabe */
+export const DEFAULT_ZWEI_SAETZE: Record<SatzStufe, Record<ZweiAnrede, string>> = {
+  primar: {
+    du: "Gerade in der Primarschule lohnt es sich, die Grundlagen in Ruhe aufzubauen. Ich schaue mir zuerst an, wo du stehst, und richte Stoff und Tempo der Lektionen danach aus.",
+    eltern: "Gerade in der Primarschule lohnt es sich, die Grundlagen in Ruhe aufzubauen. Ich schaue mir zuerst an, wo {nom} steht, und richte Stoff und Tempo der Lektionen danach aus.",
+    neutral: "Gerade in der Primarschule lohnt es sich, die Grundlagen in Ruhe aufzubauen. Ich schaue mir zuerst den aktuellen Stand an und richte Stoff und Tempo der Lektionen danach aus.",
+    en: "Especially at primary school, it pays to build the basics calmly. I first look at where things stand and then adjust the material and pace of the lessons to that.",
+    fr: "À l'école primaire, il vaut la peine de construire les bases tranquillement. Je regarde d'abord où en est l'élève, puis j'adapte la matière et le rythme des leçons.",
+  },
+  sek: {
+    du: "In der Sek kommt der Stoff schnell hintereinander. Darum schauen wir zuerst, wo es bei dir hakt, und bauen die Lektionen genau darauf auf.",
+    eltern: "In der Sek kommt der Stoff schnell hintereinander. Darum schaue ich zuerst, wo es bei {dat} hakt, und baue die Lektionen genau darauf auf.",
+    neutral: "In der Sek kommt der Stoff schnell hintereinander. Darum schaue ich zuerst, wo es hakt, und baue die Lektionen genau darauf auf.",
+    en: "At secondary school, new topics come quickly one after another. So I first look at where things get stuck and build the lessons around exactly that.",
+    fr: "Au secondaire, la matière avance vite. Je regarde donc d'abord où se trouvent les difficultés et je construis les leçons exactement là-dessus.",
+  },
+  gymi: {
+    du: "Am Gymnasium zieht das Tempo spürbar an. Wir beginnen mit den Themen aus dem Unterricht, die dir gerade Mühe machen, und arbeiten von dort aus weiter.",
+    eltern: "Am Gymnasium zieht das Tempo spürbar an. Ich beginne mit den Themen aus dem Unterricht, die {dat} gerade Mühe machen, und arbeite von dort aus weiter.",
+    neutral: "Am Gymnasium zieht das Tempo spürbar an. Ich beginne mit den Themen aus dem Unterricht, die gerade Mühe machen, und arbeite von dort aus weiter.",
+    en: "At the Gymnasium, the pace picks up noticeably. I start with the topics from class that are causing trouble right now and work on from there.",
+    fr: "Au gymnase, le rythme s'accélère nettement. Je commence par les thèmes du cours qui posent problème en ce moment et je continue à partir de là.",
+  },
+  gymipruefung: {
+    du: "Für die Gymiprüfung zählen vor allem die typischen Aufgaben. Wir lösen zuerst eine alte Prüfung, sehen so, was schon sitzt, und legen danach die Schwerpunkte fest.",
+    eltern: "Für die Gymiprüfung zählen vor allem die typischen Aufgaben. Ich löse mit {dat} zuerst eine alte Prüfung, sehe so, was schon sitzt, und lege danach die Schwerpunkte fest.",
+    neutral: "Für die Gymiprüfung zählen vor allem die typischen Aufgaben. Zuerst lösen wir eine alte Prüfung, sehen so, was schon sitzt, und legen danach die Schwerpunkte fest.",
+    en: "For the Gymnasium entrance exam, the typical tasks matter most. We first work through a past exam, see what is already solid and then set the priorities.",
+    fr: "Pour l'examen d'entrée au gymnase, ce sont surtout les exercices typiques qui comptent. Nous commençons par un ancien examen, voyons ce qui est acquis, puis fixons les priorités.",
+  },
+  bm: {
+    du: "In der BM ist der Stoff dicht und die Prüfungen kommen schnell. Wir arbeiten mit Aufgaben aus alten BM-Prüfungen und beginnen bei den Themen, die dir noch Mühe machen.",
+    eltern: "In der BM ist der Stoff dicht und die Prüfungen kommen schnell. Ich arbeite mit {dat} an Aufgaben aus alten BM-Prüfungen und beginne bei den Themen, die noch Mühe machen.",
+    neutral: "In der BM ist der Stoff dicht und die Prüfungen kommen schnell. Wir arbeiten mit Aufgaben aus alten BM-Prüfungen und beginnen bei den Themen, die noch Mühe machen.",
+    en: "In the BM, the material is dense and the exams come quickly. We work with tasks from past BM exams and start with the topics that still cause trouble.",
+    fr: "En maturité professionnelle, la matière est dense et les examens arrivent vite. Nous travaillons avec d'anciens examens et commençons par les thèmes qui posent encore problème.",
+  },
+  matura: {
+    du: "Für die Matura lohnt es sich, früh mit alten Maturaaufgaben zu üben. Wir schauen zuerst, welche Themen noch unsicher sind, und legen dort den Schwerpunkt.",
+    eltern: "Für die Matura lohnt es sich, früh mit alten Maturaaufgaben zu üben. Ich schaue mit {dat} zuerst, welche Themen noch unsicher sind, und lege dort den Schwerpunkt.",
+    neutral: "Für die Matura lohnt es sich, früh mit alten Maturaaufgaben zu üben. Ich schaue zuerst, welche Themen noch unsicher sind, und lege dort den Schwerpunkt.",
+    en: "For the Matura, it pays to practise early with past Matura exams. We first look at which topics are still shaky and put the focus there.",
+    fr: "Pour la maturité, il vaut la peine de s'entraîner tôt avec d'anciens examens. Nous regardons d'abord quels thèmes sont encore fragiles et mettons l'accent là-dessus.",
+  },
+  uni: {
+    du: "Im Studium arbeiten wir am besten direkt mit deinen Übungsblättern und alten Prüfungen. Wir beginnen dort, wo du gerade nicht weiterkommst, und richten das Tempo nach dem Semester aus.",
+    eltern: "Im Studium arbeite ich am besten direkt mit den Übungsblättern und alten Prüfungen. Ich beginne dort, wo es gerade nicht weitergeht, und richte das Tempo nach dem Semester aus.",
+    neutral: "Im Studium arbeite ich am besten direkt mit den Übungsblättern und alten Prüfungen. Ich beginne dort, wo es gerade nicht weitergeht, und richte das Tempo nach dem Semester aus.",
+    en: "At university, it works best to use your problem sheets and past exams directly. We start where you are currently stuck and set the pace according to the semester.",
+    fr: "Pendant les études, le mieux est de travailler directement avec vos séries d'exercices et vos anciens examens. Nous commençons là où vous bloquez et adaptons le rythme au semestre.",
+  },
 };
 
 export type SatzStufe = "primar" | "sek" | "gymi" | "gymipruefung" | "bm" | "matura" | "uni";
@@ -502,6 +566,15 @@ function mergeFesteSaetze(saved: unknown): FollowupSettings["festeSaetze"] {
     ])
   ) as FollowupSettings["festeSaetze"];
 }
+function mergeZweiSaetze(saved: unknown): FollowupSettings["zweiSaetze"] {
+  const s = (saved ?? {}) as Partial<Record<SatzStufe, Partial<Record<ZweiAnrede, unknown>>>>;
+  return Object.fromEntries(
+    SATZ_STUFEN.map(([k]) => [
+      k,
+      Object.fromEntries(ZWEI_ANREDEN.map(([a]) => [a, typeof s[k]?.[a] === "string" && String(s[k]?.[a]).trim() ? String(s[k]?.[a]).trim() : DEFAULT_ZWEI_SAETZE[k][a]])),
+    ])
+  ) as FollowupSettings["zweiSaetze"];
+}
 
 /** ganze Zahl >= 0, sonst Standard */
 const count = (v: unknown, def: number) => (Number.isInteger(Number(v)) && Number(v) >= 0 && v !== null && v !== "" ? Number(v) : def);
@@ -521,6 +594,8 @@ export function mergeSettings(saved: Partial<FollowupSettings> | null | undefine
     durchgaenge: (!timesProblem(saved?.durchgaenge) && normTimes(saved?.durchgaenge)) || DEFAULT_TIMES,
     satzV3: saved?.satzV3 === true,
     festeSaetze: mergeFesteSaetze(saved?.festeSaetze),
+    satzV4: saved?.satzV4 === true,
+    zweiSaetze: mergeZweiSaetze(saved?.zweiSaetze),
   };
 }
 

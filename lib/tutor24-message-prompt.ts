@@ -4,7 +4,7 @@
  */
 
 import type { ListingProfile } from "./tutor24-messaging";
-import { CHILD_FORMS, VERBOTEN_IM_SATZ, detailImInserat, nurStufe, listingText, sentenceProblem, type Form } from "./tutor24-course-offer";
+import { CHILD_FORMS, VERBOTEN_IM_SATZ, detailImInserat, nurStufe, listingText, satzAnzahl, sentenceProblem, type Form } from "./tutor24-course-offer";
 
 /** Fixed intro — always before {{LEVEL_INSERT}}; do not personalize this block. */
 export const TUTOR24_CREDENTIALS_BLOCK = `gerne unterstütze ich dich in Mathematik und der Physik, entweder online oder in Zürich, auf Deutsch oder Englisch. Ich unterrichte seit über 12 Jahren, habe an der ETH studiert und begleite aktuell mehr als 30 aktive Schüler, die meisten auf Gymi- oder Universitätsniveau. Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.`;
@@ -471,7 +471,9 @@ export async function personalSentenceV3(
   listing: { title: string; schulstufe: string; description: string },
   form: Form,
   fest: string,
-  pushLog: (s: string) => void
+  pushLog: (s: string) => void,
+  /** v4 (satzV4): zwei Saetze, zusammen max. 40 Woerter */
+  zwei = false
 ): Promise<{ satz: string; quelle: "ki" | "fest" | "ohne"; detail: string | null; gruende: string[] }> {
   const mitFest = (gruende: string[], detail: string | null = null) => ({ satz: fest, quelle: fest ? ("fest" as const) : ("ohne" as const), detail, gruende });
   const apiKey = process.env.OPENAI_API_KEY;
@@ -481,14 +483,17 @@ export async function personalSentenceV3(
   let last: { satz: string; grund: string } | undefined;
   let detail: string | null = null;
   for (let versuch = 1; versuch <= 2; versuch++) {
-    const r = await generateSentenceV3(apiKey, listing, form, pushLog, last);
+    const r = await (zwei ? generateZweiSaetze : generateSentenceV3)(apiKey, listing, form, pushLog, last);
     if (!r) return mitFest([...gruende, "KI lieferte nichts"]);
     detail = r.detail && !/^(none|keins?|kein detail|-)$/i.test(r.detail.trim()) ? r.detail.trim() : null;
     if (!detail || nurStufe(detail)) return mitFest([...gruende, detail ? `nur Stufe/Fach („${detail}“), kein Detail` : "kein konkretes Detail im Inserat"], detail);
     if (!detailImInserat(detail, inserat)) return mitFest([...gruende, `Detail „${detail}“ steht nicht im Inserat`], detail);
     const satz = r.satz.replace(/ß/g, "ss").replace(/\s+/g, " ").trim();
     const grund =
-      (satz.split(" ").length > 20 ? "mehr als 20 Wörter" : null) ??
+      (satz.split(" ").length > (zwei ? 40 : 20) ? `mehr als ${zwei ? 40 : 20} Wörter` : null) ??
+      (zwei && satzAnzahl(satz) !== 2 ? `${satzAnzahl(satz)} Sätze statt zwei` : null) ??
+      (zwei ? zweiStilProblem(satz) : null) ??
+      (zwei && ZWEI_SAETZE_BEISPIELE.some((e) => e.split(". ").some((teil) => satz.includes(teil.slice(-35)))) ? "kopiert ein Stilbeispiel" : null) ??
       (satz.match(VERBOTEN_IM_SATZ) ? `verbotenes Wort „${satz.match(VERBOTEN_IM_SATZ)![0]}“` : null) ??
       // Zweck-Anhang klingt nach KI: "…, um den Stoff besser zu bewältigen." / "to help you …"
       (/,? um [^,.]{3,80} zu [a-zäöü]+\.$|,? (to help|in order to|so as to) [^.]+\.$|,? afin de [^.]+\.$/i.test(satz) ? "Anhang „um … zu …“ (klingt nach KI)" : null) ??
@@ -567,4 +572,93 @@ async function generateSentenceV3(
     pushLog(`⚠ OpenAI (persönlicher Satz v3): ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
+}
+
+/** Omids Stilvorlagen fuer v4 (9.11.), nur als Stil, nie kopieren */
+export const ZWEI_SAETZE_BEISPIELE = [
+  "Bis zur Gymiprüfung im März bleibt noch gut Zeit. Ich würde mit Ihrem Sohn zuerst klären, welche Themen schon sitzen, und die Lektionen dann auf die Lücken ausrichten.",
+  "Sie schreiben, dass Textaufgaben Ihrem Kind besonders schwerfallen. Genau dort würde ich ansetzen und die Lektionen so aufbauen, dass es Schritt für Schritt sicherer wird.",
+  "Für die Matura arbeiten wir online mit alten Prüfungsaufgaben. Die Schwerpunkte legen wir danach fest, was bei dir noch unsicher ist.",
+];
+
+/** v4: Satz 1 = was im Inserat steht, Satz 2 = wie ich den Unterricht daran anpasse. */
+async function generateZweiSaetze(
+  apiKey: string,
+  listing: { title: string; schulstufe: string; description: string },
+  f: Form,
+  pushLog: (s: string) => void,
+  retry?: { satz: string; grund: string }
+): Promise<{ detail: string; satz: string } | null> {
+  const lang = f.typ === "en" ? "English" : f.typ === "fr" ? "French (formal vous)" : 'Swiss standard German (use "ss", never "ß")';
+  const anrede =
+    f.typ === "du"
+      ? `Address the student with "du". Never "Sie".`
+      : f.typ === "eltern"
+        ? `A parent wrote it. Formal "Sie". The child: "${f.nom}" (subject), "${f.akk}" (object, after "für"), "${f.dat}" (after "mit", "bei"). Never "du".`
+        : f.typ === "neutral"
+          ? `Formal "Sie", but do not mention a child (it is unclear who the lessons are for). Never "du".`
+          : `Address the reader as "you"/"vous".`;
+  try {
+    const { default: OpenAI } = await import("openai");
+    const client = new OpenAI({ apiKey });
+    const resp = await client.chat.completions.create({
+      model: process.env.ZWEI_SAETZE_MODEL || "gpt-4.1", // v4: gpt-4o-mini schrieb im Test 9.11. zu holprig
+      max_tokens: 200,
+      temperature: 0.6,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            `You are Omid, a math and physics tutor in Switzerland, writing TWO short sentences (together max 40 words) in a tutor24 chat message, in ${lang}. ` +
+            `Step 1: find what is concretely in the listing: a class or year, a goal, an exam or test (Gymiprüfung, ZAP, Matura, BM-Prüfung, Probezeit), a date or deadline, a stated difficulty (e.g. Textaufgaben, Bruchrechnen, Prüfungsangst, Lücken), or a wish (online or in person, how often). ` +
+            `A school level alone ("Primarschule", "Sekundarstufe", "Gymnasium") or "needs help in math" is NOT enough. If there is nothing concrete, answer {"detail":"none","satz":""}. ` +
+            `Sentence 1: what you understood from the listing, only what is really written there. ` +
+            `Sentence 2: how you adapt the lessons to it, concretely: where you start, what comes first, the pace, or which materials (e.g. old exams, the school's worksheets). Vary the wording, fit it to this listing. ` +
+            `Write like a teacher in a chat, not like advertising. ${anrede} Only mathematics/physics. Never invent anything that is not in the listing. ` +
+            `Sentence 1 names the concrete thing (e.g. "Bis zur Gymiprüfung im März …", "Sie schreiben, dass Textaufgaben …"), never a plain restatement like "Du suchst Nachhilfe" or "Ihr Kind braucht Hilfe". ` +
+            `Do not mention the town or whose home the lessons are at, and do not promise days, times or how often. "online" may be mentioned if the listing asks for it. ` +
+            `Do not copy words from the listing that are misspelled, abbreviated or unusual (e.g. "niveau" in lower case, "gymni", "Kusnacht"): use the correct, common term ("Niveau", "Gymnasium", "Küsnacht"). ` +
+            (f.typ === "en"
+              ? `In English, use English or generally understood terms (e.g. "probation period at the Gymnasium", "entrance exam", "secondary school"), never German school slang. `
+              : f.typ === "fr"
+                ? `In French, use French terms (e.g. "période d'essai au gymnase", "examen d'entrée", "secondaire"). `
+                : "") +
+            `Never use these words: verständlich, klar, Konzepte, gezielt, unterstützen, fördern, regelmässig, optimal, individuell, nachhaltig, Verständnis, vertiefen, stärken, Herausforderungen, spezifisch, verbessern, Anforderungen ` +
+            `(nor their English/French equivalents: clear, concepts, targeted, support, foster, regular, individual, sustainable, understanding, deepen, strengthen, challenges, specific, improve). ` +
+            `Do not start with "Ich", "Gerne", "Da", "I", "Since", "Je serais". Do not end with "um … zu …" / "to help …". The message before already says "gerne unterstütze ich ... in Mathematik und Physik"; do not repeat it. ` +
+            `Style of Omid's own sentences (for other listings, never copy them): ${ZWEI_SAETZE_BEISPIELE.join(" ")} ` +
+            `Respond as JSON: {"detail":"<the detail, quoted from the listing, or none>","satz":"<both sentences>"}`,
+        },
+        { role: "user", content: `Titel: ${listing.title}\nSchulstufe: ${listing.schulstufe}\nBeschreibung: ${listing.description.slice(0, 900)}` },
+        ...(retry
+          ? [
+              { role: "assistant" as const, content: JSON.stringify({ satz: retry.satz }) },
+              { role: "user" as const, content: `Rejected: ${retry.grund}. Write two new sentences that fix exactly this, following all rules.` },
+            ]
+          : []),
+      ],
+    });
+    const j = JSON.parse(resp.choices[0]?.message?.content ?? "") as { detail?: unknown; satz?: unknown };
+    return { detail: typeof j.detail === "string" ? j.detail : "none", satz: typeof j.satz === "string" ? j.satz : "" };
+  } catch (err) {
+    pushLog(`⚠ OpenAI (zwei Sätze v4): ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/** Zusaetzliche Ablehnungen fuer v4 (Test 9.11.: "identifizieren", "entsprechend gestalten", "um sicherzustellen", Ort verdreht). */
+const ZWEI_KI_WOERTER = new RegExp(
+  "(?<!\\p{L})(entsprechend\\p{L}*|identifizier\\p{L}*|sicherzustellen|sicherstell\\p{L}*|konzentrier\\p{L}*|benötig\\p{L}*|anbieten|gestalten|challeng\\p{L}*|ensure|tailor\\p{L}*|focus on|adapt\\p{L}* accordingly|en conséquence|assurer)(?!\\p{L})",
+  "iu"
+);
+export function zweiStilProblem(satz: string): string | null {
+  const w = satz.match(ZWEI_KI_WOERTER)?.[0];
+  if (w) return `klingt nach KI („${w}“)`;
+  if (new RegExp("(?<!\\p{L})um [^.]*zu", "iu").test(satz)) return "„um … zu …“ (klingt nach KI)";
+  // Ort, Zeiten, Haeufigkeit nicht zusagen und nicht verdrehen ("bei mir in Meggen", "1–2 Mal pro Woche in Allschwil")
+  if (/bei (mir|uns|Ihnen|dir) (in|zu Hause)|\d\s*(–|-|bis)?\s*\d?\s*(Mal|mal|x) (pro|in der) Woche|(at|in) my place|chez moi/i.test(satz)) return "sagt Ort oder Häufigkeit zu";
+  if (/^(Du suchst|Sie suchen|(Ihre?|Ihr) (Tochter|Sohn|Kind) (sucht|braucht)|Your child needs|You are looking|Vous cherchez)\b/i.test(satz.trim()))
+    return "beginnt mit „Du suchst / Sie suchen …“ — bitte mit dem konkreten Detail beginnen";
+  return null;
 }

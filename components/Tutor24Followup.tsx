@@ -9,6 +9,7 @@ import {
   MAX_ACTIVE_COURSES,
   NO_COURSE,
   SATZ_STUFEN,
+  ZWEI_ANREDEN,
   SUBJECTS,
   courseStats,
   followedUpIds,
@@ -836,6 +837,35 @@ export function Tutor24Followup({
                             value={draft.settings.festeSaetze[k][l]}
                             disabled={running}
                             onChange={(e) => setSettings({ festeSaetze: { ...draft.settings.festeSaetze, [k]: { ...draft.settings.festeSaetze[k], [l]: e.target.value } } })}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className={card}>
+                <h3 className="font-semibold text-gray-900">Zwei Sätze (v4)</h3>
+                <SettingRow
+                  title="Zwei Sätze v4"
+                  help="Ein: statt des persönlichen Satzes zwei kurze Sätze (zusammen höchstens 40 Wörter): was im Inserat steht, und wie ich den Unterricht daran anpasse. Ohne konkretes Detail die festen zwei Sätze unten. Geht vor Satz v3. „Mir ist wichtig …“ wird dann zu „Neben dem Stoff helfe ich … auch bei Lernstrategie, Struktur und Motivation.“"
+                >
+                  <Toggle id="set-satzv4" checked={draft.settings.satzV4} disabled={running} onChange={(v) => setSettings({ satzV4: v })} />
+                </SettingRow>
+                <p className="mt-2 text-xs text-gray-500">In der Eltern-Fassung: {"{nom}"} = Ihre Tochter / Ihr Sohn / Ihr Kind, {"{akk}"} = Ihre Tochter / Ihren Sohn / Ihr Kind, {"{dat}"} = Ihrer Tochter / Ihrem Sohn / Ihrem Kind.</p>
+                <div className="mt-3 space-y-4">
+                  {SATZ_STUFEN.map(([k, label]) => (
+                    <div key={k}>
+                      <p className="text-sm font-semibold text-gray-800">{label}</p>
+                      {ZWEI_ANREDEN.map(([a, aLabel]) => (
+                        <label key={a} className="mt-1 block text-xs text-gray-500">
+                          <span>{aLabel}</span>
+                          <textarea
+                            rows={2}
+                            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-800"
+                            value={draft.settings.zweiSaetze[k][a]}
+                            disabled={running}
+                            onChange={(e) => setSettings({ zweiSaetze: { ...draft.settings.zweiSaetze, [k]: { ...draft.settings.zweiSaetze[k], [a]: e.target.value } } })}
                           />
                         </label>
                       ))}
