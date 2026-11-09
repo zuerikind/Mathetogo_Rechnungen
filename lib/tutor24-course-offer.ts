@@ -73,14 +73,14 @@ const isDu = (f: Form) => f.typ === "du";
 /** Gruss und Signatur: in Erst-Nachricht und Nachfassen dieselben. */
 export const greeting = (f: Form) => (f.typ === "en" ? "Hello" : f.typ === "fr" ? "Bonjour" : isDu(f) ? "Hallo" : "Guten Tag");
 export const signature = (f: Form) =>
-  f.typ === "en" ? "Best regards\nOmid" : f.typ === "fr" ? "Meilleures salutations\nOmid" : "Liebi Grüess\nOmid";
+  f.typ === "en" ? "Best regards\nOmid" : f.typ === "fr" ? "Meilleures salutations\nOmid" : isDu(f) ? "Liebi Grüess\nOmid" : "Freundliche Grüsse\nOmid";
 
 // ── Erst-Nachricht ────────────────────────────────────────────────────────────
 
 const CREDENTIALS =
-  "Ich unterrichte seit über 12 Jahren, habe an der ETH studiert und begleite aktuell mehr als 30 aktive Schüler, die meisten auf Gymi- oder Universitätsniveau. Entsprechend gut kenne ich die Anforderungen, typischen Fehler und relevanten Themen über alle Stufen hinweg.";
+  "Ich unterrichte seit über 12 Jahren, habe an der ETH studiert und begleite aktuell mehr als 30 aktive Schüler, die meisten auf Gymi- oder Universitätsniveau.";
 const LEHRMITTEL =
-  "Für meinen Unterricht habe ich eigene Lehrmittel für die Gymivorbereitung, BM-Vorbereitung sowie verschiedene Gymi- und BM-Stufen entwickelt. Zusätzlich habe ich die Lernplattform Mathetogo programmiert (www.platform.mathetogo.xyz).";
+  "Für meinen Unterricht habe ich eigene Lehrmittel für die Gymi- und BM-Vorbereitung und alle Gymi- und BM-Stufen entwickelt. Zusätzlich habe ich die Lernplattform Mathetogo programmiert.";
 
 type Parts = { intro: string; credentials: string; lehrmittel: string; plattform: string; meet: string; wichtig: string; wichtigKurz: string; kontakt: string; infos: string };
 
@@ -89,9 +89,9 @@ function parts(f: Form): Parts {
     return {
       intro: "I would be happy to help with mathematics and physics, either online or in Zurich, in German or English.",
       credentials:
-        "I have been teaching for over 12 years, studied at ETH and currently teach more than 30 students, most of them at Gymnasium or university level. I know the requirements, typical mistakes and key topics at every level very well.",
+        "I have been teaching for over 12 years, studied at ETH and currently teach more than 30 students, most of them at Gymnasium or university level.",
       lehrmittel:
-        "I have developed my own teaching materials for Gymnasium entrance exam preparation, BM preparation and various Gymnasium and BM levels. I also programmed the learning platform Mathetogo (www.platform.mathetogo.xyz).",
+        "I have developed my own teaching materials for Gymnasium and BM preparation and for all Gymnasium and BM levels. I also programmed the learning platform Mathetogo.",
       plattform:
         "There you work with clearly structured content, solve targeted exercises, write down your solutions and receive personal feedback. Additional quizzes help to assess the current level realistically and make targeted progress.",
       meet: "Online lessons take place via Google Meet. I explain the material clearly and visually on the iPad, and after each lesson you receive the annotated notes so that everything can be reviewed calmly.",
@@ -106,9 +106,9 @@ function parts(f: Form): Parts {
     return {
       intro: "Je serais ravi de vous aider en mathématiques et en physique, en ligne ou à Zurich, en allemand ou en anglais.",
       credentials:
-        "J'enseigne depuis plus de 12 ans, j'ai étudié à l'ETH et j'accompagne actuellement plus de 30 élèves, la plupart au niveau du gymnase ou de l'université. Je connais donc bien les exigences, les erreurs typiques et les thèmes importants à tous les niveaux.",
+        "J'enseigne depuis plus de 12 ans, j'ai étudié à l'ETH et j'accompagne actuellement plus de 30 élèves, la plupart au niveau du gymnase ou de l'université.",
       lehrmittel:
-        "Pour mes cours, j'ai développé mon propre matériel pédagogique pour la préparation à l'examen d'entrée au gymnase, la préparation à la maturité professionnelle (BM) ainsi que pour différents niveaux du gymnase et de la BM. J'ai également programmé la plateforme d'apprentissage Mathetogo (www.platform.mathetogo.xyz).",
+        "Pour mes cours, j'ai développé mon propre matériel pédagogique pour la préparation au gymnase et à la maturité professionnelle (BM) ainsi que pour tous les niveaux du gymnase et de la BM. J'ai également programmé la plateforme d'apprentissage Mathetogo.",
       plattform:
         "On y travaille avec des contenus clairement structurés : exercices ciblés, démarche de résolution notée et retour personnalisé. Des quiz complémentaires permettent d'évaluer le niveau de manière réaliste et de progresser de façon ciblée.",
       meet: "Les cours en ligne ont lieu via Google Meet. J'explique la matière de manière claire et visuelle sur l'iPad, et après chaque leçon, vous recevez les notes annotées afin de pouvoir tout revoir tranquillement.",
@@ -198,14 +198,10 @@ export function courseHint(f: Form, preisAb: number): string {
   const head = "Neben dem Einzelunterricht biete ich über meine Kursplattform Academigo (www.academigo.xyz) auch Kurse in kleinen Gruppen an, ab CHF {preisAb} pro Lektion. Ein Kurs findet jeweils statt, sobald genügend Anmeldungen für eine Stufe zusammenkommen.";
   const text =
     f.typ === "en"
-      ? "In addition to private lessons, I also offer small-group courses through my course platform Academigo (www.academigo.xyz), starting at CHF {preisAb} per lesson. A course takes place once enough students have signed up for a given level. If you are interested, just let me know. I will check whether a suitable course is running or planned and get back to you."
+      ? "In addition to private lessons, I also offer small-group courses through my course platform Academigo (www.academigo.xyz), starting at CHF {preisAb} per lesson. A course takes place once enough students have signed up for a given level. If you are interested in a course, a short reply here in the chat is enough."
       : f.typ === "fr"
-        ? "En plus des cours particuliers, je propose également des cours en petits groupes via ma plateforme de cours Academigo (www.academigo.xyz), à partir de CHF {preisAb} par leçon. Un cours a lieu dès que le nombre d'inscriptions est suffisant pour un niveau. Si cela vous intéresse, n'hésitez pas à me le faire savoir. Je vérifierai si un cours adapté est en cours ou prévu, et je reviendrai vers vous."
-        : f.typ === "du"
-          ? `${head} Wenn du Interesse hast, gib mir kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei dir.`
-          : f.typ === "eltern"
-            ? `${head} Falls das für ${f.akk} interessant ist, geben Sie mir gerne kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei Ihnen.`
-            : `${head} Bei Interesse geben Sie mir gerne kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei Ihnen.`;
+        ? "En plus des cours particuliers, je propose également des cours en petits groupes via ma plateforme de cours Academigo (www.academigo.xyz), à partir de CHF {preisAb} par leçon. Un cours a lieu dès que le nombre d'inscriptions est suffisant pour un niveau. Si un cours vous intéresse, une courte réponse ici dans le chat suffit."
+        : `${head} Bei Interesse an einem Kurs genügt eine kurze Antwort hier im Chat.`;
   return text.replace("{preisAb}", String(preisAb));
 }
 
@@ -458,6 +454,13 @@ export function messageCheck(art: keyof typeof CHECK_RULES, text: string, f: For
   if (/\{[a-zäöü]+\}/.test(text)) return "nicht ersetzter Platzhalter";
   const form = formProblem(text, f.typ === "en" ? "en" : f.typ === "fr" ? "fr" : "de");
   if (form) return form;
+  // Jeder Absatz gleich getrennt (genau eine Leerzeile); einzelner Zeilenumbruch nur in der Signatur "Gruss\nOmid".
+  const sig = signature(f).replace(/ß/g, "ss");
+  if (!text.endsWith(`\n\n${sig}`) || /[^\n]\n[^\n]/.test(text.slice(0, -sig.length))) return "Absätze nicht einheitlich getrennt";
+  // Websites einheitlich ohne http(s)://, nur www.mathetogo.xyz und www.academigo.xyz
+  if (/https?:\/\//i.test(text)) return "Website mit http:// (bitte nur www.…)";
+  const site = (text.match(/[\w.-]*\.(xyz|ch|com|net|org)(?![\w-])/gi) ?? []).find((w) => w !== "www.mathetogo.xyz" && w !== "www.academigo.xyz");
+  if (site) return `unerwartete Website „${site}“`;
   if (!rule.kontaktErlaubt && containsForbiddenContact(text)) return "enthält Link, E-Mail oder Telefonnummer (im Nachfassen nicht erlaubt)";
   if (rule.bezugAufErstNachricht && !hasFollowupMarker(text)) return "Bezug auf die Erst-Nachricht fehlt";
   if (!text.startsWith(greeting(f))) return `beginnt nicht mit „${greeting(f)}“`;

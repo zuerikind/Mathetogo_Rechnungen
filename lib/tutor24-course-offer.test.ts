@@ -152,8 +152,10 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
     expect(n.startsWith("Guten Tag,\n\n")).toBe(true);
     expect(buildFollowup("angebot", { typ: "neutral" }, "Petra", matura(), 89).startsWith("Guten Tag,\n\n")).toBe(true);
     expect(buildFollowup("angebot", { typ: "du" }, "Lea", matura(), 89).startsWith("Hallo Lea,\n\n")).toBe(true);
-    expect(erst.endsWith("Liebi Grüess\nOmid")).toBe(true);
-    expect(n.endsWith("Liebi Grüess\nOmid")).toBe(true);
+    // Sie-Fassungen "Freundliche Grüsse", du "Liebi Grüess" (9.11.)
+    expect(erst.endsWith("Freundliche Grüsse\nOmid")).toBe(true);
+    expect(n.endsWith("Freundliche Grüsse\nOmid")).toBe(true);
+    expect(buildFollowup("angebot", { typ: "du" }, "Lea", matura(), 89).endsWith("Liebi Grüess\nOmid")).toBe(true);
     const block = courseBlock(matura(), 89);
     expect(erst).toContain(block);
     expect(n).toContain(block);
@@ -253,7 +255,7 @@ describe("Nachfassen: gleiche Bausteine, Bezug auf die Erst-Nachricht", () => {
     const withPhone = buildFollowup("angebot", eltern, "Petra", matura(), 89).replace("Bezahlt wird", "WhatsApp 078 693 68 98. Bezahlt wird");
     expect(messageCheck("nachfassen", withPhone, eltern, matura(), 89)).toMatch(/Telefonnummer/);
     // Nachfassen ohne Bezug auf die Erst-Nachricht oder mit falschem Kursblock
-    expect(messageCheck("nachfassen", "Guten Tag,\n\nNeues Angebot!\n\nLiebi Grüess\nOmid", eltern, null, 89)).toMatch(/Bezug/);
+    expect(messageCheck("nachfassen", "Guten Tag,\n\nNeues Angebot!\n\nFreundliche Grüsse\nOmid", eltern, null, 89)).toMatch(/Bezug/);
     expect(messageCheck("nachfassen", buildFollowup("angebot", eltern, "", matura(), 89), eltern, matura({ pricePerLesson: 60 }), 89)).toMatch(/wortgleich/);
   });
 
@@ -330,11 +332,11 @@ describe("Kurs-Hinweis (Academigo, Entscheid 6.11.)", () => {
   const HEAD = "Neben dem Einzelunterricht biete ich über meine Kursplattform Academigo (www.academigo.xyz) auch Kurse in kleinen Gruppen an, ab CHF 60 pro Lektion. Ein Kurs findet jeweils statt, sobald genügend Anmeldungen für eine Stufe zusammenkommen.";
 
   it("Bausteine wortgleich je Anrede und Sprache, Preis aus der Einstellung", () => {
-    expect(courseHint({ typ: "du" }, 60)).toBe(`${HEAD} Wenn du Interesse hast, gib mir kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei dir.`);
-    expect(courseHint(formFor({ wer: "eltern", anrede: "Sie", kind: "Sohn" }), 60)).toBe(
-      `${HEAD} Falls das für Ihren Sohn interessant ist, geben Sie mir gerne kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei Ihnen.`
-    );
-    expect(courseHint({ typ: "neutral" }, 60)).toBe(`${HEAD} Bei Interesse geben Sie mir gerne kurz Bescheid. Ich prüfe dann, ob ein passender Kurs läuft oder geplant ist, und melde mich bei Ihnen.`);
+    // Kuerzung A (9.11.): eine Aufforderung, gleich in allen deutschen Fassungen
+    const tail = " Bei Interesse an einem Kurs genügt eine kurze Antwort hier im Chat.";
+    expect(courseHint({ typ: "du" }, 60)).toBe(HEAD + tail);
+    expect(courseHint(formFor({ wer: "eltern", anrede: "Sie", kind: "Sohn" }), 60)).toBe(HEAD + tail);
+    expect(courseHint({ typ: "neutral" }, 60)).toBe(HEAD + tail);
     expect(courseHint({ typ: "en" }, 60)).toMatch(/^In addition to private lessons, I also offer small-group courses through my course platform Academigo \(www\.academigo\.xyz\), starting at CHF 60 per lesson\./);
     expect(courseHint({ typ: "fr" }, 60)).toMatch(/via ma plateforme de cours Academigo \(www\.academigo\.xyz\), à partir de CHF 60 par leçon\./);
     for (const f of [{ typ: "du" }, { typ: "neutral" }, { typ: "en" }, { typ: "fr" }] as const) expect(courseHint(f, 60)).not.toMatch(/https?:|\{/);
@@ -420,5 +422,22 @@ describe("Formfehler vor dem Senden (9.11.)", () => {
       const t = buildFirstMessage(f, "Beim Bruchrechnen setze ich bei den Grundlagen an.", null, 89, courseHint(f, 55));
       expect(formProblem(t, f.typ === "en" ? "en" : f.typ === "fr" ? "fr" : "de")).toBeNull();
     }
+  });
+});
+
+describe("Absaetze und Websites (9.11.)", () => {
+  it("jeder Absatz gleich getrennt, Websites ohne http", async () => {
+    const { buildFirstMessage, courseHint, firstMessageProblem } = await import("./tutor24-course-offer");
+    const f = { typ: "eltern", nom: "Ihre Tochter", akk: "Ihre Tochter", dat: "Ihrer Tochter" } as const;
+    const hint = courseHint(f, 55);
+    const ok = buildFirstMessage(f, "Den Stoff der 5. Klasse gehe ich mit Ihrer Tochter durch.", null, 89, hint);
+    expect(firstMessageProblem(ok, f, null, 89, hint)).toBeNull();
+    const nl = String.fromCharCode(10);
+    expect(ok.split(nl + nl).length).toBe(10);
+    const einzeln = ok.replace(nl + nl + "Den Stoff", nl + "Den Stoff");
+    expect(firstMessageProblem(einzeln, f, null, 89, hint)).toMatch(/Absätze/);
+    const http = ok.replace("hier: www.mathetogo.xyz", "hier: http://www.mathetogo.xyz");
+    expect(firstMessageProblem(http, f, null, 89, hint)).toMatch(/http/);
+    expect(ok).not.toContain("platform.mathetogo");
   });
 });
