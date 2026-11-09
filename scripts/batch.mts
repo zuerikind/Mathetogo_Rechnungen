@@ -55,6 +55,13 @@ const fail = async (msg: string) => {
   process.exit(0);
 };
 
+// Speicher vor dem Browserstart (Vorbereiten und Senden)
+const { speicherProblem } = await import("../lib/tutor24-batch");
+const zuWenig = speicherProblem();
+if (zuWenig) {
+  await notify(`🧠 Batch nicht gestartet. ${zuWenig}`);
+  await fail(zuWenig);
+}
 const pause = activePause(readPassLog(50));
 if (pause) await fail(`${RATE_LIMIT_TEXT} Pause bis ${fmtZurich(pause)}.`);
 

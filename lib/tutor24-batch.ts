@@ -6,7 +6,9 @@
  * Senden darf direkt danach, solange seit dem Vorbereiten kein anderer Lauf war und hoechstens SEND_WITHIN_MIN vergangen sind.
  * Sonst gilt wieder der normale Abstand (dann neu vorbereiten).
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { freemem, totalmem } from "node:os";
 import { join } from "node:path";
 import { FOLLOWUP_DIR } from "./tutor24-followup-store";
 import type { Addressee, ListingInfo } from "./tutor24-followup";
@@ -83,4 +85,25 @@ export function sendBlock(b: Batch | null, now: Date, lastRunEnd: Date | null, e
   return sameRun
     ? `Vorbereitet vor mehr als ${SEND_WITHIN_MIN} min — bitte neu vorbereiten (frühestens ${earliest.toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" })}).`
     : `Seit dem Vorbereiten lief ein anderer Lauf. Nächster Lauf frühestens um ${earliest.toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" })}.`;
+}
+
+/** Mindestens so viel Arbeitsspeicher frei (verfuegbar), bevor ein Batch-Lauf den Browser startet (9.11.: Dev-Server wegen Speicher beendet). */
+export const MIN_FREI_GB = 1.5;
+
+/** null = genug frei; sonst Meldung mit den Programmen, die am meisten brauchen. */
+export function speicherProblem(freiBytes = freemem(), gesamtBytes = totalmem()): string | null {
+  const gb = (b: number) => (b / 2 ** 30).toFixed(1);
+  if (freiBytes / 2 ** 30 >= MIN_FREI_GB) return null;
+  let top = "";
+  try {
+    top = execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command",
+        "Get-Process | Group-Object ProcessName | ForEach-Object { '{0} {1:N1} GB' -f $_.Name, (($_.Group | Measure-Object WorkingSet64 -Sum).Sum/1GB) } | Sort-Object { [double](($_ -split ' ')[-2]) } -Descending | Select-Object -First 5"],
+      { encoding: "utf8", timeout: 15_000 }
+    ).trim().split(/\r?\n/).join(", ");
+  } catch {
+    // Liste ist Beiwerk
+  }
+  return `Zu wenig Arbeitsspeicher frei: ${gb(freiBytes)} von ${gb(gesamtBytes)} GB (nötig ${MIN_FREI_GB} GB). ${top ? `Am meisten brauchen: ${top}. ` : ""}Bitte etwas schliessen (z. B. Chrome-Tabs, Cursor) und nochmals versuchen.`;
 }

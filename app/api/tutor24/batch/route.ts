@@ -3,7 +3,7 @@ import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { ANREDE_WAHL, BATCH_MAX, addresseeFor, loadBatch, saveBatch, sendBlock, type AnredeWahl } from "@/lib/tutor24-batch";
+import { ANREDE_WAHL, BATCH_MAX, addresseeFor, loadBatch, saveBatch, sendBlock, speicherProblem, type AnredeWahl } from "@/lib/tutor24-batch";
 import { FOLLOWUP_DIR } from "@/lib/tutor24-followup-store";
 import { earliestNext, lastRunEnd, pidAlive, readTutor24Lock, tooSoonText, AUTOPILOT_LOCK_PATH } from "@/lib/tutor24-lock";
 import { RATE_LIMIT_TEXT, activePause, fmtZurich, readPassLog } from "@/lib/tutor24-autopilot";
@@ -20,12 +20,14 @@ function state() {
   const now = new Date();
   const pause = activePause(readPassLog(50), now);
   const earliest = earliestNext(now);
+  // nur pruefen, wenn gerade nichts laeuft (der laufende Batch braucht den Speicher selbst)
+  const speicher = laeuft ? null : speicherProblem();
   return {
     batch: b && !laeuft && (b.zustand === "vorbereiten" || b.zustand === "sendet") ? { ...b, zustand: "fehler" as const, fehler: b.fehler ?? "Lauf unerwartet beendet (siehe Protokoll unten)." } : b,
     laeuft,
     pause: pause ? `${RATE_LIMIT_TEXT} Pause bis ${fmtZurich(pause)}.` : null,
-    vorbereitenGesperrt: pause ? "429-Pause" : earliest ? tooSoonText(earliest) : readTutor24Lock() || readTutor24Lock(AUTOPILOT_LOCK_PATH) ? "Es läuft gerade ein anderer tutor24-Lauf." : null,
-    sendenGesperrt: pause ? "429-Pause" : sendBlock(b, now, lastRunEnd(), earliest),
+    vorbereitenGesperrt: speicher ?? (pause ? "429-Pause" : earliest ? tooSoonText(earliest) : readTutor24Lock() || readTutor24Lock(AUTOPILOT_LOCK_PATH) ? "Es läuft gerade ein anderer tutor24-Lauf." : null),
+    sendenGesperrt: speicher ?? (pause ? "429-Pause" : sendBlock(b, now, lastRunEnd(), earliest)),
   };
 }
 
