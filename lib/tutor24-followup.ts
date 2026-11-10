@@ -498,6 +498,13 @@ export const DEFAULT_ZWEI_SAETZE: Record<SatzStufe, Record<ZweiAnrede, string>> 
     en: "In the BM, the material is dense and the exams come quickly. We work with tasks from past BM exams and start with the topics that still cause trouble.",
     fr: "En maturité professionnelle, la matière est dense et les examens arrivent vite. Nous travaillons avec d'anciens examens et commençons par les thèmes qui posent encore problème.",
   },
+  fms: {
+    du: "An der FMS kommt Mathe neben den vielen anderen Fächern schnell zu kurz. Wir beginnen mit den Themen, die dir gerade Mühe machen, und nehmen für die Fachmatura alte Prüfungsaufgaben dazu.",
+    eltern: "An der FMS kommt Mathe neben den vielen anderen Fächern schnell zu kurz. Ich beginne mit den Themen, die {dat} gerade Mühe machen, und nehme für die Fachmatura alte Prüfungsaufgaben dazu.",
+    neutral: "An der FMS kommt Mathe neben den vielen anderen Fächern schnell zu kurz. Ich beginne mit den Themen, die gerade Mühe machen, und nehme für die Fachmatura alte Prüfungsaufgaben dazu.",
+    en: "At the FMS, maths easily gets squeezed between all the other subjects. We start with the topics that are causing trouble right now and bring in past exam tasks for the Fachmatura.",
+    fr: "À l'école de culture générale, les maths passent vite au second plan. Nous commençons par les thèmes qui posent problème en ce moment et ajoutons d'anciens examens pour la maturité spécialisée.",
+  },
   matura: {
     du: "Für die Matura lohnt es sich, früh mit alten Maturaaufgaben zu üben. Wir schauen zuerst, welche Themen noch unsicher sind, und legen dort den Schwerpunkt.",
     eltern: "Für die Matura lohnt es sich, früh mit alten Maturaaufgaben zu üben. Ich schaue mit {dat} zuerst, welche Themen noch unsicher sind, und lege dort den Schwerpunkt.",
@@ -514,10 +521,10 @@ export const DEFAULT_ZWEI_SAETZE: Record<SatzStufe, Record<ZweiAnrede, string>> 
   },
 };
 
-export type SatzStufe = "primar" | "sek" | "gymi" | "gymipruefung" | "bm" | "matura" | "uni";
+export type SatzStufe = "primar" | "sek" | "gymi" | "gymipruefung" | "bm" | "fms" | "matura" | "uni";
 export const SATZ_STUFEN: Array<[SatzStufe, string]> = [
   ["primar", "Primarschule"], ["sek", "Sek"], ["gymi", "Gymnasium/Kantonsschule"], ["gymipruefung", "Gymiprüfung"],
-  ["bm", "BM"], ["matura", "Matura"], ["uni", "Uni/FH"],
+  ["bm", "BM"], ["fms", "FMS/Fachmatura"], ["matura", "Matura"], ["uni", "Uni/FH"],
 ];
 /** Omids Saetze vom 9.11.; en/fr sinngemaess uebersetzt (zur Freigabe) */
 export const DEFAULT_FESTE_SAETZE: FollowupSettings["festeSaetze"] = {
@@ -545,6 +552,11 @@ export const DEFAULT_FESTE_SAETZE: FollowupSettings["festeSaetze"] = {
     de: "In der BM ist der Stoff dicht, deshalb arbeiten wir mit den Aufgaben, die in den Prüfungen wirklich vorkommen.",
     en: "In the BM the material is dense, so we work with the tasks that really come up in the exams.",
     fr: "En maturité professionnelle, la matière est dense, c'est pourquoi nous travaillons avec les exercices qui reviennent vraiment aux examens.",
+  },
+  fms: {
+    de: "An der FMS kommt Mathe neben den vielen anderen Fächern schnell zu kurz, darum nehmen wir für die Fachmatura alte Prüfungsaufgaben dazu.",
+    en: "At the FMS, maths easily gets squeezed between all the other subjects, so we bring in past exam tasks for the Fachmatura.",
+    fr: "À l'école de culture générale, les maths passent vite au second plan, c'est pourquoi nous travaillons aussi avec d'anciens examens de maturité spécialisée.",
   },
   matura: {
     de: "Für die Matura üben wir mit alten Maturaaufgaben, damit die Prüfung keine Überraschungen bringt.",

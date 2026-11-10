@@ -524,3 +524,21 @@ describe("Zwei Saetze v4, Runde 2 (10.11.)", () => {
     for (const d of ["8. Klasse", "Gymnasium", "online", "Mathematik", "zweites Kanti Jahr", "BMS Stufe"]) expect(STARKES_DETAIL.test(d), d).toBe(false);
   });
 });
+
+describe("FMS-Texte, Mathe nur Nebenfach (10.11.)", () => {
+  it("FMS-Stufe, Nebenfach-Markierung", async () => {
+    const O = await import("./tutor24-course-offer");
+    const info = (description: string, title = "Nachhilfe", schulstufe = "Gymnasium") => ({ title, fach: "Mathe", schulstufe, description });
+    const plan = (i: ReturnType<typeof info>) => O.planFirstMessage(i, [], (await_settings), [], new Date(), "de");
+    const { mergeSettings } = await import("./tutor24-followup");
+    const await_settings = mergeSettings({});
+    const fms = info("Ich bin momentan an der FMS und mache die Fachmatura in Pädagogik.");
+    expect(O.satzStufe(plan(fms).analysis, fms)).toBe("fms");
+    const aufnahme = info("Ich möchte die Aufnahmeprüfung für die FMS im Oktober machen.", "Mathe", "Sekundarstufe");
+    expect(O.satzStufe(plan(aufnahme).analysis, aufnahme)).not.toBe("fms");
+    expect(O.matheNebenfach(info("Nachhilfe für unseren Sohn (5. Primar) gesucht – Schwerpunkt Deutsch/LRS. Neben Deutsch wäre es schön, wenn bei Bedarf auch bei Hausaufgaben geholfen werden könnte."))).toMatch(/Schwerpunkt/);
+    expect(O.matheNebenfach(info("Hauptsächlich Englisch. Bei Bedarf auch etwas Mathe."))).toMatch(/nebenbei/);
+    expect(O.matheNebenfach(info("Mein Sohn braucht Hilfe in Mathe, Schwerpunkt Bruchrechnen."))).toBeNull();
+    expect(O.matheNebenfach(info("Nachhilfe in Mathe und Deutsch für die 6. Klasse."))).toBeNull();
+  });
+});

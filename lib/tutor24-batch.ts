@@ -45,6 +45,8 @@ export type BatchItem = {
   ausgewaehlt: boolean;
   /** "⚠ Möglicherweise Agentur": Grund (agenturVerdacht); dann ohne Haekchen, Omid entscheidet */
   agentur?: string | null;
+  /** "⚠ Mathe nur Nebenfach": Grund (matheNebenfach); dann ohne Haekchen, Omid entscheidet */
+  nebenfach?: string | null;
   /** nur erst: fuer Anrede umstellen und Lead-Daten beim Senden */
   info?: ListingInfo;
   ergebnis?: "gesendet" | "übersprungen" | "fehler";

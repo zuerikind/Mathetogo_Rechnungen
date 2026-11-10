@@ -139,6 +139,7 @@ function Item({ it, locked, post }: { it: BatchItem; locked: boolean; post: (b: 
       </div>
       {it.problem && <p className="mt-2 text-sm font-semibold text-red-700">Nicht sendbar: {it.problem}</p>}
       {it.agentur && <p className="mt-2 text-sm font-semibold text-amber-700">⚠ Möglicherweise Agentur: {it.agentur}</p>}
+      {it.nebenfach && <p className="mt-2 text-sm font-semibold text-amber-700">⚠ Mathe nur Nebenfach: {it.nebenfach}</p>}
       {it.ergebnis && (
         <p className={`mt-2 text-sm font-semibold ${it.ergebnis === "gesendet" ? "text-green-700" : it.ergebnis === "fehler" ? "text-red-700" : "text-amber-700"}`}>
           {it.ergebnis === "gesendet" ? "✓ Gesendet" : it.ergebnis === "fehler" ? `Fehler: ${it.meldung}` : `Übersprungen: ${it.meldung}`}

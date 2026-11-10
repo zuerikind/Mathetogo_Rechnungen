@@ -676,6 +676,8 @@ export function checkCourse(c: Course, all: Course[], privatePrice: number, now 
 
 /** Stufe fuer den festen Satz; null = unbekannt (dann ohne Satz). */
 export function satzStufe(a: Analysis, info: ListingInfo): import("./tutor24-followup").SatzStufe | null {
+  // FMS/Fachmatura vor Matura (eigene Texte, 10.11.): Fachmatura ist nicht die gymnasiale Matura
+  if (new RegExp("(?<!\\p{L})(fms|fachmatur\\p{L}*|fachmittelschule)(?!\\p{L})", "iu").test(`${info.schulstufe} ${info.title} ${info.description}`) && !/aufnahme/i.test(info.description)) return "fms"; // Aufnahmeprüfung für die FMS: noch nicht an der FMS
   if (a.kategorie === "matura") return "matura";
   if (a.kategorie === "bm") return "bm";
   // tutor24 schreibt "Berufslehre, Uni/FH und Erwachsenenbildung" auch fuer Lernende: Uni nur, wenn der Text es sagt
@@ -730,6 +732,24 @@ const T24_BOILERPLATE = /Jetzt als Erster bewerben!|Neues Jobangebot!|je schnell
 const AGENTUR_TEXT =
   /bewerben sie|ihre bewerbung|lebenslauf|\bcv\b|für unsere (schüler|kunden|familien)|unsere(n)? (schüler|kunden|familien)|nachhilfeschule|lernstudio|nachhilfeinstitut|agentur|wir vermitteln|vermittlung|team (verstärken|erweitern)|stellvertret|stellvetret|vikariat|klasse (übernehmen|unterrichten)|lehrperson gesucht|we are hiring|join our team|our (students|clients|families)|tutors? wanted for|apply now|send (us )?your cv|gmbh|bildungszentrum|entlöhnung|arbeitstage|pensum|lehrperson für|(?<![a-zäöü])ag(?![a-zäöü])/i;
 /** null = sieht nach einer echten Anfrage aus; sonst der Grund fuer "⚠ Möglicherweise Agentur". */
+/**
+ * "⚠ Mathe nur Nebenfach" (Omid, 10.11.): Schwerpunkt auf einem anderen Fach ("Schwerpunkt Deutsch/LRS")
+ * oder Mathe/Physik nur "bei Bedarf". null = Mathe/Physik ist Hauptsache. Nur Hinweis, Omid entscheidet.
+ */
+export function matheNebenfach(info: ListingInfo): string | null {
+  const t = `${info.title}. ${info.description}`.replace(/\s+/g, " ");
+  const SAETZE = t.split(new RegExp("(?<=[.!?])\\s+"));
+  const ANDERES = new RegExp("(?<!\\p{L})(deutsch|lrs|legasthenie|lesen|rechtschreibung|englisch|französisch|franz|italienisch|spanisch|latein|chemie|biologie|bio|geschichte|geografie|nmg|wirtschaft|musik)(?!\\p{L})", "iu");
+  const MP = /mathe|physik|rechnen/i;
+  for (const s of SAETZE) {
+    const sp = s.match(/schwerpunkt[^.!?]*/i)?.[0];
+    if (sp && ANDERES.test(sp) && !MP.test(sp)) return `Schwerpunkt auf einem anderen Fach („${sp.slice(0, 50).trim()}“)`;
+    if (/bei bedarf|gelegentlich auch|nebenbei/i.test(s) && (MP.test(s) || /hausaufgaben/i.test(s)) && ANDERES.test(t) && !/schwerpunkt[^.!?]*(mathe|physik)/i.test(t))
+      return `Mathe/Physik nur nebenbei („${s.slice(0, 60).trim()}“)`;
+  }
+  return null;
+}
+
 export function agenturVerdacht(info: ListingInfo): string | null {
   const text = info.description.replace(T24_BOILERPLATE, " ");
   const hit = text.match(AGENTUR_TEXT)?.[0];
