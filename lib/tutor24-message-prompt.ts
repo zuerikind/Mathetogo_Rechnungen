@@ -488,11 +488,17 @@ export async function personalSentenceV3(
     detail = r.detail && !/^(none|keins?|kein detail|-)$/i.test(r.detail.trim()) ? r.detail.trim() : null;
     if (!detail || nurStufe(detail)) return mitFest([...gruende, detail ? `nur Stufe/Fach („${detail}“), kein Detail` : "kein konkretes Detail im Inserat"], detail);
     if (!detailImInserat(detail, inserat)) return mitFest([...gruende, `Detail „${detail}“ steht nicht im Inserat`], detail);
+    // v4: nur starke Details (Pruefung, Schwierigkeit, Thema); Klasse, Stufe, Schultyp, online, Fach → fester Text
+    if (zwei && !STARKES_DETAIL.test(detail)) return mitFest([...gruende, `kein starkes Detail („${detail}“)`], detail);
     const satz = r.satz.replace(/ß/g, "ss").replace(/\s+/g, " ").trim();
     const grund =
       (satz.split(" ").length > (zwei ? 40 : 20) ? `mehr als ${zwei ? 40 : 20} Wörter` : null) ??
       (zwei && satzAnzahl(satz) !== 2 ? `${satzAnzahl(satz)} Sätze statt zwei` : null) ??
       (zwei ? zweiStilProblem(satz) : null) ??
+      // Ziel nicht uebergehen: steht eine Pruefung im Inserat, nennen die zwei Saetze sie auch (Omid, 10.11.)
+      (zwei && PRUEFUNG.test(inserat) && !PRUEFUNG.test(satz) ? "übergeht die Prüfung aus dem Inserat (die Prüfung ist das Ziel)" : null) ??
+      // erfundene Fach-Pruefung ("nächste Mathematikprüfung", im Inserat nur "Vorbereitung auf Prüfungen")
+      (zwei && (satz.match(/(mathe|mathematik|physik)-?prüfung/i)?.[0] ?? "") && !new RegExp(satz.match(/(mathe|mathematik|physik)-?prüfung/i)![0], "i").test(inserat) ? `„${satz.match(/(mathe|mathematik|physik)-?prüfung/i)![0]}“ steht so nicht im Inserat` : null) ??
       (zwei && ZWEI_SAETZE_BEISPIELE.some((e) => e.split(". ").some((teil) => satz.includes(teil.slice(-35)))) ? "kopiert ein Stilbeispiel" : null) ??
       (satz.match(VERBOTEN_IM_SATZ) ? `verbotenes Wort „${satz.match(VERBOTEN_IM_SATZ)![0]}“` : null) ??
       // Zweck-Anhang klingt nach KI: "…, um den Stoff besser zu bewältigen." / "to help you …"
@@ -577,7 +583,9 @@ async function generateSentenceV3(
 /** Omids Stilvorlagen fuer v4 (9.11.), nur als Stil, nie kopieren */
 export const ZWEI_SAETZE_BEISPIELE = [
   "Bis zur Gymiprüfung im März bleibt noch gut Zeit. Ich würde mit Ihrem Sohn zuerst klären, welche Themen schon sitzen, und die Lektionen dann auf die Lücken ausrichten.",
-  "Sie schreiben, dass Textaufgaben Ihrem Kind besonders schwerfallen. Genau dort würde ich ansetzen und die Lektionen so aufbauen, dass es Schritt für Schritt sicherer wird.",
+  // 10.11.: "Sie schreiben, dass …" gibt das Inserat wieder (Omids neue Regel) → ersetzt durch Saetze mit seinen zwei Anfaengen
+  "Bei den Bruchaufgaben, die Ihrem Sohn Mühe machen, würde ich mit einfachen Beispielen beginnen. Danach werden die Aufgaben Schritt für Schritt schwieriger, bis sie im Schulstoff ankommen.",
+  "Für die Probezeit am Gymnasium würde ich mit den Themen aus dem aktuellen Semester beginnen. Später nehmen wir alte Prüfungen dazu, damit du weisst, was dich erwartet.",
   "Für die Matura arbeiten wir online mit alten Prüfungsaufgaben. Die Schwerpunkte legen wir danach fest, was bei dir noch unsicher ist.",
 ];
 
@@ -611,13 +619,15 @@ async function generateZweiSaetze(
           role: "system",
           content:
             `You are Omid, a math and physics tutor in Switzerland, writing TWO short sentences (together max 40 words) in a tutor24 chat message, in ${lang}. ` +
-            `Step 1: find what is concretely in the listing: a class or year, a goal, an exam or test (Gymiprüfung, ZAP, Matura, BM-Prüfung, Probezeit), a date or deadline, a stated difficulty (e.g. Textaufgaben, Bruchrechnen, Prüfungsangst, Lücken), or a wish (online or in person, how often). ` +
-            `A school level alone ("Primarschule", "Sekundarstufe", "Gymnasium") or "needs help in math" is NOT enough. If there is nothing concrete, answer {"detail":"none","satz":""}. ` +
-            `Sentence 1: what you understood from the listing, only what is really written there. ` +
-            `Sentence 2: how you adapt the lessons to it, concretely: where you start, what comes first, the pace, or which materials (e.g. old exams, the school's worksheets). Vary the wording, fit it to this listing. ` +
+            `Step 1: find ONE strong detail that is literally in the listing: an exam or test (Gymiprüfung, ZAP, Aufnahmeprüfung, Matura, Fachmatura, BM-Prüfung, Probezeit, a test, with or without date), a concrete difficulty (e.g. Textaufgaben fallen schwer, Prüfungsangst, Dyskalkulie, Lücken), or a specific topic (e.g. Bruchrechnen, Gleichungen, Funktionen, Vektoren, Wärmelehre). ` +
+            `NOT a detail: a class or year alone, a school level or school type (Primarschule, Sek, Gymnasium, Kanti, BMS, FMS), online or in person, frequency, or the subject. If there is no strong detail, answer {"detail":"none","satz":""}. ` +
+            `Sentence 1 reacts directly to the detail, e.g. "Für die Fachmatura in Pädagogik würde ich …", "Bei den Bruchaufgaben, die Ihrem Sohn Mühe machen, würde ich …", "Bis zur Gymiprüfung im März …". ` +
+            `It must NOT restate the listing: never start with "Du bist", "Sie sind", "Ihr Kind besucht", "Ihre Tochter besucht", "Sie wünschen", "Du wünschst", "Sie bereiten sich … vor", "Sie schreiben", "You mention", "You are", "Your child". ` +
+            `Sentence 2: how you adapt the lessons, concretely: where you start, what comes first, the pace, or which materials (e.g. old exams, the school's worksheets). No empty phrases like "schwierige Themen ausführlich durchgehen", "sich Zeit nehmen", "auf Fragen eingehen". ` +
+            `Do not decide over the family's or student's goal: if the listing names an exam, that exam is the goal; if the listing states an order (e.g. first the current material, then the exam), keep that order. ` +
+            `Do not claim anything about past exams you do not know (e.g. "häufig geprüft", "kam oft vor"). ` +
             `Write like a teacher in a chat, not like advertising. ${anrede} Only mathematics/physics. Never invent anything that is not in the listing. ` +
-            `Sentence 1 names the concrete thing (e.g. "Bis zur Gymiprüfung im März …", "Sie schreiben, dass Textaufgaben …"), never a plain restatement like "Du suchst Nachhilfe" or "Ihr Kind braucht Hilfe". ` +
-            `Do not mention the town or whose home the lessons are at, and do not promise days, times or how often. "online" may be mentioned if the listing asks for it. ` +
+            `Do not mention the town or whose home the lessons are at, and do not promise days, times or how often. ` +
             `Do not copy words from the listing that are misspelled, abbreviated or unusual (e.g. "niveau" in lower case, "gymni", "Kusnacht"): use the correct, common term ("Niveau", "Gymnasium", "Küsnacht"). ` +
             (f.typ === "en"
               ? `In English, use English or generally understood terms (e.g. "probation period at the Gymnasium", "entrance exam", "secondary school"), never German school slang. `
@@ -658,7 +668,21 @@ export function zweiStilProblem(satz: string): string | null {
   if (new RegExp("(?<!\\p{L})um [^.]*zu", "iu").test(satz)) return "„um … zu …“ (klingt nach KI)";
   // Ort, Zeiten, Haeufigkeit nicht zusagen und nicht verdrehen ("bei mir in Meggen", "1–2 Mal pro Woche in Allschwil")
   if (/bei (mir|uns|Ihnen|dir) (in|zu Hause)|\d\s*(–|-|bis)?\s*\d?\s*(Mal|mal|x) (pro|in der) Woche|(at|in) my place|chez moi/i.test(satz)) return "sagt Ort oder Häufigkeit zu";
-  if (/^(Du suchst|Sie suchen|(Ihre?|Ihr) (Tochter|Sohn|Kind) (sucht|braucht)|Your child needs|You are looking|Vous cherchez)\b/i.test(satz.trim()))
-    return "beginnt mit „Du suchst / Sie suchen …“ — bitte mit dem konkreten Detail beginnen";
+  // 10.11.: Satz 1 gibt nicht das Inserat wieder, sondern reagiert auf das Detail
+  const wieder = satz.trim().match(WIEDERGABE)?.[0];
+  if (wieder) return `beginnt mit „${wieder} …“ (gibt das Inserat wieder) — bitte direkt auf das Detail reagieren`;
+  const floskel = satz.match(FLOSKEL)?.[0];
+  if (floskel) return `Floskel „${floskel}“ — bitte konkret sagen, wie der Unterricht angepasst wird`;
   return null;
 }
+
+const WIEDERGABE =
+  /^(Du suchst|Sie suchen|Du bist|Sie sind|(Ihre?|Ihr) (Tochter|Sohn|Kind) (sucht|braucht|besucht|ist|geht|hat|lernt|möchte|bereitet)|Sie wünschen|Du wünschst|Sie möchten|Du möchtest|Sie bereiten sich|Du bereitest dich|Sie schreiben|Du schreibst|Sie machen|Du machst|You mention|You are|You want|You would like|Your (child|son|daughter)|Vous (êtes|souhaitez|cherchez|préparez|mentionnez)|Votre (enfant|fils|fille))(?![a-zäöü])/i;
+// auch Behauptungen ueber fruehere Pruefungen, die ich nicht kenne ("häufig geprüft", "in den letzten Prüfungen oft vorkamen")
+const FLOSKEL = /häufig geprüft|oft geprüft|oft vorkamen|oft vorkommen|in den letzten (Jahren|Prüfungen)|ausführlich|schwierige Themen|(nehmen|nehme) (uns |mir )?(jeweils )?(die |genug )?Zeit|auf (deine|Ihre|seine|ihre) Fragen eingehen|in detail|take (the )?time|prendre le temps/i;
+
+const PRUEFUNG = /prüfung|probezeit|exam|(?<![a-zäöü])zap(?![a-zäöü])|aufnahme|matur|épreuve/i;
+
+/** Starkes Detail (Omid, 10.11.): Pruefung, konkrete Schwierigkeit oder bestimmtes Thema. Klasse, Stufe, Schultyp, online, Fach zaehlen nicht. */
+export const STARKES_DETAIL =
+  /prüfung|probezeit|(?<![a-zäöü])test|exam|(?<![a-zäöü])zap(?![a-zäöü])|matur|aufnahme|abschluss|schwer|mühe|lücke|angst|dyskalk|problem|schwierig|nicht versteh|bruch|algebra|geometr|gleichung|funktion|textaufgab|prozent|vektor|ableitung|integral|analysis|stochast|statistik|wahrscheinlich|trigonom|logarithm|potenz|wurzel|termumform|wärmelehre|mechanik|elektri|optik|kinemat|dynamik|graphen|fraction|equation|struggl|épreuve|difficult/i;

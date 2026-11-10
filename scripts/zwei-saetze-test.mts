@@ -21,6 +21,32 @@ const log = await loadLog();
 await prisma.$disconnect();
 const cache: Record<string, { info: ListingInfo | null }> = JSON.parse(readFileSync(join(FOLLOWUP_DIR, "course_offer_listings.json"), "utf8"));
 
+// --gleiche: dieselben Inserate wie im letzten Test (zwei_saetze_test.json), Bericht zwei_saetze_test_2.md
+if (process.argv.includes("--gleiche")) {
+  const prev: Array<{ slot: string; id: string; c: { typ: string } }> = JSON.parse(readFileSync(join(FOLLOWUP_DIR, "zwei_saetze_test.json"), "utf8"));
+  const lines: string[] = [`# Zwei Sätze v4 – Runde 2, dieselben ${prev.length} Inserate (${new Date().toLocaleString("de-CH")})`, "", "Nichts gesendet.", ""];
+  const out = [];
+  for (const p of prev) {
+    const info = cache[p.id].info!;
+    const sprache = resolveTargetLanguage(`${TUTOR24_BASE_URL}/de/jobs/0`, "de", info.title, info.description).language;
+    const plan = O.planFirstMessage(info, courses, settings, log, new Date(), sprache);
+    const stufe = O.satzStufe(plan.analysis, info);
+    const r = await personalSentenceV3(info, plan.form, O.festeZweiSaetze(stufe, plan.form, settings.zweiSaetze), () => {}, true);
+    const m = O.assembleFirstMessage(plan, r.satz);
+    out.push({ ...p, typNeu: plan.form.typ, r, text: m.text, problem: m.problem });
+    lines.push(
+      `## ${p.slot} · Anrede ${p.c.typ}${p.c.typ !== plan.form.typ ? ` → ${plan.form.typ}` : ""} · Stufe ${stufe ?? "–"}`, "",
+      `Inserat: ${info.title} | ${info.description.replace(/\s+/g, " ").slice(0, 200)}`, "",
+      `**${r.quelle === "ki" ? "KI" : r.quelle === "fest" ? "fester Text" : "ohne"}**${r.detail ? ` · Detail „${r.detail}“` : ""}${r.gruende.length ? ` · ${r.gruende.join("; ")}` : ""}${m.problem ? ` · ⚠ ${m.problem}` : ""}`, "",
+      `> ${r.satz || "(kein Satz)"}`, ""
+    );
+  }
+  writeFileSync(join(FOLLOWUP_DIR, "zwei_saetze_test_2.md"), lines.join("\n"));
+  writeFileSync(join(FOLLOWUP_DIR, "zwei_saetze_test_2.json"), JSON.stringify(out, null, 1));
+  console.log(lines.join("\n"));
+  process.exit(0);
+}
+
 type C = { typ: string; stufe: string | null; sprache: string };
 type Slot = { label: string; ok: (c: C) => boolean; detail: boolean | null };
 const eltern = (c: C) => c.typ === "eltern";

@@ -501,3 +501,26 @@ describe("Zwei Saetze v4 (9.11.)", () => {
     expect(O.festeZweiSaetze(null, { typ: "du" }, DEFAULT_ZWEI_SAETZE)).toBe("");
   });
 });
+
+describe("Zwei Saetze v4, Runde 2 (10.11.)", () => {
+  it("Ich-Form = Lernende (du), auch BM2/FMS und im Titel", async () => {
+    const O = await import("./tutor24-course-offer");
+    const { mergeSettings } = await import("./tutor24-followup");
+    const typ = (title: string, description: string) => O.planFirstMessage({ title, fach: "Mathe", schulstufe: "Gymnasium", description }, [], mergeSettings({}), [], new Date(), "de").form.typ;
+    expect(typ("Ich befinde mich zurzeit in der Technischen Berufsmatura 2 an der Berufsschule in Aarau.", "Es wäre nice, wenn du mir schon bald helfen könntest. Da schon bald Mathematik und Physikprüfungen anstehen.")).toBe("du");
+    expect(typ("Suche Nachilfe für die Fächer Mathe, Chemie und Physik", "Ich bin momentan an der FMS und mache die Fachmatura in Pädagogik und suche in den Fächern Mathe, Chemie und Physik Unterstützung.")).toBe("du");
+    expect(typ("Mathe", "Ich bereite mich auf die BM-Aufnahmeprüfung vor.")).toBe("du");
+    expect(typ("Mathe", "Für meine Tochter (5. Klasse) suche ich Nachhilfe.")).toBe("eltern");
+    const lrs = O.planFirstMessage({ title: "Unser Kind sucht eine lockere Lernbegleitung", fach: "Mathe", schulstufe: "Primarschule", description: "Wir suchen für unseren Sohn eine geduldige Unterstützung." }, [], mergeSettings({}), [], new Date(), "de").form;
+    expect(lrs.typ === "eltern" && lrs.nom).toBe("Ihr Sohn");
+  });
+  it("Wiedergabe, Floskeln, starkes Detail", async () => {
+    const { zweiStilProblem, STARKES_DETAIL } = await import("./tutor24-message-prompt");
+    for (const s of ["Du bist aktuell in der 8. Klasse. Wir starten mit den Schulaufgaben.", "Ihre Tochter besucht die 6. Klasse. Ich beginne beim Schulstoff.", "Sie wünschen Online-Unterricht. Wir steigen ein.", "Sie bereiten sich auf die BM vor. Wir üben.", "You mention online lessons. We start."])
+      expect(zweiStilProblem(s), s).toMatch(/gibt das Inserat wieder/);
+    expect(zweiStilProblem("Für Mathematik an der Uni arbeiten wir mit Ihren Unterlagen. Wir nehmen uns jeweils die Zeit, schwierige Themen ausführlich durchzugehen.")).toMatch(/Floskel/);
+    expect(zweiStilProblem("Für die Fachmatura in Pädagogik würde ich mit den Themen aus dem Semester beginnen. Später nehmen wir alte Prüfungen dazu.")).toBeNull();
+    for (const d of ["Fachmatura in Pädagogik", "Gymiprüfung im März", "Textaufgaben fallen schwer", "Bruchrechnen", "Wärmelehre"]) expect(STARKES_DETAIL.test(d), d).toBe(true);
+    for (const d of ["8. Klasse", "Gymnasium", "online", "Mathematik", "zweites Kanti Jahr", "BMS Stufe"]) expect(STARKES_DETAIL.test(d), d).toBe(false);
+  });
+});

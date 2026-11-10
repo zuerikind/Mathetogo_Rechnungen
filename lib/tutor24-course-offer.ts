@@ -521,7 +521,10 @@ export function planFirstMessage(
   anredeOverride?: Addressee
 ) {
   const analysis = analyzeListing(info);
-  const addressee = anredeOverride ?? detectAddressee(info.description);
+  // Titel nur, wenn die Beschreibung offen laesst, wer schreibt ("Ich befinde mich zurzeit in der Technischen Berufsmatura 2 …");
+  // sonst gilt die Beschreibung (Titel "Unser Kind sucht …", Text "für unseren Sohn" → Sohn)
+  const ausText = detectAddressee(info.description);
+  const addressee = anredeOverride ?? (ausText.wer === "unklar" ? detectAddressee(`${info.title}\n${info.description}`) : ausText);
   // Franzoesisch: eigene Form (vous), fester Text wie de/en (seit 9.11.).
   const form: Form = spracheListing === "fr" ? { typ: "fr" } : formFor(addressee, spracheListing);
   const offer = pickCourse(analysis, courses, settings, log, now);
