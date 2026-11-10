@@ -74,13 +74,14 @@ export const LAST_REMINDER_MIN = 21 * 60;
 /**
  * Pruefzeiten des Waechters: je Durchgang 45 min, 3 h und 6 h danach — solange vor der Pruefung des
  * naechsten Durchgangs und vor 21:00. Bei 09:00/17:00: 9:45, 12:00, 15:00 (fuer 9) und 17:45, 20:00 (fuer 17).
+ * Nur ein Durchgang am Tag (seit 10.11.: 10:00): 45 min, 2 h, 5 h und 8 h danach → 10:45, 12:00, 15:00, 18:00.
  */
 export function watchChecks(times: string[] = DEFAULT_TIMES): { min: number; due: string }[] {
   const t = normTimes(times) ?? DEFAULT_TIMES;
   const out: { min: number; due: string }[] = [];
   t.forEach((due, i) => {
     const limit = Math.min(i + 1 < t.length ? toMin(t[i + 1]) + 45 : Infinity, LAST_REMINDER_MIN);
-    for (const after of [45, 180, 360]) {
+    for (const after of t.length === 1 ? [45, 120, 300, 480] : [45, 180, 360]) {
       const min = toMin(due) + after;
       if (min < limit) out.push({ min, due });
     }

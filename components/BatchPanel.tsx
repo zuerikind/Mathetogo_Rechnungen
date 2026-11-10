@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { Batch, BatchItem } from "@/lib/tutor24-batch";
+import type { Batch, BatchItem, Markiert } from "@/lib/tutor24-batch";
 
-type State = { batch: Batch | null; laeuft: boolean; pause: string | null; vorbereitenGesperrt: string | null; sendenGesperrt: string | null; online?: boolean };
+type State = { batch: Batch | null; laeuft: boolean; pause: string | null; vorbereitenGesperrt: string | null; sendenGesperrt: string | null; online?: boolean; markiert?: Markiert[] };
 
 const btn = "rounded-lg px-3 py-1.5 text-sm font-semibold disabled:opacity-50";
 const SPRACHE = { de: "Deutsch", en: "Englisch", fr: "Französisch" } as const;
@@ -88,6 +88,26 @@ export function BatchPanel() {
           </details>
         )}
       </div>
+
+      {!!s.markiert?.length && (
+        <div className="rounded-2xl border border-amber-300 bg-white p-5">
+          <h2 className="text-lg font-semibold text-gray-900">Von der Automatik markiert ({s.markiert.length})</h2>
+          <p className="mt-1 text-sm text-gray-500">Nicht angeschrieben. Anschreiben geht über den Batch (das Inserat erscheint dort mit Hinweis), „Erledigt“ blendet es hier aus.</p>
+          <ul className="mt-3 space-y-2">
+            {s.markiert.map((m) => (
+              <li key={m.id} className="flex flex-wrap items-start justify-between gap-2 border-t border-gray-100 pt-2 text-sm">
+                <span>
+                  <a href={m.link} target="_blank" rel="noreferrer" className="font-semibold text-[#4A7FC1] underline">{m.titel}</a>
+                  <span className="block text-xs text-amber-700">⚠ {m.grund} · {new Date(m.am).toLocaleDateString("de-CH")}</span>
+                </span>
+                <button className="rounded-lg border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-600" disabled={busy} onClick={() => post({ action: "markiert-erledigt", id: m.id })}>
+                  Erledigt
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {b?.items.map((it) => <Item key={it.id} it={it} locked={busy || running || b.zustand !== "bereit"} post={post} />)}
       {b && !running && b.items.length === 0 && <p className="text-sm text-gray-500">Keine neuen Inserate gefunden.</p>}

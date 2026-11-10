@@ -109,3 +109,23 @@ export function speicherProblem(freiBytes = freemem(), gesamtBytes = totalmem())
   }
   return `Zu wenig Arbeitsspeicher frei: ${gb(freiBytes)} von ${gb(gesamtBytes)} GB (nötig ${MIN_FREI_GB} GB). ${top ? `Am meisten brauchen: ${top}. ` : ""}Bitte etwas schliessen (z. B. Chrome-Tabs, Cursor) und nochmals versuchen.`;
 }
+
+// ── Von der Automatik markiert, nicht angeschrieben (10.11.): Omid prüft selbst auf /kurse → Batch ──
+export const MARKIERT_PATH = join(FOLLOWUP_DIR, "markiert.json");
+/** erledigt: auf /kurse weggeklickt — bleibt in der Datei, damit die Automatik das Inserat nie wieder oeffnet (anschreiben: Batch) */
+export type Markiert = { id: string; titel: string; link: string; grund: string; am: string; erledigt?: boolean };
+
+export function loadMarkiert(path = MARKIERT_PATH): Markiert[] {
+  try {
+    return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Markiert[]) : [];
+  } catch {
+    return [];
+  }
+}
+/** Ein Inserat steht hoechstens einmal in der Liste (die Automatik oeffnet es danach nicht nochmals). */
+export function addMarkiert(m: Markiert, path = MARKIERT_PATH): void {
+  const all = loadMarkiert(path);
+  if (!all.some((x) => x.id === m.id)) writeFileSync(path, JSON.stringify([...all, m], null, 1));
+}
+export const markiertErledigt = (id: string, path = MARKIERT_PATH) =>
+  writeFileSync(path, JSON.stringify(loadMarkiert(path).map((x) => (x.id === id ? { ...x, erledigt: true } : x)), null, 1));

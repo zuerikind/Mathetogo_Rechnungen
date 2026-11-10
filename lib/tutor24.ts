@@ -8,7 +8,8 @@ import {
   generateTutor24Message,
   TUTOR24_MESSAGE_TEMPLATE,
 } from "./tutor24-message-prompt";
-import { assembleFirstMessage, festerSatz, festeZweiSaetze, planFirstMessage, satzStufe } from "./tutor24-course-offer";
+import { agenturVerdacht, assembleFirstMessage, festerSatz, festeZweiSaetze, matheNebenfach, planFirstMessage, satzStufe } from "./tutor24-course-offer";
+import { addMarkiert, loadMarkiert } from "./tutor24-batch";
 import { courseSnapshot, parseJobText, type ListingInfo } from "./tutor24-followup";
 import { loadCourses, loadLog, loadSettings } from "./tutor24-followup-store";
 import { listingHash, recordSend, type LeadFields } from "./tutor24-leads";
@@ -48,6 +49,8 @@ export type AutoErst = {
   notes?: string[];
   /** begrenzter Probelauf: hoechstens so viele Inserate oeffnen (auch uebersprungene zaehlen) */
   maxOpen?: number;
+  /** Probe: vollstaendige Texte der Erst-Nachrichten, die gesendet wuerden (Telegram, je eine Meldung) */
+  texte?: string[];
   /** Batch vorbereiten (scripts/batch.mts): Nachricht nur sammeln, nichts senden */
   collect?: (item: CollectedListing) => void;
 };
@@ -352,6 +355,12 @@ export async function runTutor24Messaging(
               result.log.push(`${ts()} [${tutor24Id}] bereits in DB — übersprungen`);
               continue;
             }
+            // Automatik: schon markierte Inserate (Agentur, Nebenfach, Pruefung) nicht nochmals oeffnen — Omid prueft sie auf /kurse.
+            if (auto && !auto.collect && loadMarkiert().some((m) => m.id === tutor24Id)) {
+              result.skipped++;
+              result.log.push(`${ts()} [${tutor24Id}] markiert (Liste auf /kurse) — übersprungen`);
+              continue;
+            }
 
             // Automatik: 8–15 s zwischen Inseraten wie beim Nachfassen. Ohne Pause folgte am 5.11. ein 429
             // (Inserate im Sekundentakt direkt nach 133 Aufrufen der Antwortpruefung).
@@ -402,6 +411,19 @@ export async function runTutor24Messaging(
             const info = parseJobText(await page.evaluate(() => document.body.innerText), listingTitle);
             // Analyse immer (ohne KI): die Person kommt so oder so in Tutor24Lead.
             let plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), new Date(), language);
+            // Automatik (10.11.): Agentur- oder Nebenfach-Verdacht nie anschreiben, sondern in die Liste auf /kurse (auch in der Probe).
+            const markieren = (grund: string) => {
+              addMarkiert({ id: tutor24Id, titel: info.title || displayName, link: href, grund, am: new Date().toISOString() });
+              auto!.counts.uebersprungen++;
+              auto!.notes?.push(`⚠ Nicht angeschrieben, Liste auf /kurse: https://tutor24.ch/de/jobs/${tutor24Id} · ${grund}`);
+              tag(`markiert, nicht angeschrieben: ${grund}`);
+            };
+            const verdacht = auto && !auto.collect ? agenturVerdacht(info) : null;
+            const nebenfach = auto && !auto.collect && !verdacht ? matheNebenfach(info) : null;
+            if (verdacht || nebenfach) {
+              markieren(verdacht ? `Möglicherweise Agentur: ${verdacht}` : `Mathe nur Nebenfach: ${nebenfach}`);
+              continue;
+            }
             // Seit 9.11. auch Franzoesisch mit festem Text (vous) statt KI-Uebersetzung der alten du-Vorlage.
             const composed = await composeFirstMessage(info, tag, new Date(), language);
             plan = composed.plan;
@@ -409,6 +431,12 @@ export async function runTutor24Messaging(
               // Batch: nur vorbereiten, nie den alten Text; fehlerhafte erscheinen mit Grund in der Vorschau (nicht sendbar).
               auto.collect({ tutor24Id, href, title: info.title, info, plan, composed, language });
               auto.counts.wuerde++;
+              continue;
+            }
+            if (composed.problem && auto) {
+              // Automatik wie Batch: nie der alte Text; zaehlt als Pruefungsfehler (mehr als 3 → Automatik aus).
+              auto.counts.pruefungFehler++;
+              markieren(`Prüfung nicht bestanden: ${composed.problem}`);
               continue;
             }
             if (composed.problem) {
@@ -435,6 +463,7 @@ export async function runTutor24Messaging(
               countKind();
               // Inserate haben keinen Personennamen (displayName ist der Titel): nur Link, Kurs — nichts aus dem Inserat.
               auto.probe.push(`Inserat https://tutor24.ch/de/jobs/${tutor24Id} · ${course?.name ?? kindLabel}${altText ? " (alter Text)" : ""} · Erst-Nachricht`);
+              auto.texte?.push(`https://tutor24.ch/de/jobs/${tutor24Id} · ${info.title || displayName}\n\n${message}`);
               tag(`PROBE — würde senden (${course?.name ?? kindLabel}):\n${message}`);
               continue;
             }

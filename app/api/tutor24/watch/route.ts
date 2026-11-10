@@ -3,6 +3,7 @@ import { notify } from "@/lib/tutor24-autopilot";
 import { secretOk } from "@/lib/open-routes";
 import { START_BUTTON, currentCheck, watchDecision, zurichTime } from "@/lib/tutor24-watch";
 import { markReminder, readLaptop, readReminders, runsSince } from "@/lib/tutor24-watch-db";
+import { normTimes } from "@/lib/tutor24-schedule";
 
 export const runtime = "nodejs";
 
@@ -16,9 +17,11 @@ async function watch(req: NextRequest) {
   if (!secret || !secretOk(req.headers.get("authorization"), `Bearer ${secret}`)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const now = new Date();
-  const check = currentCheck(now);
+  // Pruefzeiten aus den eingestellten Durchgaengen (Lebenszeichen des Laptops), sonst 09:00/17:00
+  const laptop = await readLaptop();
+  const check = currentCheck(now, normTimes(laptop?.zeiten) ?? undefined);
   if (!check) return NextResponse.json({ ok: true, check: null });
-  const [laptop, runs, alreadySent] = await Promise.all([readLaptop(), runsSince(zurichTime(check.day, 0)), readReminders()]);
+  const [runs, alreadySent] = await Promise.all([runsSince(zurichTime(check.day, 0)), readReminders()]);
   const decision = watchDecision({ now, laptop, runs, alreadySent });
   if (decision) {
     // Erst merken, dann senden: ein zweiter Aufruf (Sommer-/Winterzeit-Doppel) schickt nicht nochmals.

@@ -3,7 +3,7 @@ import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { ANREDE_WAHL, BATCH_MAX, addresseeFor, loadBatch, saveBatch, sendBlock, speicherProblem, type AnredeWahl } from "@/lib/tutor24-batch";
+import { ANREDE_WAHL, BATCH_MAX, addresseeFor, loadBatch, loadMarkiert, markiertErledigt, saveBatch, sendBlock, speicherProblem, type AnredeWahl } from "@/lib/tutor24-batch";
 import { FOLLOWUP_DIR } from "@/lib/tutor24-followup-store";
 import { earliestNext, lastRunEnd, pidAlive, readTutor24Lock, tooSoonText, AUTOPILOT_LOCK_PATH } from "@/lib/tutor24-lock";
 import { RATE_LIMIT_TEXT, activePause, fmtZurich, readPassLog } from "@/lib/tutor24-autopilot";
@@ -28,6 +28,8 @@ function state() {
     pause: pause ? `${RATE_LIMIT_TEXT} Pause bis ${fmtZurich(pause)}.` : null,
     vorbereitenGesperrt: speicher ?? (pause ? "429-Pause" : earliest ? tooSoonText(earliest) : readTutor24Lock() || readTutor24Lock(AUTOPILOT_LOCK_PATH) ? "Es läuft gerade ein anderer tutor24-Lauf." : null),
     sendenGesperrt: speicher ?? (pause ? "429-Pause" : sendBlock(b, now, lastRunEnd(), earliest)),
+    /** von der Automatik markiert, nicht angeschrieben (Agentur, Nebenfach, Pruefung) */
+    markiert: loadMarkiert().filter((m) => !m.erledigt),
   };
 }
 
@@ -50,6 +52,11 @@ export async function POST(req: NextRequest) {
   if (!(await auth())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (process.env.VERCEL) return NextResponse.json({ error: "Batch nur auf dem Laptop (localhost:3000/kurse)." }, { status: 400 });
   const body = (await req.json().catch(() => ({}))) as { action?: string; anzahl?: unknown; id?: string; ausgewaehlt?: boolean; anrede?: string };
+  // Markierte Inserate: "Erledigt" blendet aus (die Automatik oeffnet sie trotzdem nie wieder)
+  if (body.action === "markiert-erledigt" && body.id) {
+    markiertErledigt(body.id);
+    return NextResponse.json(state());
+  }
   const s = state();
   if (s.laeuft) return NextResponse.json({ error: "Es läuft schon ein Batch." }, { status: 409 });
 

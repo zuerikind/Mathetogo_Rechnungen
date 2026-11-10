@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CONFIRM_WORD, createBot, parseErst } from "./tutor24-bot";
+import { DEFAULT_TIMES } from "./tutor24-schedule";
 import {
   RATE_LIMIT_TEXT,
   emptyCounts,
@@ -173,14 +174,14 @@ describe("Telegram-Bot", () => {
   });
 
   it("naechster geplanter Lauf 9 und 17 Uhr", () => {
-    expect(nextScheduled(new Date(2026, 10, 5, 8, 0)).getHours()).toBe(9);
-    expect(nextScheduled(new Date(2026, 10, 5, 13, 0)).getHours()).toBe(17);
-    expect(nextScheduled(new Date(2026, 10, 5, 17, 1))).toEqual(new Date(2026, 10, 6, 9, 0));
+    expect(nextScheduled(new Date(2026, 10, 5, 8, 0), DEFAULT_TIMES).getHours()).toBe(9);
+    expect(nextScheduled(new Date(2026, 10, 5, 13, 0), DEFAULT_TIMES).getHours()).toBe(17);
+    expect(nextScheduled(new Date(2026, 10, 5, 17, 1), DEFAULT_TIMES)).toEqual(new Date(2026, 10, 6, 9, 0));
   });
 
   it("/status nach einem normalen Lauf", () => {
     const ok = pass(new Date(2026, 10, 5, 9, 0), { modus: "an", erst: { ...emptyCounts(), gesendet: 4 }, nachfassen: { ...emptyCounts(), gesendet: 2 }, antworten: 1 });
-    const t = statusHtml({ modus: "an", gestoppt: null, letzterFehler: null, zusammenfassungAm: null, telegramOffset: 0 }, [ok], NOW);
+    const t = statusHtml({ modus: "an", gestoppt: null, letzterFehler: null, zusammenfassungAm: null, telegramOffset: 0 }, [ok], NOW, DEFAULT_TIMES);
     expect(t).toContain("🟢 <b>Automatik eingeschaltet</b>");
     expect(t).toContain("<b>Ergebnis</b> Ohne Fehler · 1 neue Antwort");
     expect(t).toContain("<b>Gesendete Nachrichten</b> 6 (Erst-Nachricht 4 · Nachfassen 2)");

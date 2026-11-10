@@ -105,6 +105,14 @@ if (soon) {
   await notify(`⏳ Durchgang nicht gestartet. ${tooSoonText(soon)}`);
   process.exit(0);
 }
+// Speicher vor dem Browserstart (wie beim Batch, mind. 1.5 GB frei)
+const { speicherProblem } = await import("../lib/tutor24-batch");
+const zuWenig = speicherProblem();
+if (zuWenig) {
+  log(`Nicht gestartet: ${zuWenig}`);
+  await notify(`🧠 Durchgang nicht gestartet. ${zuWenig}`);
+  process.exit(0);
+}
 // Kein Internet: nicht als Fehler werten, sondern verschieben — alle 2 min pruefen, hoechstens 30 min.
 // Kommt es nicht zurueck, endet der Durchgang still; der Waechter (Vercel) erinnert wie bei "Laptop offline".
 const { currentSsid, hasInternet, isHotspot, megabytes, netBytes } = await import("../lib/tutor24-network");
@@ -141,6 +149,8 @@ const settings = loadSettings();
 const pass = {
   start: new Date().toISOString(), ende: "", modus,
   erst: emptyCounts(), nachfassen: emptyCounts(), antworten: 0, fehler: [] as string[], stopp: null as string | null, probe: [] as string[],
+  /** nur Probe: vollstaendige Erst-Nachrichten (je eine Telegram-Meldung am Schluss, nicht im Protokoll) */
+  texte: [] as string[],
   /** z. B. "alter Text als Rueckfall" — steht in der Schlussmeldung */
   notes: [] as string[],
   /** Datenmenge des Durchgangs (ganzer Laptop, Hotspot-Verbrauch), MB */
@@ -197,7 +207,7 @@ try {
   else {
     log(`Erst-Nachrichten: höchstens ${erstLimit}${dryRun ? " (PROBE, sendet nichts)" : ""} …`);
     const r = await runTutor24Messaging(true, max ? 1 : 10, max ? ["Mathematik"] : ["Mathematik", "Physik"], {
-      limit: erstLimit, dryRun, mayContinue, counts: pass.erst, probe: pass.probe, notes: pass.notes, ...(max ? { maxOpen: max * 2 } : {}),
+      limit: erstLimit, dryRun, mayContinue, counts: pass.erst, probe: pass.probe, notes: pass.notes, texte: pass.texte, ...(max ? { maxOpen: max * 2 } : {}),
     });
     for (const l of r.log) console.log(`  ${l}`);
     pass.fehler.push(...r.errors);
@@ -296,9 +306,10 @@ if (reason) {
   if (fatal) await notify(`${P}⚠ Durchgang abgebrochen: ${fatal}\nKommt derselbe Fehler beim nächsten Mal wieder, stoppt die Automatik.`);
 }
 
-appendPassLog(pass);
+const { texte, ...passOhneTexte } = pass;
+appendPassLog(passOhneTexte);
 log(passSummary(pass));
-if (runId) await db("Durchgang abschliessen", () => finishRun(runId, pass));
+if (runId) await db("Durchgang abschliessen", () => finishRun(runId, passOhneTexte));
 await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
 
 // Schlussmeldung immer, auch im Modus EIN (Stopp und Abbruch haben oben zusaetzlich ihre eigene).
@@ -321,6 +332,8 @@ await notify(
         daten +
         list.slice(0, 3500)
 );
+// Probe: jede Erst-Nachricht vollstaendig als eigene Meldung (Telegram: hoechstens 4096 Zeichen pro Meldung)
+for (const [i, t] of texte.entries()) await notify(`${P}✉️ Erst-Nachricht ${i + 1}/${texte.length} (würde gesendet)\n${t}`.slice(0, 4000));
 
 // Abend-Zusammenfassung: einmal pro Tag, ab dem letzten geplanten Durchgang (nicht beim begrenzten Probelauf, nicht bei /erst)
 const today = localDay();

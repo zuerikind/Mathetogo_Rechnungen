@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { addresseeFor, sendBlock, wahlOf, type Batch } from "./tutor24-batch";
+import { addMarkiert, addresseeFor, loadMarkiert, markiertErledigt, sendBlock, wahlOf, type Batch } from "./tutor24-batch";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const batch = (over: Partial<Batch> = {}): Batch => ({
   zustand: "bereit", pid: 1, gestartet: "", vorbereitetBis: "2026-11-09T12:00:00.000Z", fehler: null, log: [],
@@ -28,5 +31,18 @@ describe("Batch: Senden direkt nach dem Vorbereiten", () => {
   });
   it("Anrede-Wahl hin und zurueck", () => {
     for (const w of ["du", "Tochter", "Sohn", "Kind", "unklar"] as const) expect(wahlOf(addresseeFor(w))).toBe(w);
+  });
+});
+
+describe("Markierte Inserate der Automatik (10.11.)", () => {
+  it("einmal pro Inserat; Erledigt blendet aus, bleibt aber in der Datei", () => {
+    const p = join(mkdtempSync(join(tmpdir(), "markiert-")), "markiert.json");
+    expect(loadMarkiert(p)).toEqual([]);
+    const m = { id: "1", titel: "T", link: "https://x", grund: "Mathe nur Nebenfach: …", am: "2026-11-11T09:00:00Z" };
+    addMarkiert(m, p);
+    addMarkiert({ ...m, grund: "anders" }, p);
+    expect(loadMarkiert(p)).toEqual([m]);
+    markiertErledigt("1", p);
+    expect(loadMarkiert(p)).toEqual([{ ...m, erledigt: true }]);
   });
 });
