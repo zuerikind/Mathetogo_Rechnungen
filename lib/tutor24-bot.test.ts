@@ -173,6 +173,20 @@ describe("Telegram-Bot", () => {
     expect(paused.calls.pass + busy.calls.pass).toBe(0);
   });
 
+  it("Rueckfrage-Knoepfe: nur geprueft, nur mein Chat, Antwort kommt vom Handler; auch als Befehl aus der Datenbank", async () => {
+    const b = setup(NOW);
+    const got: string[] = [];
+    (b.deps as { rueckfrage?: (a: string, id: string) => Promise<{ text: string }> }).rueckfrage = async (a, id) => (got.push(`${a} ${id}`), { text: `OK <${a}> ${id}` });
+    const press = (data: string, from = Number(ME)): TgUpdate => ({ update_id: 1, callback_query: { id: "cb", data, from: { id: from }, message: { chat: { id: from } } } });
+    expect(await b.handle(press("rf:send:6302015", 999))).toMatch(/fremder Knopf/);
+    expect(await b.handle(press("rf:send:6302015"))).toBe("rueckfrage: send 6302015");
+    expect(b.replies[b.replies.length - 1]).toBe("OK &lt;send&gt; 6302015"); // HTML-sicher
+    expect(await b.handle(press("rf:sie:6302015"))).toBe("rueckfrage: sie 6302015");
+    expect(await b.handle(press("rf:rm:6302015"))).toBe("ignoriert: unbekannter Knopf");
+    expect(await b.handle(b.msg("rf:skip:6302015"))).toBe("rueckfrage: skip 6302015");
+    expect(got).toEqual(["send 6302015", "sie 6302015", "skip 6302015"]);
+    expect(b.calls.pass).toBe(0);
+  });
   it("naechster geplanter Lauf 9 und 17 Uhr", () => {
     expect(nextScheduled(new Date(2026, 10, 5, 8, 0), DEFAULT_TIMES).getHours()).toBe(9);
     expect(nextScheduled(new Date(2026, 10, 5, 13, 0), DEFAULT_TIMES).getHours()).toBe(17);

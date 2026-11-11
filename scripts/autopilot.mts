@@ -15,17 +15,18 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 const {
-  RATE_LIMIT_TEXT, summaryDue, activePause, appendPassLog, daySummary, emptyCounts, errorKey, firstName, fmtZurich, inSendWindow, is429, isBusy,
-  loadAutopilot, localDay, nextScheduled, notify, passResult, passSummary, rateLimitUntil, readPassLog, shortError, stopReason, updateAutopilot,
+  RATE_LIMIT_TEXT, activePause, appendPassLog, emptyCounts, errorKey, firstName, fmtZurich, inSendWindow, is429, isBusy,
+  loadAutopilot, nextScheduled, notify, passResult, passSummary, rateLimitUntil, readPassLog, shortError, stopReason, updateAutopilot,
 } = await import("../lib/tutor24-autopilot");
 const { loadCourses, loadLeadInfo, loadLog, loadSettings, sentToday } = await import("../lib/tutor24-followup-store");
 const { runFollowup } = await import("../lib/tutor24-followup-runner");
-const { runTutor24Messaging } = await import("../lib/tutor24");
+const { runTutor24Messaging, sendBatchErst } = await import("../lib/tutor24");
 const { followupJobState } = await import("../lib/automation-state");
 const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock, earliestNext, tooSoonText } = await import("../lib/tutor24-lock");
 const { laptopSignal } = await import("../lib/tutor24-autopilot");
 const { finishRun, startRun, takeStops, writeLaptop, writeProgress } = await import("../lib/tutor24-watch-db");
-const { START_BUTTON } = await import("../lib/tutor24-watch");
+const { freigegebene, heuteGestellt, loadRueckfragen, rueckfrageAnlegen, rueckfrageKnoepfe, rueckfrageText, setzeStatus, zurichDay } = await import("../lib/tutor24-rueckfragen");
+type Rueckfrage = import("../lib/tutor24-rueckfragen").Rueckfrage;
 
 /** Datenbank fuer den Waechter: ein Fehler dort darf den Durchgang weder verhindern noch abbrechen. */
 const db = async <T,>(what: string, f: () => Promise<T>): Promise<T | null> => {
@@ -57,10 +58,14 @@ if (erstN !== undefined && !(erstN >= 1 && erstN <= 20)) {
 }
 
 const quelleArg = process.argv.indexOf("--quelle");
-/** plan (Aufgabenplanung, autopilot.cmd) | run (Telegram /run) | knopf ("Jetzt starten") | hand */
+/** plan (Aufgabenplanung, autopilot.cmd) | run (Telegram /run) | knopf ("Jetzt starten") | nachgeholt / freigabe (Bot, 11.11.) | hand */
 const quelle = quelleArg > -1 ? process.argv[quelleArg + 1] : forcedProbe && max ? "run" : "hand";
 /** vom Handy gestartet: auch ein "nicht gestartet" melden, sonst wartet man vergeblich */
 const asked = quelle === "knopf" || quelle === "run" || quelle === "erst";
+/** vom Bot gestartet (nachholen, Freigaben): der hat Speicher, Abstand und Internet schon geprueft — kein "nicht gestartet" melden */
+const quiet = quelle === "nachgeholt" || quelle === "freigabe";
+// --freigaben: nur die per Telegram/auf /kurse freigegebenen Rueckfragen senden (Bot, 10 min nach dem letzten Knopf)
+const FREIGABEN = process.argv.includes("--freigaben");
 if (asked) {
   // Vom Bot gestartet: Ausgabe selbst ins Protokoll schreiben (weder vererbter Handle noch cmd-Umleitung kamen an).
   const { appendFileSync } = await import("node:fs");
@@ -102,15 +107,15 @@ if (pause) {
 const soon = earliestNext();
 if (soon) {
   log(`Zu früh, nicht gestartet: ${tooSoonText(soon)}`);
-  await notify(`⏳ Durchgang nicht gestartet. ${tooSoonText(soon)}`);
+  if (!quiet) await notify(`⏳ Durchgang nicht gestartet. ${tooSoonText(soon)}`);
   process.exit(0);
 }
-// Speicher vor dem Browserstart (wie beim Batch, mind. 1.5 GB frei)
+// Speicher vor dem Browserstart (wie beim Batch, mind. 1.5 GB frei). Der Bot holt den Durchgang nach, sobald es wieder geht.
 const { speicherProblem } = await import("../lib/tutor24-batch");
 const zuWenig = speicherProblem();
 if (zuWenig) {
   log(`Nicht gestartet: ${zuWenig}`);
-  await notify(`🧠 Durchgang nicht gestartet. ${zuWenig}`);
+  if (!quiet) await notify(`🧠 Durchgang nicht gestartet. ${zuWenig}\nDer Bot versucht es alle 10 Minuten nochmals, sobald genug frei ist.`);
   process.exit(0);
 }
 // Kein Internet: nicht als Fehler werten, sondern verschieben — alle 2 min pruefen, hoechstens 30 min.
@@ -126,13 +131,17 @@ while (!(await hasInternet())) {
   if (offlineChecks === 1) log("Kein Internet, Durchgang verschoben (prüfe alle 2 min, höchstens 30 min).");
   await new Promise((r) => setTimeout(r, 2 * 60_000));
 }
-if (offlineChecks)
+const settings = loadSettings();
+const dryRun = modus === "probe";
+// Meldungen (11.11.): "wenig" = nur Rueckfragen, Antworten, Stopps/Fehler, Abend-Zusammenfassung (Bot); Probe immer alles.
+const laut = dryRun || settings.meldungen === "alle";
+if (offlineChecks && laut)
   await notify(`📶 Um ${hhmm(plannedAt.toISOString())} kein Internet, Durchgang verschoben. Jetzt wieder verbunden — er startet.`);
 const hotspot = isHotspot(currentSsid());
 const netWarn = hotspot ? "\n⚠ Laptop hängt am iPhone-Hotspot." : "";
 // Ein Durchgang zur Zeit (Aufgabenplanung und Telegram /run koennen sich ueberschneiden).
 try {
-  const release = acquireTutor24Lock(forcedProbe ? "Probelauf" : erstOnly ? "Erst-Nachrichten-Lauf" : "Automatik-Durchgang", AUTOPILOT_LOCK_PATH);
+  const release = acquireTutor24Lock(forcedProbe ? "Probelauf" : FREIGABEN ? "Freigaben senden" : erstOnly ? "Erst-Nachrichten-Lauf" : "Automatik-Durchgang", AUTOPILOT_LOCK_PATH);
   process.on("exit", release);
 } catch (err) {
   log(`Läuft schon, nicht gestartet: ${err instanceof Error ? err.message : String(err)}`);
@@ -140,11 +149,44 @@ try {
   process.exit(0);
 }
 
-const dryRun = modus === "probe";
+// ── Freigaben senden (--freigaben, vom Bot): genau die freigegebenen Rueckfragen, Text wie in der Rueckfrage ──
+if (FREIGABEN) {
+  if (modus !== "an" || !inSendWindow()) {
+    log(`Freigaben: nicht gesendet (${modus !== "an" ? "Automatik nicht EIN" : "ausserhalb 8–20 Uhr"}).`);
+    process.exit(0);
+  }
+  const limit = Math.max(0, settings.autoErstLimit - (await sentToday(new Date(), "erst")));
+  const items = freigegebene().slice(0, limit).map((r) => ({
+    id: r.id, art: "erst" as const, titel: r.titel, stufe: r.stufe, ort: "", link: r.link, sprache: r.sprache, anrede: r.anrede, block: "",
+    kursId: r.kursId, hint: r.hint, satz: r.satz, text: r.text, problem: null, ausgewaehlt: true, info: r.info,
+  }));
+  if (!items.length) {
+    log(limit === 0 ? `Freigaben: Tageslimit (${settings.autoErstLimit}) erreicht — morgen.` : "Freigaben: nichts offen.");
+    process.exit(0);
+  }
+  const start = new Date().toISOString();
+  const counts = emptyCounts();
+  let fehler: string | null = null;
+  try {
+    // sendBatchErst prueft vor jedem Inserat: schon angeschrieben, Konversation vorhanden; sendet genau item.text.
+    await sendBatchErst(items, log, (it) => {
+      if (it.ergebnis === "gesendet") counts.gesendet++;
+      else counts.uebersprungen++;
+      setzeStatus(it.id, it.ergebnis === "gesendet" ? "gesendet" : "fehler", it.meldung ?? "");
+    });
+  } catch (err) {
+    fehler = shortError(err instanceof Error ? err.message : String(err));
+    log(`✖ ${fehler}`);
+  }
+  appendPassLog({ start, ende: new Date().toISOString(), modus, erst: counts, nachfassen: emptyCounts(), antworten: 0, fehler: fehler ? [fehler] : [], stopp: fehler && is429(fehler) ? fehler : null });
+  const rest = items.filter((i) => i.ergebnis !== "gesendet").map((i) => `• ${i.titel}: ${i.ergebnis ?? "nicht versucht"} ${i.meldung ?? ""}`.trim());
+  await notify(`✉️ Freigaben gesendet: ${counts.gesendet} von ${items.length}.${rest.length ? `\n${rest.join("\n")}` : ""}${fehler ? `\n⚠ ${fehler}` : ""}`);
+  process.exit(0);
+}
+
 const P = dryRun ? "🧪 PROBE · " : "";
 const runId = await db("Durchgang anlegen", () => startRun(modus, quelle));
 await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
-const settings = loadSettings();
 
 const pass = {
   start: new Date().toISOString(), ende: "", modus,
@@ -170,14 +212,25 @@ const mayContinue = () => {
   return null;
 };
 
-// Meldungen unterwegs: Start (geplant; vom Handy meldet das schon der Bot), nach jedem Schritt, am Ende.
-if (!asked)
+// Meldungen unterwegs: Start (geplant; vom Handy meldet das schon der Bot), nach jedem Schritt, am Ende — nur bei "alle" oder Probe.
+if (!asked && laut)
   await notify(
-    `${P}▶️ Geplanter Durchgang ${hhmm(pass.start)} gestartet${dryRun ? " (sendet nichts)" : ""}.\n` +
+    `${P}▶️ ${quelle === "nachgeholt" ? "Nachgeholter" : "Geplanter"} Durchgang ${hhmm(pass.start)} gestartet${dryRun ? " (sendet nichts)" : ""}.\n` +
       "Schritte: 1 neue Inserate · 2 Antworten prüfen · 3 Nachfassen. Ich melde mich nach jedem Schritt." +
       netWarn
   );
-else if (hotspot) await notify(`${P}⚠ Laptop hängt am iPhone-Hotspot.`);
+else if (hotspot && laut) await notify(`${P}⚠ Laptop hängt am iPhone-Hotspot.`);
+
+/** Unsichere Erst-Nachricht als Rueckfrage per Telegram (hoechstens 5 am Tag, sonst Liste auf /kurse) */
+const rueckfrage = async (r: Omit<Rueckfrage, "tag" | "erstelltAm" | "status">) => {
+  const erg = rueckfrageAnlegen(r);
+  if (erg === "gestellt") {
+    const nr = heuteGestellt(loadRueckfragen(), zurichDay(new Date()));
+    const voll = { ...r, tag: "", erstelltAm: "", status: "offen" as const };
+    await notify(rueckfrageText(voll, nr), undefined, false, rueckfrageKnoepfe(voll));
+  }
+  return erg;
+};
 // Unterwegs: der Stand in der Datenbank fuer /status ("läuft gerade"), alle 5 min erneuert.
 let schritt = "1/3 Neue Inserate";
 let zaehler = "";
@@ -207,12 +260,12 @@ try {
   else {
     log(`Erst-Nachrichten: höchstens ${erstLimit}${dryRun ? " (PROBE, sendet nichts)" : ""} …`);
     const r = await runTutor24Messaging(true, max ? 1 : 10, max ? ["Mathematik"] : ["Mathematik", "Physik"], {
-      limit: erstLimit, dryRun, mayContinue, counts: pass.erst, probe: pass.probe, notes: pass.notes, texte: pass.texte, ...(max ? { maxOpen: max * 2 } : {}),
+      limit: erstLimit, dryRun, mayContinue, counts: pass.erst, probe: pass.probe, notes: pass.notes, texte: pass.texte, rueckfrage, ...(max ? { maxOpen: max * 2 } : {}),
     });
     for (const l of r.log) console.log(`  ${l}`);
     pass.fehler.push(...r.errors);
     erstNote =
-      `Erst-Nachrichten: ${sentOrWould(pass.erst)} (${erstKinds()}), ${pass.erst.uebersprungen} übersprungen` +
+      `Erst-Nachrichten: ${sentOrWould(pass.erst)} (${erstKinds()}), ${pass.erst.rueckfragen ?? 0} Rückfragen, ${pass.erst.uebersprungen} übersprungen` +
       (r.errors.length ? `, ⚠ ${r.errors.length} Inserate mit Fehler: ${shortError(r.errors[0]).slice(0, 120)}` : "") +
       ".";
   }
@@ -241,11 +294,13 @@ try {
         ...(max ? { maxScrollRounds: 2, maxReplyChecks: max } : {}),
         onStep: (step) => (
           setStep(step === "antworten" ? "2/3 Antworten prüfen" : "3/3 Nachfassen"),
-          notify(
-            step === "antworten"
-              ? `${P}✓ 1/3 Neue Inserate fertig (nach ${minutes(pass.start)}). ${erstNote}\n… 2/3 Antworten prüfen (höchstens ${max ?? 40} Chats).`
-              : `${P}✓ 2/3 Antworten geprüft (nach ${minutes(pass.start)}).\n… 3/3 Nachfassen (höchstens ${nachLimit}).`
-          )),
+          laut
+            ? notify(
+                step === "antworten"
+                  ? `${P}✓ 1/3 Neue Inserate fertig (nach ${minutes(pass.start)}). ${erstNote}\n… 2/3 Antworten prüfen (höchstens ${max ?? 40} Chats).`
+                  : `${P}✓ 2/3 Antworten geprüft (nach ${minutes(pass.start)}).\n… 3/3 Nachfassen (höchstens ${nachLimit}).`
+              )
+            : Promise.resolve()),
       },
     });
   }
@@ -312,11 +367,12 @@ log(passSummary(pass));
 if (runId) await db("Durchgang abschliessen", () => finishRun(runId, passOhneTexte));
 await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
 
-// Schlussmeldung immer, auch im Modus EIN (Stopp und Abbruch haben oben zusaetzlich ihre eigene).
+// Schlussmeldung: bei "alle" und in der Probe immer; bei "wenig" nur, wenn etwas schiefging (Stopp, Abbruch, gestoppt).
 const later = inSendWindow() ? "" : " — würde ab 8:00 gesendet";
 const list = dryRun ? `\nWürde senden:\n${pass.probe.length ? pass.probe.map((x) => `• ${x}${later}`).join("\n") : "niemand"}` : "";
 const n = dryRun ? pass.erst.wuerde : pass.erst.gesendet;
 const daten = pass.mb !== null ? `\nDaten ≈ ${pass.mb} MB (ganzer Laptop)` : "";
+if (laut || pass.stopp || fatal || busy)
 await notify(
   erstOnly
     ? `${P}${pass.stopp || fatal || busy ? "■" : "✉️"} Erst-Nachrichten ${hhmm(pass.start)} fertig (${minutes(pass.start)})\n` +
@@ -327,17 +383,13 @@ await notify(
         list.slice(0, 3500)
     : `${P}${pass.stopp || fatal || busy ? "■" : "✅"} Durchgang ${hhmm(pass.start)} fertig (${minutes(pass.start)})\n` +
         `Ergebnis: ${busy ? "vorzeitig beendet (gestoppt)" : passResult(pass)}\n` +
-        `Erst-Nachrichten ${sentOrWould(pass.erst)} (${erstKinds()}) · Nachfassen ${sentOrWould(pass.nachfassen)} · Antworten ${pass.antworten}` +
+        `Erst-Nachrichten ${sentOrWould(pass.erst)} (${erstKinds()}) · Rückfragen ${pass.erst.rueckfragen ?? 0} · Nachfassen ${sentOrWould(pass.nachfassen)} · Antworten ${pass.antworten}` +
         (pass.notes.length ? `\n${pass.notes.join("\n")}` : "") +
         daten +
         list.slice(0, 3500)
 );
-// Probe: jede Erst-Nachricht vollstaendig als eigene Meldung (Telegram: hoechstens 4096 Zeichen pro Meldung)
+// Probe: jede Erst-Nachricht vollstaendig als eigene Meldung, mit "✅ sicher" oder "❓ Rückfrage: Grund" (Telegram: hoechstens 4096 Zeichen)
 for (const [i, t] of texte.entries()) await notify(`${P}✉️ Erst-Nachricht ${i + 1}/${texte.length} (würde gesendet)\n${t}`.slice(0, 4000));
 
-// Abend-Zusammenfassung: einmal pro Tag, ab dem letzten geplanten Durchgang (nicht beim begrenzten Probelauf, nicht bei /erst)
-const today = localDay();
-if (!max && !erstOnly && summaryDue() && loadAutopilot().zusammenfassungAm !== today) {
-  if (await notify(daySummary(today), undefined, false, START_BUTTON)) updateAutopilot({ zusammenfassungAm: today });
-}
+// Abend-Zusammenfassung um 20:00 schickt seit 11.11. der Telegram-Bot (scripts/telegram-bot.mts, lib/tutor24-abend.ts).
 process.exit(0);

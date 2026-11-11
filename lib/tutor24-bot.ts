@@ -23,6 +23,9 @@ import {
   type TgUpdate,
 } from "./tutor24-autopilot";
 import { tooSoonText } from "./tutor24-lock";
+import { parseRueckfrageKnopf } from "./tutor24-rueckfragen";
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export const MAX_AGE_S = 120;
 export const CONFIRM_S = 120;
@@ -51,6 +54,10 @@ export type BotDeps = {
   gapUntil?: () => Date | null;
   /** laufenden Nachfass-Lauf vor der naechsten Nachricht anhalten (stop.request) */
   requestStop: () => void;
+  /** Knopf einer Rueckfrage (lib/tutor24-rueckfragen.ts): Senden/Ueberspringen/du/Sie → Antwort als Klartext */
+  rueckfrage?: (aktion: "send" | "skip" | "du" | "sie", id: string) => Promise<{ text: string; knoepfe?: object }>;
+  /** Klartext mit Knoepfen (neuer Text nach Anrede-Wechsel) */
+  replyKnoepfe?: (text: string, knoepfe: object) => Promise<unknown>;
 };
 
 const help = () => HELP_LINES.join("\n");
@@ -110,11 +117,24 @@ export function createBot(deps: BotDeps) {
     return "start: gestartet";
   }
 
+  /** Rueckfrage-Knopf (direkt oder vom Webhook als Befehl "rf:send:123"): anwenden, Antwort schicken */
+  async function rueckfrage(data: string): Promise<string> {
+    const k = parseRueckfrageKnopf(data);
+    if (!k) return "ignoriert: unbekannter Knopf";
+    if (!deps.rueckfrage) return "rueckfrage: nicht eingerichtet";
+    const r = await deps.rueckfrage(k.aktion, k.id);
+    if (r.knoepfe && deps.replyKnoepfe) await deps.replyKnoepfe(r.text, r.knoepfe);
+    else await deps.reply(esc(r.text));
+    return `rueckfrage: ${k.aktion} ${k.id}`;
+  }
+
   return async function handle(u: TgUpdate): Promise<string> {
     const cb = u.callback_query;
     if (cb) {
       if (String(cb.from.id) !== deps.chatId || (cb.message && String(cb.message.chat.id) !== deps.chatId)) return `ignoriert: fremder Knopf ${cb.from.id}`;
-      await deps.answerCallback?.(cb.id, cb.data === "start" ? "Wird gestartet …" : "Unbekannter Knopf");
+      const rf = parseRueckfrageKnopf(cb.data);
+      await deps.answerCallback?.(cb.id, cb.data === "start" ? "Wird gestartet …" : rf ? "Wird angewendet …" : "Unbekannter Knopf");
+      if (rf) return rueckfrage(cb.data ?? "");
       return cb.data === "start" ? startNow() : "ignoriert: unbekannter Knopf";
     }
     const m = u.message;
@@ -146,8 +166,9 @@ export function createBot(deps: BotDeps) {
     const cmd = text.split(/[\s@]/)[0].toLowerCase();
     if (cmd !== "") pendingEnable = null;
 
-    // "start" kommt vom Webhook auf Vercel (Knopf, als Befehl in die Datenbank gelegt)
+    // "start" und "rf:…" kommen vom Webhook auf Vercel (Knopf, als Befehl in die Datenbank gelegt)
     if (cmd === "start") return startNow();
+    if (cmd.startsWith("rf:")) return rueckfrage(cmd);
 
     if (cmd === "/status") {
       await deps.reply(statusHtml(deps.state(), deps.passes(), deps.now()));

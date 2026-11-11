@@ -50,7 +50,7 @@ export function updateAutopilot(patch: Partial<AutoState>): AutoState {
 // ── Protokoll ─────────────────────────────────────────────────────────────────
 
 /** kurs/hinweis: nur Erst-Nachrichten — wie viele davon mit Kursblock bzw. Academigo-Hinweis (gesendet oder wuerde) */
-export type PassCounts = { gesendet: number; wuerde: number; uebersprungen: number; pruefungFehler: number; kurs?: number; hinweis?: number };
+export type PassCounts = { gesendet: number; wuerde: number; uebersprungen: number; pruefungFehler: number; kurs?: number; hinweis?: number; /** als Rueckfrage per Telegram gestellt (11.11.) */ rueckfragen?: number };
 export type PassLog = {
   start: string;
   ende: string;

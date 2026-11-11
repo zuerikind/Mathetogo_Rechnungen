@@ -59,6 +59,18 @@ describe("Telegram-Webhook (Vercel)", () => {
     expect(w.queued.map(([, c]) => c)).toEqual(["start", "/run", "/enable", "JA EINSCHALTEN"]);
   });
 
+  it("Rueckfrage-Knoepfe gehen geprueft an den Laptop; offline bleibt die Rueckfrage offen; fremde Daten nicht", async () => {
+    const w = setup(on);
+    const press = (data: string, id = "r1"): TgUpdate => ({ update_id: 50, callback_query: { id, data, from: { id: Number(ME) }, message: { chat: { id: Number(ME) } } } });
+    expect(await w.handle(press("rf:send:6302015"))).toBe("rf:send:6302015: weitergegeben");
+    expect(await w.handle(press("rf:du:6302015", "r2"))).toBe("rf:du:6302015: weitergegeben");
+    expect(await w.handle(press("rf:send:6302015; drop", "r3"))).toBe("ignoriert: unbekannter Knopf");
+    expect(w.queued.map(([, c]) => c)).toEqual(["rf:send:6302015", "rf:du:6302015"]);
+    const o = setup(off);
+    expect(await o.handle(press("rf:skip:1"))).toBe("rf:skip:1: offline");
+    expect(o.replies[0]).toMatch(/bleibt offen; bis 20 Uhr/);
+    expect(o.queued).toHaveLength(0);
+  });
   it("/status antwortet auch offline, mit Laptop-Zeile", async () => {
     const w = setup(off);
     await w.handle(w.msg("/status"));

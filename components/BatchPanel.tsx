@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Batch, BatchItem, Markiert } from "@/lib/tutor24-batch";
+import type { Rueckfrage } from "@/lib/tutor24-rueckfragen";
 
-type State = { batch: Batch | null; laeuft: boolean; pause: string | null; vorbereitenGesperrt: string | null; sendenGesperrt: string | null; online?: boolean; markiert?: Markiert[] };
+type State = { batch: Batch | null; laeuft: boolean; pause: string | null; vorbereitenGesperrt: string | null; sendenGesperrt: string | null; online?: boolean; markiert?: Markiert[]; rueckfragen?: Omit<Rueckfrage, "info">[]; meldung?: string };
 
 const btn = "rounded-lg px-3 py-1.5 text-sm font-semibold disabled:opacity-50";
 const SPRACHE = { de: "Deutsch", en: "Englisch", fr: "Französisch" } as const;
@@ -88,6 +89,37 @@ export function BatchPanel() {
           </details>
         )}
       </div>
+
+      {!!s.rueckfragen?.length && (
+        <div className="rounded-2xl border border-[#4A7FC1] bg-white p-5">
+          <h2 className="text-lg font-semibold text-gray-900">Rückfragen der Automatik ({s.rueckfragen.length})</h2>
+          <p className="mt-1 text-sm text-gray-500">Dieselben Knöpfe wie in Telegram. Freigegebene werden im nächsten erlaubten Lauf gesendet; offene verfallen um 20:00.</p>
+          {s.meldung && <p className="mt-2 text-sm text-gray-700">{s.meldung}</p>}
+          {s.rueckfragen.map((r) => (
+            <div key={r.id} className="mt-3 border-t border-gray-100 pt-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <span>
+                  <a href={r.link} target="_blank" rel="noreferrer" className="font-semibold text-[#4A7FC1] underline">{r.titel}</a>
+                  <span className="block text-xs text-gray-500">❓ {r.grund} · Stufe: {r.stufe || "–"} · Anrede: {ANREDE[r.anrede] ?? r.anrede} · {r.status === "freigegeben" ? "freigegeben, wartet auf den Lauf" : "offen"}</span>
+                </span>
+                {r.status === "offen" && (
+                  <div className="flex flex-wrap gap-2">
+                    <button className={`${btn} bg-green-600 text-white`} disabled={busy} onClick={() => post({ action: "rueckfrage", id: r.id, aktion: "send" })}>Senden</button>
+                    <button className={`${btn} border border-gray-200 text-gray-600`} disabled={busy} onClick={() => post({ action: "rueckfrage", id: r.id, aktion: "skip" })}>Überspringen</button>
+                    {r.sprache === "de" && (
+                      <>
+                        <button className={`${btn} border border-gray-200 text-gray-600`} disabled={busy} onClick={() => post({ action: "rueckfrage", id: r.id, aktion: "du" })}>Anrede: du</button>
+                        <button className={`${btn} border border-gray-200 text-gray-600`} disabled={busy} onClick={() => post({ action: "rueckfrage", id: r.id, aktion: "sie" })}>Anrede: Sie</button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="mt-2 whitespace-pre-wrap rounded-xl bg-gray-50 p-4 text-sm leading-6 text-gray-800">{r.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {!!s.markiert?.length && (
         <div className="rounded-2xl border border-amber-300 bg-white p-5">

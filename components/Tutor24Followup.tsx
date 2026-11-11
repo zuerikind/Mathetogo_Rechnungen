@@ -70,6 +70,8 @@ type StatusResponse = {
   /** Stand aus Tutor24Lead: Anrede, Sprache, Kurs der Erst-Nachricht */
   leads: LeadMap;
   autopilot: AutopilotInfo;
+  /** Rueckfragen per Telegram: Zaehler "in Folge freigegeben" (ki, en, unklar), Stand heute */
+  rueckfragen?: { folge: { ki: number; en: number; unklar: number }; offen: number; freigegeben: number; gesendet: number; uebersprungen: number; verfallen: number };
   uebersicht: OverviewInfo;
   send: {
     limit: number;
@@ -883,6 +885,18 @@ export function Tutor24Followup({
                 </SettingRow>
                 <SettingRow title="Nachfassen frühestens nach" help="So viele Tage nach der Erst-Nachricht, und nur ohne Antwort (mindestens 3).">
                   <NumberField id="set-tage" value={draft.settings.nachfassNachTagen} min={3} unit="Tagen" disabled={running} onChange={(v) => setSettings({ nachfassNachTagen: v })} />
+                </SettingRow>
+                <SettingRow title="Anrede unklar gilt als sicher" help={`Neutraler fester Text ohne KI-Satz wird ohne Rückfrage gesendet; bis 25.11. stehen diese Texte vollständig in der Abend-Zusammenfassung. Per Telegram freigegeben in Folge: ${status.rueckfragen?.folge.unklar ?? 0}.`}>
+                  <Toggle id="set-sicher-unklar" checked={draft.settings.sicherUnklar} disabled={running} onChange={(v) => setSettings({ sicherUnklar: v })} />
+                </SettingRow>
+                <SettingRow title="KI-Sätze gelten als sicher" help={`Aus: jede Nachricht mit KI-Satz kommt als Rückfrage per Telegram. In Folge ohne Überspringen freigegeben: ${status.rueckfragen?.folge.ki ?? 0} (Vorschlag: ab 30 einschalten).`}>
+                  <Toggle id="set-sicher-ki" checked={draft.settings.sicherKi} disabled={running} onChange={(v) => setSettings({ sicherKi: v })} />
+                </SettingRow>
+                <SettingRow title="Englisch gilt als sicher" help={`Aus: englische Nachrichten kommen als Rückfrage. In Folge freigegeben: ${status.rueckfragen?.folge.en ?? 0} (Vorschlag: ab 10 einschalten). Französisch bleibt immer Rückfrage.`}>
+                  <Toggle id="set-sicher-en" checked={draft.settings.sicherEn} disabled={running} onChange={(v) => setSettings({ sicherEn: v })} />
+                </SettingRow>
+                <SettingRow title="Alle Telegram-Meldungen" help="Aus (Standard): nur Rückfragen, Antworten von Interessenten, Stopps und Fehler, Abend-Zusammenfassung um 20:00. Ein: zusätzlich Start- und Schritt-Meldungen jedes Durchgangs. Im Probemodus kommen immer alle.">
+                  <Toggle id="set-meldungen" checked={draft.settings.meldungen === "alle"} disabled={running} onChange={(v) => setSettings({ meldungen: v ? "alle" : "wenig" })} />
                 </SettingRow>
                 <SettingRow title="Durchgänge um" help="Uhrzeiten, mit Komma getrennt, je mindestens 2 Stunden auseinander. Beim Speichern wird die Windows-Aufgabe angepasst; der Wächter richtet sich danach.">
                   <div className="w-full min-w-0 sm:w-56">

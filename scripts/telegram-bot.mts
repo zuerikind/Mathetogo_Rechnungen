@@ -14,11 +14,17 @@ import { config } from "dotenv";
 
 config({ path: ".env.local" });
 
-const { answerCallback, getUpdates, laptopSignal, loadAutopilot, notify, readPassLog, updateAutopilot } = await import("../lib/tutor24-autopilot");
+const { activePause, answerCallback, getUpdates, inSendWindow, laptopSignal, loadAutopilot, notify, readPassLog, runTimes, updateAutopilot } = await import("../lib/tutor24-autopilot");
 const { commandResult, takeCommands, writeLaptop } = await import("../lib/tutor24-watch-db");
 const { PROBE_MAX, createBot } = await import("../lib/tutor24-bot");
 const { readStatus, requestStop } = await import("../lib/tutor24-followup-store");
 const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock, earliestNext, pidAlive, readTutor24Lock } = await import("../lib/tutor24-lock");
+const { VERFALL_H, sendeLaufFaellig, verfallenLassen } = await import("../lib/tutor24-rueckfragen");
+const { rueckfrageAktion } = await import("../lib/tutor24-rueckfragen-aktion");
+const { abendZusammenfassung } = await import("../lib/tutor24-abend");
+const { speicherProblem } = await import("../lib/tutor24-batch");
+const { hasInternet } = await import("../lib/tutor24-network");
+const { toMin, zurichParts, zurichTime } = await import("../lib/tutor24-schedule");
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   console.error("TELEGRAM_BOT_TOKEN fehlt in .env.local");
@@ -127,7 +133,81 @@ const handle = createBot({
   requestStop,
   gapUntil: () => earliestNext(),
   answerCallback,
+  // Rueckfragen (11.11.): Knoepfe Senden / Ueberspringen / du / Sie
+  rueckfrage: (aktion, id) => rueckfrageAktion(aktion, id),
+  replyKnoepfe: (text, knoepfe) => notify(text, me, false, knoepfe),
 });
+
+// ── Selbst wieder anlaufen, Freigaben senden, Verfall, Abend-Zusammenfassung (11.11.) ─────────────
+// Alles hoechstens einmal pro Minute, nie waehrend ein Lauf laeuft. Fehler hier duerfen den Bot nicht beenden.
+let pflegeAt = 0;
+let nachholVersuchAt = 0;
+let freigabeVersuchAt = 0;
+/** Darf jetzt ein Lauf auf tutor24 starten? null = ja, sonst der Grund (nur fuers Protokoll) */
+const startHindernis = async (): Promise<string | null> => {
+  const b = busy();
+  if (b) return `läuft: ${b}`;
+  if (activePause(readPassLog(50))) return "429-Pause";
+  const soon = earliestNext();
+  if (soon) return `Mindestabstand bis ${soon.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" })}`;
+  const sp = speicherProblem();
+  if (sp) return "zu wenig Speicher";
+  if (!(await hasInternet())) return "kein Internet";
+  return null;
+};
+const pflege = async () => {
+  if (Date.now() - pflegeAt < 60_000) return;
+  pflegeAt = Date.now();
+  const now = new Date();
+  const s = loadAutopilot();
+  const z = zurichParts(now);
+  const today = z.day;
+  const mins = z.h * 60 + z.m;
+
+  // 1. Offene Rueckfragen verfallen (ab 20 Uhr bzw. von gestern) → Liste auf /kurse
+  const v = verfallenLassen(now);
+  if (v.length) await notify(`⏳ ${v.length} Rückfrage${v.length === 1 ? "" : "n"} unbeantwortet — in der Liste „Von der Automatik markiert“ auf /kurse.`);
+
+  // 2. Freigaben senden: 10 min nach dem letzten Knopf, nur im Modus EIN, 8–20 Uhr, Mindestabstand, kein Lauf
+  if (s.modus === "an" && sendeLaufFaellig(now) && inSendWindow(now) && Date.now() - freigabeVersuchAt > 10 * 60_000) {
+    const h = await startHindernis();
+    if (h) console.log(`${stamp()} Freigaben warten (${h}).`);
+    else {
+      freigabeVersuchAt = Date.now();
+      spawnAutopilot("--freigaben --quelle freigabe");
+      console.log(`${stamp()} Sende-Lauf für freigegebene Rückfragen gestartet.`);
+    }
+    return; // ein Start pro Minute
+  }
+
+  // 3. Verpassten Durchgang nachholen: faellige Zeit + 10 min vorbei, kein Durchgang seither, Modus nicht aus
+  if (s.modus !== "aus" && Date.now() - nachholVersuchAt > 10 * 60_000 && (s.modus === "probe" || inSendWindow(now))) {
+    const due = runTimes().map((t) => toMin(t)).filter((m) => m + 10 <= mins).pop();
+    if (due !== undefined) {
+      const dueAt = zurichTime(today, Math.floor(due / 60), due % 60);
+      const seit = readPassLog(50).some((p) => new Date(p.start).getTime() >= dueAt.getTime() - 30 * 60_000);
+      if (!seit) {
+        const h = await startHindernis();
+        if (h) console.log(`${stamp()} Durchgang von ${String(Math.floor(due / 60)).padStart(2, "0")}:${String(due % 60).padStart(2, "0")} fehlt, warte (${h}).`);
+        else {
+          nachholVersuchAt = Date.now();
+          spawnAutopilot("--quelle nachgeholt");
+          console.log(`${stamp()} Verpassten Durchgang nachgeholt (gestartet).`);
+          return;
+        }
+      }
+    }
+  }
+
+  // 4. Abend-Zusammenfassung um 20:00, einmal pro Tag (auch wenn die Automatik aus ist)
+  if (z.h >= VERFALL_H && s.zusammenfassungAm !== today) {
+    const { text, texte } = await abendZusammenfassung(now);
+    if (await notify(text)) {
+      updateAutopilot({ zusammenfassungAm: today });
+      for (const [i, t] of texte.entries()) await notify(`Anrede unklar ${i + 1}/${texte.length} (heute gesendet)\n${t}`.slice(0, 4000));
+    }
+  }
+};
 
 const stamp = () => new Date().toLocaleString("de-CH");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -157,7 +237,7 @@ const fromQueue = async () => {
   }
 };
 
-console.log(`${stamp()} Telegram-Bot läuft. Befehle: /status, /run, /stop, /enable, Knopf „Jetzt starten“`);
+console.log(`${stamp()} Telegram-Bot läuft. Befehle: /status, /run, /stop, /enable, Knopf „Jetzt starten“, Rückfrage-Knöpfe; holt verpasste Durchgänge nach, sendet Freigaben, Abend-Zusammenfassung um ${VERFALL_H}:00`);
 if (crashed) {
   console.log(`${stamp()} Neu gestartet nach Ausfall (${crashed})`);
   await notify(`♻️ Telegram-Bot war ausgefallen (${crashed}) und wurde automatisch neu gestartet. Befehle gehen wieder.`).catch(() => {});
@@ -176,6 +256,7 @@ for (;;) {
         queueFailedAt = Date.now();
         console.error(`${stamp()} Befehle: ${err instanceof Error ? err.message : String(err)}`);
       });
+    await pflege().catch((err) => console.error(`${stamp()} Pflege: ${err instanceof Error ? err.message : String(err)}`));
     if (webhook && Date.now() - webhookCheckedAt < 60 * 60_000) {
       await sleep(4000);
       continue;

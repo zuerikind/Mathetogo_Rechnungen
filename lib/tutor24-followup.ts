@@ -455,6 +455,15 @@ export type FollowupSettings = {
   satzV4: boolean;
   /** Feste zwei Saetze pro Stufe und Anrede; {nom}/{akk}/{dat} = "Ihre Tochter"/"Ihre Tochter"/"Ihrer Tochter" usw. */
   zweiSaetze: Record<SatzStufe, Record<ZweiAnrede, string>>;
+  /**
+   * Automatik ohne Rueckfrage (11.11., lib/tutor24-rueckfragen.ts): "Anrede unklar" mit neutralem festem Text gilt als
+   * sicher (Standard EIN); KI-Saetze bzw. Englisch gelten als sicher (Standard AUS, Omid entscheidet nach dem Zaehler).
+   */
+  sicherUnklar: boolean;
+  sicherKi: boolean;
+  sicherEn: boolean;
+  /** Telegram: "wenig" = nur Rueckfragen, Antworten, Stopps/Fehler, Abend-Zusammenfassung; "alle" = auch Start und Schritte. Probe immer alle. */
+  meldungen: "wenig" | "alle";
 };
 
 export type ZweiAnrede = "du" | "eltern" | "neutral" | "en" | "fr";
@@ -608,6 +617,10 @@ export function mergeSettings(saved: Partial<FollowupSettings> | null | undefine
     festeSaetze: mergeFesteSaetze(saved?.festeSaetze),
     satzV4: saved?.satzV4 === true,
     zweiSaetze: mergeZweiSaetze(saved?.zweiSaetze),
+    sicherUnklar: saved?.sicherUnklar !== false,
+    sicherKi: saved?.sicherKi === true,
+    sicherEn: saved?.sicherEn === true,
+    meldungen: saved?.meldungen === "alle" ? "alle" : "wenig",
   };
 }
 

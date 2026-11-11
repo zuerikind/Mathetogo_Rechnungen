@@ -3,6 +3,9 @@ rem Mathetogo-App fuer den Alltag starten: fertige Version (npm start) statt Ent
 rem Baut nur neu, wenn sich der Code seit dem letzten Bauen geaendert hat (neuer Git-Stand). Fenster offen lassen = App laeuft.
 cd /d "%~dp0.."
 title Mathetogo App - localhost:3000 (Fenster offen lassen)
+rem --still: Autostart bei der Anmeldung (Windows-Aufgabe "Mathetogo App", 11.11.): kein Browserfenster, kein Warten auf Tastendruck
+set STILL=
+if "%~1"=="--still" set STILL=1
 
 rem Laeuft schon etwas auf Port 3000 (z. B. alter Entwicklungsserver)? Beenden.
 rem (netstat zeigt auf deutschem Windows "ABHOEREN" statt LISTENING, darum ueber PowerShell)
@@ -21,7 +24,7 @@ call npm run build
 if errorlevel 1 (
   echo.
   echo Bauen fehlgeschlagen. Fenster bitte offen lassen und Claude Bescheid geben.
-  pause
+  if not defined STILL pause
   exit /b 1
 )
 echo %STAND%> ".next\gebaut-von.txt"
@@ -30,5 +33,5 @@ echo %STAND%> ".next\gebaut-von.txt"
 rem Auth.js vertraut im Entwicklungsmodus localhost von selbst, in der fertigen Version erst mit dieser Angabe
 set AUTH_TRUST_HOST=true
 echo App startet: http://localhost:3000/kurse
-start "" cmd /c "timeout /t 6 >nul & start http://localhost:3000/kurse"
+if not defined STILL start "" cmd /c "timeout /t 6 >nul & start http://localhost:3000/kurse"
 call npm start

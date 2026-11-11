@@ -9,7 +9,8 @@ import {
   TUTOR24_MESSAGE_TEMPLATE,
 } from "./tutor24-message-prompt";
 import { agenturVerdacht, assembleFirstMessage, festerSatz, festeZweiSaetze, matheNebenfach, planFirstMessage, satzStufe } from "./tutor24-course-offer";
-import { addMarkiert, loadMarkiert } from "./tutor24-batch";
+import { addMarkiert, loadMarkiert, wahlOf } from "./tutor24-batch";
+import { rueckfrageArt, unsicherGruende, type Rueckfrage } from "./tutor24-rueckfragen";
 import { courseSnapshot, parseJobText, type ListingInfo } from "./tutor24-followup";
 import { loadCourses, loadLog, loadSettings } from "./tutor24-followup-store";
 import { listingHash, recordSend, type LeadFields } from "./tutor24-leads";
@@ -51,6 +52,11 @@ export type AutoErst = {
   maxOpen?: number;
   /** Probe: vollstaendige Texte der Erst-Nachrichten, die gesendet wuerden (Telegram, je eine Meldung) */
   texte?: string[];
+  /**
+   * Automatik (11.11.): unsichere Nachricht als Rueckfrage stellen (lib/tutor24-rueckfragen.ts) statt senden.
+   * Fehlt die Funktion, gelten alle als Rueckfrage → Liste "markiert".
+   */
+  rueckfrage?: (r: Omit<Rueckfrage, "tag" | "erstelltAm" | "status">) => Promise<"gestellt" | "liste" | "schon">;
   /** Batch vorbereiten (scripts/batch.mts): Nachricht nur sammeln, nichts senden */
   collect?: (item: CollectedListing) => void;
 };
@@ -411,7 +417,8 @@ export async function runTutor24Messaging(
             const info = parseJobText(await page.evaluate(() => document.body.innerText), listingTitle);
             // Analyse immer (ohne KI): die Person kommt so oder so in Tutor24Lead.
             let plan = planFirstMessage(info, loadCourses(), loadSettings(), await loadLog(), new Date(), language);
-            // Automatik (10.11.): Agentur- oder Nebenfach-Verdacht nie anschreiben, sondern in die Liste auf /kurse (auch in der Probe).
+            // Automatik (10./11.11.): Agentur- oder Nebenfach-Verdacht nie von selbst anschreiben — Rueckfrage per Telegram
+            // (lib/tutor24-rueckfragen.ts) oder Liste auf /kurse; "Pruefung nicht bestanden" immer Liste.
             const markieren = (grund: string) => {
               addMarkiert({ id: tutor24Id, titel: info.title || displayName, link: href, grund, am: new Date().toISOString() });
               auto!.counts.uebersprungen++;
@@ -419,11 +426,7 @@ export async function runTutor24Messaging(
               tag(`markiert, nicht angeschrieben: ${grund}`);
             };
             const verdacht = auto && !auto.collect ? agenturVerdacht(info) : null;
-            const nebenfach = auto && !auto.collect && !verdacht ? matheNebenfach(info) : null;
-            if (verdacht || nebenfach) {
-              markieren(verdacht ? `Möglicherweise Agentur: ${verdacht}` : `Mathe nur Nebenfach: ${nebenfach}`);
-              continue;
-            }
+            const nebenfach = auto && !auto.collect ? matheNebenfach(info) : null;
             // Seit 9.11. auch Franzoesisch mit festem Text (vous) statt KI-Uebersetzung der alten du-Vorlage.
             const composed = await composeFirstMessage(info, tag, new Date(), language);
             plan = composed.plan;
@@ -438,6 +441,27 @@ export async function runTutor24Messaging(
               auto.counts.pruefungFehler++;
               markieren(`Prüfung nicht bestanden: ${composed.problem}`);
               continue;
+            }
+            // Sicher oder Rueckfrage? (Omid, 11.11.) Sicher = fester Text, Anrede erkannt (oder unklar + neutraler Text),
+            // Stufe erkannt, Deutsch, keine Markierung. Alles andere stellt die Automatik als Rueckfrage; die Probe zeigt es nur.
+            let sicherLabel = "";
+            if (auto && !auto.collect) {
+              const sicherInput = { sprache: language, wer: plan.addressee.wer, satz: composed.satz, problem: composed.problem, agentur: verdacht, nebenfach };
+              const gruende = unsicherGruende(sicherInput, loadSettings());
+              sicherLabel = gruende.length ? `❓ Rückfrage: ${gruende.join("; ")}` : "✅ sicher";
+              if (gruende.length && !auto.dryRun) {
+                const r = {
+                  id: tutor24Id, titel: info.title || displayName, stufe: info.schulstufe, link: href, sprache: language, anrede: wahlOf(plan.addressee),
+                  grund: gruende.join("; "), art: rueckfrageArt(sicherInput), text: composed.text, kursId: composed.course?.id ?? null, hint: composed.hint, satz: composed.satz, info,
+                };
+                const ergebnis = auto.rueckfrage ? await auto.rueckfrage(r) : "liste";
+                if (ergebnis === "liste") markieren(`${r.grund} (ohne Rückfrage)`);
+                else {
+                  auto.counts.rueckfragen = (auto.counts.rueckfragen ?? 0) + 1;
+                  tag(`Rückfrage ${ergebnis === "schon" ? "besteht schon" : "gestellt"}: ${r.grund}`);
+                }
+                continue;
+              }
             }
             if (composed.problem) {
               altText = composed.problem;
@@ -463,7 +487,7 @@ export async function runTutor24Messaging(
               countKind();
               // Inserate haben keinen Personennamen (displayName ist der Titel): nur Link, Kurs — nichts aus dem Inserat.
               auto.probe.push(`Inserat https://tutor24.ch/de/jobs/${tutor24Id} · ${course?.name ?? kindLabel}${altText ? " (alter Text)" : ""} · Erst-Nachricht`);
-              auto.texte?.push(`https://tutor24.ch/de/jobs/${tutor24Id} · ${info.title || displayName}\n\n${message}`);
+              auto.texte?.push(`${sicherLabel}\nhttps://tutor24.ch/de/jobs/${tutor24Id} · ${info.title || displayName}\n\n${message}`);
               tag(`PROBE — würde senden (${course?.name ?? kindLabel}):\n${message}`);
               continue;
             }

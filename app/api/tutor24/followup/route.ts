@@ -25,6 +25,7 @@ import {
 } from "@/lib/tutor24-followup-store";
 import { earliestNext, pidAlive, readTutor24Lock, tooSoonText } from "@/lib/tutor24-lock";
 import { DEFAULT_TIMES, normTimes } from "@/lib/tutor24-schedule";
+import { tagesStand, zurichDay } from "@/lib/tutor24-rueckfragen";
 import { activePause, loadAutopilot, localDay, nextScheduled, passView, readPassLog, runTimes, updateAutopilot, type AutoMode, type PassLog } from "@/lib/tutor24-autopilot";
 import { laptopOnline } from "@/lib/tutor24-watch";
 import { lastPasses, queueCommand, readLaptop } from "@/lib/tutor24-watch-db";
@@ -136,6 +137,8 @@ export async function GET() {
     log,
     leads,
     autopilot: { ...loadAutopilot(), telegramOffset: undefined, durchgaenge: passes.slice(-60).reverse().map(passView) },
+    // Rueckfragen per Telegram (lib/tutor24-rueckfragen.ts): Zaehler "in Folge freigegeben" fuer Omids Schalter-Entscheid
+    rueckfragen: tagesStand(zurichDay(new Date())),
     uebersicht: await overview(passes, settings),
     send: {
       limit: MAX_SENDS_PER_DAY,

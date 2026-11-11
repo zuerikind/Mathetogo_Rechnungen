@@ -11,6 +11,7 @@ import { CONFIRM_WORD, ERST_MAX, MAX_AGE_S, parseErst } from "./tutor24-bot";
 import { HELP_LINES, fmtZurich, statusHtml, type AutoState, type PassLog, type TgUpdate } from "./tutor24-autopilot";
 import { DEFAULT_TIMES, normTimes } from "./tutor24-schedule";
 import { laptopOnline, offlineText, type LaptopSignal, type Progress } from "./tutor24-watch";
+import { parseRueckfrageKnopf } from "./tutor24-rueckfragen";
 
 export type WebhookDeps = {
   chatId: string;
@@ -54,18 +55,22 @@ export function createWebhook(deps: WebhookDeps) {
     const cb = u.callback_query;
     if (cb) {
       if (String(cb.from.id) !== deps.chatId || (cb.message && String(cb.message.chat.id) !== deps.chatId)) return "ignoriert: fremder Knopf";
-      if (cb.data !== "start") {
+      // Nur bekannte Knoepfe, nur geprueft (Rueckfrage: "rf:send:123" u. ae.) — nie freie Daten weitergeben
+      const rf = parseRueckfrageKnopf(cb.data);
+      const what = cb.data === "start" ? "start" : rf ? `rf:${rf.aktion}:${rf.id}` : null;
+      if (!what) {
         await deps.answerCallback(cb.id, "Unbekannter Knopf");
         return "ignoriert: unbekannter Knopf";
       }
       if (!online) {
         await deps.answerCallback(cb.id, "Laptop ist offline");
-        await deps.reply(offline);
-        return "start: offline";
+        await deps.reply(rf ? `${offline}
+Die Rückfrage bleibt offen; bis 20 Uhr kannst du den Knopf nochmals drücken.` : offline);
+        return `${what}: offline`;
       }
-      const fresh = await deps.queue(`cb:${cb.id}`, "start");
+      const fresh = await deps.queue(`cb:${cb.id}`, what);
       await deps.answerCallback(cb.id, fresh ? "An den Laptop übergeben …" : "Schon übergeben");
-      return fresh ? "start: weitergegeben" : "start: doppelt";
+      return fresh ? `${what}: weitergegeben` : `${what}: doppelt`;
     }
 
     const m = u.message;

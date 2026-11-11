@@ -7,6 +7,8 @@ import { ANREDE_WAHL, BATCH_MAX, addresseeFor, loadBatch, loadMarkiert, markiert
 import { FOLLOWUP_DIR } from "@/lib/tutor24-followup-store";
 import { earliestNext, lastRunEnd, pidAlive, readTutor24Lock, tooSoonText, AUTOPILOT_LOCK_PATH } from "@/lib/tutor24-lock";
 import { RATE_LIMIT_TEXT, activePause, fmtZurich, readPassLog } from "@/lib/tutor24-autopilot";
+import { loadRueckfragen } from "@/lib/tutor24-rueckfragen";
+import { rueckfrageAktion } from "@/lib/tutor24-rueckfragen-aktion";
 
 export const runtime = "nodejs";
 
@@ -30,6 +32,8 @@ function state() {
     sendenGesperrt: speicher ?? (pause ? "429-Pause" : sendBlock(b, now, lastRunEnd(), earliest)),
     /** von der Automatik markiert, nicht angeschrieben (Agentur, Nebenfach, Pruefung) */
     markiert: loadMarkiert().filter((m) => !m.erledigt),
+    /** offene und freigegebene Rueckfragen (Telegram): hier dieselben Knoepfe */
+    rueckfragen: loadRueckfragen().items.filter((r) => r.status === "offen" || r.status === "freigegeben").map(({ info: _i, ...r }) => r),
   };
 }
 
@@ -51,7 +55,12 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   if (!(await auth())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (process.env.VERCEL) return NextResponse.json({ error: "Batch nur auf dem Laptop (localhost:3000/kurse)." }, { status: 400 });
-  const body = (await req.json().catch(() => ({}))) as { action?: string; anzahl?: unknown; id?: string; ausgewaehlt?: boolean; anrede?: string };
+  const body = (await req.json().catch(() => ({}))) as { action?: string; anzahl?: unknown; id?: string; ausgewaehlt?: boolean; anrede?: string; aktion?: string };
+  // Rueckfrage-Knoepfe wie in Telegram (Senden / Ueberspringen / du / Sie)
+  if (body.action === "rueckfrage" && body.id && /^\d{1,12}$/.test(body.id) && ["send", "skip", "du", "sie"].includes(body.aktion ?? "")) {
+    const r = await rueckfrageAktion(body.aktion as "send" | "skip" | "du" | "sie", body.id);
+    return NextResponse.json({ ...state(), meldung: r.text });
+  }
   // Markierte Inserate: "Erledigt" blendet aus (die Automatik oeffnet sie trotzdem nie wieder)
   if (body.action === "markiert-erledigt" && body.id) {
     markiertErledigt(body.id);
