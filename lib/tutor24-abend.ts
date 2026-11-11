@@ -11,6 +11,7 @@ import { loadLog } from "./tutor24-leads";
 import { UNKLAR_ZEIGEN_BIS, tagesStand, zurichDay } from "./tutor24-rueckfragen";
 import { AGENT_DETAIL_BIS, loadAgentLog, type AgentEintrag } from "./tutor24-pruefagent";
 
+const NACHFASSEN_KNOPF_BIS = "2026-11-26";
 const dm = (iso: string) => `${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7))}.`;
 
 /** Erster Teil: Zahlen (ohne Datenbank, testbar) */
@@ -38,6 +39,10 @@ export function agentText(tag: string, eintraege: AgentEintrag[] = loadAgentLog(
       `Seit Start insgesamt: ${echt.filter((e) => e.urteil === "ok").length} ok, ${echt.filter((e) => e.urteil === "auffaellig").length} auffällig, ` +
         `${echt.filter((e) => e.urteil === "fehler").length} Agent nicht erreichbar.`
     );
+  // Omid 12.11.: kein Senden-Knopf fuer auffaellige Nachfassen; melden, wenn es in den ersten zwei Wochen mehr als zweimal vorkommt
+  const nf = echt.filter((e) => e.art !== "erst" && e.urteil === "auffaellig");
+  if (tag <= NACHFASSEN_KNOPF_BIS && nf.length > 2 && nf.some((e) => e.tag === tag))
+    zeilen.push(`⚠ Seit Start ${nf.length} Nachfassen vom Agenten zurückgehalten (mehr als 2): Entscheidung zum Senden-Knopf fürs Nachfassen neu treffen.`);
   return zeilen.join("\n");
 }
 

@@ -69,4 +69,12 @@ describe("Prüf-Agent", () => {
     expect(agentText("2026-11-25", [e("2026-11-25", "ok")])).not.toContain("Seit Start");
     expect(agentText("2026-11-12", [])).toBe("");
   });
+
+  it("Abend: mehr als 2 zurückgehaltene Nachfassen → Hinweis (nur am Tag eines neuen, bis 26.11.)", () => {
+    const nf = (tag: string) => ({ am: "", tag, id: "1", art: "nachfassen" as const, titel: "t", urteil: "auffaellig" as const, grund: "g" });
+    expect(agentText("2026-11-13", [nf("2026-11-12"), nf("2026-11-13")])).not.toContain("Senden-Knopf");
+    expect(agentText("2026-11-14", [nf("2026-11-12"), nf("2026-11-13"), nf("2026-11-14")])).toContain("3 Nachfassen");
+    expect(agentText("2026-11-15", [nf("2026-11-12"), nf("2026-11-13"), nf("2026-11-14")])).not.toContain("Senden-Knopf");
+    expect(agentText("2026-11-27", [nf("2026-11-25"), nf("2026-11-26"), nf("2026-11-27")])).not.toContain("Senden-Knopf");
+  });
 });
