@@ -19,7 +19,7 @@ import type { FollowupSettings, ListingInfo } from "./tutor24-followup";
 
 export const RUECKFRAGEN_PATH = join(FOLLOWUP_DIR, "rueckfragen.json");
 export const KI_VERBESSERUNGEN_PATH = join(FOLLOWUP_DIR, "ki_verbesserungen.md");
-export const MAX_PRO_TAG = 5;
+export const MAX_PRO_TAG = 10; // 11.11. abends: 10 statt 5 (zwei Durchgaenge)
 /** Ab dieser Stunde (Zuerich) verfallen offene Rueckfragen des Tages */
 export const VERFALL_H = 20;
 /** Freigaben sammeln: so lange nach dem letzten Knopfdruck wartet der Sende-Lauf */

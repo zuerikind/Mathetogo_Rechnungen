@@ -27,6 +27,8 @@ const { laptopSignal } = await import("../lib/tutor24-autopilot");
 const { finishRun, startRun, takeStops, writeLaptop, writeProgress } = await import("../lib/tutor24-watch-db");
 const { freigegebene, heuteGestellt, loadRueckfragen, rueckfrageAnlegen, rueckfrageKnoepfe, rueckfrageText, setzeStatus, zurichDay } = await import("../lib/tutor24-rueckfragen");
 type Rueckfrage = import("../lib/tutor24-rueckfragen").Rueckfrage;
+const { agentPass, agentProtokoll, agentZaehlen, pruefAgent, urteilLabel } = await import("../lib/tutor24-pruefagent");
+const { addMarkiert } = await import("../lib/tutor24-batch");
 
 /** Datenbank fuer den Waechter: ein Fehler dort darf den Durchgang weder verhindern noch abbrechen. */
 const db = async <T,>(what: string, f: () => Promise<T>): Promise<T | null> => {
@@ -197,6 +199,10 @@ const pass = {
   notes: [] as string[],
   /** Datenmenge des Durchgangs (ganzer Laptop, Hotspot-Verbrauch), MB */
   mb: null as number | null,
+  /** Pruef-Agent: Zaehler des Durchgangs (Erst-Nachrichten und Nachfassen) */
+  agent: agentPass(),
+  /** Pruefung nach dem Senden: 3 zufaellige gesendete Chats nur lesend verglichen */
+  kontrolliert: [] as { conversationId: string; name: string; ok: boolean; hinweis: string }[],
 };
 const bytesAtStart = netBytes();
 /** neue Antworten laut Liste "Gesendet" (runFollowup auto) */
@@ -205,6 +211,7 @@ const listReplies: { id: string; name: string; absage: boolean }[] = [];
 /** Vor jeder einzelnen Nachricht und direkt vor dem Senden: Zeitfenster und Notbremse (Telegram /stop, /kurse). */
 const mayContinue = () => {
   if (forcedProbe) return null; // von Hand / Telegram /run: sendet ohnehin nichts
+  if (!dryRun && pass.agent.halt) return pass.agent.halt;
   // Probe sendet nichts: das Fenster gilt nur im echten Betrieb; die Liste vermerkt "würde ab 8:00 gesendet".
   if (!dryRun && !inSendWindow()) return "ausserhalb 8–20 Uhr";
   const now = loadAutopilot().modus;
@@ -231,9 +238,39 @@ const rueckfrage = async (r: Omit<Rueckfrage, "tag" | "erstelltAm" | "status">) 
   }
   return erg;
 };
+/** Pruef-Agent beim Nachfassen: Inserat aus dem Lead (Datenbank); auffaellig → nicht senden, Meldung, Liste auf /kurse */
+const pruefeNachfassen = async (r: { conversation_id: string; inserat_id: string; name: string; text: string }) => {
+  const { prisma } = await import("../lib/prisma");
+  const lead = await prisma.tutor24Lead.findFirst({ where: { OR: [{ conversationId: r.conversation_id }, ...(r.inserat_id ? [{ inseratId: r.inserat_id }] : [])] } });
+  const u = await pruefAgent({ art: "nachfassen", titel: lead?.name || r.name, fach: lead?.faecher, stufe: lead?.stufe, beschreibung: lead?.auszug ?? "", text: r.text });
+  const vorher = pass.agent.halt;
+  agentZaehlen(pass.agent, u);
+  agentProtokoll({ id: r.conversation_id, art: "nachfassen", titel: lead?.name || r.name, urteil: u.urteil, grund: u.grund, probe: dryRun || undefined });
+  const link = `https://www.tutor24.ch/de/conversations/${r.conversation_id}?tab=sent`;
+  if (dryRun) {
+    pass.notes.push(`Nachfassen ${firstName(r.name)}: ${urteilLabel(u)}`);
+    if (pass.agent.halt && !vorher) pass.notes.push(`⛔ Im echten Betrieb würde hier gestoppt: ${pass.agent.halt}`);
+    return u.urteil === "ok";
+  }
+  if (u.urteil !== "ok") {
+    addMarkiert({ id: r.conversation_id, titel: `Nachfassen: ${r.name}`, link, grund: u.urteil === "auffaellig" ? `Prüf-Agent: ${u.grund}` : u.grund, am: new Date().toISOString() });
+    await notify(`❓ Nachfassen an ${firstName(r.name)} nicht gesendet — ${urteilLabel(u)}
+${link}
+Steht auf /kurse unter „Von der Automatik markiert“; senden nur von Hand.
+
+${r.text}`.slice(0, 4000));
+  }
+  return u.urteil === "ok";
+};
+/** Pruefung nach dem Senden: 3 zufaellig gewaehlte, in diesem Durchgang gesendete Chats */
+const nachkontrolle = async () => {
+  const { prisma } = await import("../lib/prisma");
+  const m = await prisma.tutor24Message.findMany({ where: { sentAt: { gte: new Date(pass.start) }, status: "gesendet", lead: { conversationId: { not: null } } }, include: { lead: true } });
+  return m.sort(() => Math.random() - 0.5).slice(0, 3).map((x) => ({ conversationId: x.lead.conversationId!, name: x.lead.name, text: x.text }));
+};
 /** Optionen fuer Schritt 1; in der Probe sammelt runTutor24Messaging hier Probe-Rueckfragen bzw. ein Beispiel */
 const erstAuto: import("../lib/tutor24").AutoErst = {
-  limit: 0, dryRun, mayContinue, counts: pass.erst, probe: pass.probe, notes: pass.notes, texte: pass.texte, rueckfrage,
+  limit: 0, dryRun, mayContinue, counts: pass.erst, probe: pass.probe, notes: pass.notes, texte: pass.texte, rueckfrage, agent: pass.agent,
   ...(max ? { maxOpen: max * 2 } : {}),
   ...(dryRun ? { probeRueckfragen: [] } : {}),
 };
@@ -297,6 +334,8 @@ try {
         limit: nachLimit, minAgeDays: settings.nachfassNachTagen, dryRun, mayContinue, counts: pass.nachfassen, probe: pass.probe, antworten: listReplies,
         // begrenzt: hoechstens 2 Nachlade-Runden pro Liste, der Rest kommt aus dem Zwischenspeicher
         ...(max ? { maxScrollRounds: 2, maxReplyChecks: max } : {}),
+        ...(settings.pruefAgent ? { pruefen: pruefeNachfassen } : {}),
+        ...(dryRun ? {} : { nachkontrolle, kontrolliert: pass.kontrolliert }),
         onStep: (step) => (
           setStep(step === "antworten" ? "2/3 Antworten prüfen" : "3/3 Nachfassen"),
           laut
@@ -350,7 +389,13 @@ clearInterval(ticker);
 pass.mb = megabytes(bytesAtStart, netBytes());
 await db("Fortschritt", () => writeProgress(null));
 pass.ende = new Date().toISOString();
-const reason = stopReason({ pruefungFehler: pass.erst.pruefungFehler + pass.nachfassen.pruefungFehler, fehler: fatal, letzterFehler: state.letzterFehler });
+const agentGrund = !dryRun && pass.agent.aus ? pass.agent.halt : null;
+if (!dryRun && pass.agent.halt && !pass.agent.aus) await notify(`⚠ ${pass.agent.halt}. Automatik bleibt an; der nächste Durchgang versucht es wieder.`);
+const abweichend = pass.kontrolliert.filter((k) => !k.ok);
+if (abweichend.length)
+  await notify(`⚠ Nachkontrolle: ${abweichend.length} von ${pass.kontrolliert.length} gesendeten Chats weichen vom gespeicherten Text ab\n` +
+    abweichend.map((k) => `• ${firstName(k.name)}: ${k.hinweis}\nhttps://www.tutor24.ch/de/conversations/${k.conversationId}?tab=sent`).join("\n"));
+const reason = agentGrund ?? stopReason({ pruefungFehler: pass.erst.pruefungFehler + pass.nachfassen.pruefungFehler, fehler: fatal, letzterFehler: state.letzterFehler });
 if (reason) {
   pass.stopp = reason;
   updateAutopilot({ modus: "aus", gestoppt: { grund: reason, am: pass.ende }, letzterFehler: null });

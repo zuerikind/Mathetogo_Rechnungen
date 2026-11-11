@@ -204,7 +204,7 @@ const pflege = async () => {
     const { text, texte } = await abendZusammenfassung(now);
     if (await notify(text)) {
       updateAutopilot({ zusammenfassungAm: today });
-      for (const [i, t] of texte.entries()) await notify(`Anrede unklar ${i + 1}/${texte.length} (heute gesendet)\n${t}`.slice(0, 4000));
+      for (const t of texte) await notify(t.slice(0, 4000));
     }
   }
 };

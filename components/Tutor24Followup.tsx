@@ -886,6 +886,10 @@ export function Tutor24Followup({
                 <SettingRow title="Nachfassen frühestens nach" help="So viele Tage nach der Erst-Nachricht, und nur ohne Antwort (mindestens 3).">
                   <NumberField id="set-tage" value={draft.settings.nachfassNachTagen} min={3} unit="Tagen" disabled={running} onChange={(v) => setSettings({ nachfassNachTagen: v })} />
                 </SettingRow>
+                <SettingRow title="Prüf-Agent vor dem Senden" help="Ein: ein separater KI-Agent liest jede Nachricht (Erst-Nachricht und Nachfassen) vor dem Senden. ok → wird gesendet (auch KI-Satz, Englisch, Französisch, Anrede unklar); auffällig → Rückfrage per Telegram. Agentur, Nebenfach und nicht bestandene Prüfung nie automatisch. Mehr als 4 oder (ab 5) mehr als 30 % auffällig → Automatik aus. Aus: die drei Schalter darunter gelten.">
+                  <Toggle id="set-pruef-agent" checked={draft.settings.pruefAgent} disabled={running} onChange={(v) => setSettings({ pruefAgent: v })} />
+                </SettingRow>
+                {!draft.settings.pruefAgent && (<>
                 <SettingRow title="Anrede unklar gilt als sicher" help={`Neutraler fester Text ohne KI-Satz wird ohne Rückfrage gesendet; bis 25.11. stehen diese Texte vollständig in der Abend-Zusammenfassung. Per Telegram freigegeben in Folge: ${status.rueckfragen?.folge.unklar ?? 0}.`}>
                   <Toggle id="set-sicher-unklar" checked={draft.settings.sicherUnklar} disabled={running} onChange={(v) => setSettings({ sicherUnklar: v })} />
                 </SettingRow>
@@ -895,6 +899,7 @@ export function Tutor24Followup({
                 <SettingRow title="Englisch gilt als sicher" help={`Aus: englische Nachrichten kommen als Rückfrage. In Folge freigegeben: ${status.rueckfragen?.folge.en ?? 0} (Vorschlag: ab 10 einschalten). Französisch bleibt immer Rückfrage.`}>
                   <Toggle id="set-sicher-en" checked={draft.settings.sicherEn} disabled={running} onChange={(v) => setSettings({ sicherEn: v })} />
                 </SettingRow>
+                </>)}
                 <SettingRow title="Alle Telegram-Meldungen" help="Aus (Standard): nur Rückfragen, Antworten von Interessenten, Stopps und Fehler, Abend-Zusammenfassung um 20:00. Ein: zusätzlich Start- und Schritt-Meldungen jedes Durchgangs. Im Probemodus kommen immer alle.">
                   <Toggle id="set-meldungen" checked={draft.settings.meldungen === "alle"} disabled={running} onChange={(v) => setSettings({ meldungen: v ? "alle" : "wenig" })} />
                 </SettingRow>

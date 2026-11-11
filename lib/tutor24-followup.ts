@@ -462,6 +462,8 @@ export type FollowupSettings = {
   sicherUnklar: boolean;
   sicherKi: boolean;
   sicherEn: boolean;
+  /** Pruef-Agent (11.11. abends, lib/tutor24-pruefagent.ts): liest jede Nachricht vor dem Senden; ersetzt die drei Schalter oben. Standard aus. */
+  pruefAgent: boolean;
   /** Telegram: "wenig" = nur Rueckfragen, Antworten, Stopps/Fehler, Abend-Zusammenfassung; "alle" = auch Start und Schritte. Probe immer alle. */
   meldungen: "wenig" | "alle";
 };
@@ -620,6 +622,7 @@ export function mergeSettings(saved: Partial<FollowupSettings> | null | undefine
     sicherUnklar: saved?.sicherUnklar !== false,
     sicherKi: saved?.sicherKi === true,
     sicherEn: saved?.sicherEn === true,
+    pruefAgent: saved?.pruefAgent === true,
     meldungen: saved?.meldungen === "alle" ? "alle" : "wenig",
   };
 }

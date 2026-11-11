@@ -130,6 +130,12 @@ export type AutoSend = {
   expectedText?: Record<string, string>;
   /** Zwischenmeldung, bevor ein Schritt beginnt (Telegram) */
   onStep?: (step: "antworten" | "nachfassen") => Promise<unknown>;
+  /** Pruef-Agent (11.11.): vor dem Senden; false = nicht senden (Meldung und Liste macht der Aufrufer) */
+  pruefen?: (r: { conversation_id: string; inserat_id: string; name: string; text: string }) => Promise<boolean>;
+  /** Pruefung nach dem Senden (11.11.): am Schluss diese Chats nur lesend oeffnen und mit dem gespeicherten Text vergleichen */
+  nachkontrolle?: () => Promise<{ conversationId: string; name: string; text: string }[]>;
+  /** Ausgabe der Nachkontrolle: eine Zeile pro Chat */
+  kontrolliert?: { conversationId: string; name: string; ok: boolean; hinweis: string }[];
 };
 
 // ── Zeitmessung ──
@@ -296,6 +302,25 @@ async function collectList(
   saveListCache(cacheKey, { ...cache, ...Object.fromEntries(items.map((e) => [e.id, e])) });
   log(`Liste „${tab}“: ${items.length} geladen (Stopp: ${why || "max. Runden"}), ${fromCache.length} aus dem Zwischenspeicher.`);
   return { entries: [...items, ...fromCache], changed };
+}
+
+/** Nachkontrolle: steht der gespeicherte Text so im Chat? Verglichen nur Buchstaben (Leerzeichen, Ziffern, Satzzeichen
+ * und die Datumszeile der Blase egal — tutor24 kann Telefonnummern ausblenden). */
+export function vergleicheGesendet(text: string, mine: string[]): { ok: boolean; hinweis: string } {
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-zäöüàâçéèêëîïôûùœæß]/g, "");
+  const soll = norm(text);
+  if (!soll) return { ok: false, hinweis: "gespeicherter Text leer" };
+  if (mine.some((m) => norm(m).includes(soll))) return { ok: true, hinweis: "" };
+  if (!mine.length) return { ok: false, hinweis: "keine eigene Nachricht im Chat" };
+  // laengste uebereinstimmende Anfangsstrecke zeigen
+  const best = mine.map(norm).reduce((b, m) => {
+    let i = 0;
+    const start = m.indexOf(soll.slice(0, 20));
+    if (start < 0) return b;
+    while (i < soll.length && m[start + i] === soll[i]) i++;
+    return Math.max(b, i);
+  }, 0);
+  return { ok: false, hinweis: best ? `weicht nach ${Math.round((best / soll.length) * 100)} % des Textes ab` : "Text im Chat nicht gefunden" };
 }
 
 type Conversation = {
@@ -606,6 +631,11 @@ async function send(page: Page, log: Log, courseId?: string, auto?: AutoSend): P
     if (reason) {
       log(`[${i + 1}/${queue.length}] ${row.name}: übersprungen (${reason})`);
       if (auto) auto.counts.uebersprungen++;
+      continue;
+    }
+    if (auto?.pruefen && !(await auto.pruefen({ conversation_id: row.conversation_id, inserat_id: row.inserat_id ?? "", name: row.name, text }))) {
+      log(`[${i + 1}/${queue.length}] ${row.name}: nicht gesendet (Prüf-Agent)`);
+      auto.counts.uebersprungen++;
       continue;
     }
     if (auto?.dryRun) {
@@ -1039,6 +1069,20 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
       await replies(page, log, undefined, auto.maxReplyChecks);
       await auto.onStep?.("nachfassen");
       await send(page, log, undefined, opts.auto);
+      if (auto.nachkontrolle) {
+        const liste = await auto.nachkontrolle();
+        auto.kontrolliert ??= [];
+        for (const k of liste) {
+          try {
+            const c = await readConversation(page, k.conversationId);
+            auto.kontrolliert.push({ ...k, ...vergleicheGesendet(k.text, c.bubbles.filter((x) => x.kind === "mine").map((x) => x.text)) });
+          } catch (err) {
+            if (err instanceof StopRun) throw err;
+            auto.kontrolliert.push({ ...k, ok: false, hinweis: `nicht lesbar: ${err instanceof Error ? err.message : String(err)}`.slice(0, 120) });
+          }
+        }
+        log(`Nachkontrolle: ${auto.kontrolliert.filter((x) => x.ok).length} von ${auto.kontrolliert.length} Chats wie gespeichert.`);
+      }
     }
     else await preview(page, opts.maxChecks ?? 150, log);
   } catch (err) {

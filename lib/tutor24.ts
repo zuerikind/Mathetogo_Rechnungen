@@ -11,6 +11,7 @@ import {
 import { agenturVerdacht, assembleFirstMessage, festerSatz, festeZweiSaetze, matheNebenfach, planFirstMessage, satzStufe } from "./tutor24-course-offer";
 import { addMarkiert, loadMarkiert, wahlOf } from "./tutor24-batch";
 import { rueckfrageArt, unsicherGruende, type Rueckfrage } from "./tutor24-rueckfragen";
+import { agentProtokoll, agentZaehlen, pruefAgent, urteilLabel, type AgentPass } from "./tutor24-pruefagent";
 import { courseSnapshot, parseJobText, type ListingInfo } from "./tutor24-followup";
 import { loadCourses, loadLog, loadSettings } from "./tutor24-followup-store";
 import { listingHash, recordSend, type LeadFields } from "./tutor24-leads";
@@ -61,6 +62,8 @@ export type AutoErst = {
   probeRueckfragen?: Array<Omit<Rueckfrage, "tag" | "erstelltAm" | "status">>;
   /** Probe: erste sichere Nachricht, falls keine unsichere dabei ist */
   probeBeispiel?: Omit<Rueckfrage, "tag" | "erstelltAm" | "status">;
+  /** Pruef-Agent: Zaehler des Durchgangs (mit Nachfassen geteilt); halt → mayContinue haelt an */
+  agent?: AgentPass;
   /** Batch vorbereiten (scripts/batch.mts): Nachricht nur sammeln, nichts senden */
   collect?: (item: CollectedListing) => void;
 };
@@ -449,7 +452,43 @@ export async function runTutor24Messaging(
             // Sicher oder Rueckfrage? (Omid, 11.11.) Sicher = fester Text, Anrede erkannt (oder unklar + neutraler Text),
             // Stufe erkannt, Deutsch, keine Markierung. Alles andere stellt die Automatik als Rueckfrage; die Probe zeigt es nur.
             let sicherLabel = "";
-            if (auto && !auto.collect) {
+            if (auto && !auto.collect && loadSettings().pruefAgent) {
+              // Pruef-Agent (Omid, 11.11. abends): Markierungen nie automatisch (Liste; Probe zeigt sie nur), sonst entscheidet der Agent.
+              const mark = verdacht ? `Möglicherweise Agentur: ${verdacht}` : nebenfach ? `Mathe nur Nebenfach: ${nebenfach}` : null;
+              if (mark) {
+                if (auto.dryRun) {
+                  auto.counts.uebersprungen++;
+                  auto.notes?.push(`🏷 Würde markiert (Liste auf /kurse): https://tutor24.ch/de/jobs/${tutor24Id} · ${mark}`);
+                } else markieren(mark);
+                continue;
+              }
+              const u = await pruefAgent({ art: "erst", titel: info.title || displayName, fach: info.fach, stufe: info.schulstufe, beschreibung: info.description, text: composed.text });
+              const vorher = auto.agent?.halt;
+              if (auto.agent) agentZaehlen(auto.agent, u);
+              agentProtokoll({ id: tutor24Id, art: "erst", titel: info.title || displayName, urteil: u.urteil, grund: u.grund, probe: auto.dryRun || undefined });
+              tag(`Prüf-Agent: ${u.urteil}${u.grund ? ` — ${u.grund}` : ""}`);
+              if (auto.dryRun && auto.agent?.halt && !vorher) auto.notes?.push(`⛔ Im echten Betrieb würde hier gestoppt: ${auto.agent.halt}`);
+              sicherLabel = urteilLabel(u);
+              const sicherInput = { sprache: language, wer: plan.addressee.wer, satz: composed.satz, problem: composed.problem, agentur: verdacht, nebenfach };
+              const r = {
+                id: tutor24Id, titel: info.title || displayName, stufe: info.schulstufe, link: href, sprache: language, anrede: wahlOf(plan.addressee),
+                grund: u.urteil === "ok" ? "" : u.urteil === "auffaellig" ? `Prüf-Agent: ${u.grund}` : u.grund,
+                art: rueckfrageArt(sicherInput), text: composed.text, kursId: composed.course?.id ?? null, hint: composed.hint, satz: composed.satz, info,
+              };
+              if (auto.dryRun && auto.probeRueckfragen) {
+                if (u.urteil !== "ok") auto.probeRueckfragen.push(r);
+                else if (!auto.probeBeispiel) auto.probeBeispiel = { ...r, grund: "Beispiel — der Agent hat diese Nachricht mit ok bewertet" };
+              }
+              if (u.urteil !== "ok" && !auto.dryRun) {
+                const ergebnis = auto.rueckfrage ? await auto.rueckfrage(r) : "liste";
+                if (ergebnis === "liste") markieren(`${r.grund} (ohne Rückfrage)`);
+                else {
+                  auto.counts.rueckfragen = (auto.counts.rueckfragen ?? 0) + 1;
+                  tag(`Rückfrage ${ergebnis === "schon" ? "besteht schon" : "gestellt"}: ${r.grund}`);
+                }
+                continue;
+              }
+            } else if (auto && !auto.collect) {
               const sicherInput = { sprache: language, wer: plan.addressee.wer, satz: composed.satz, problem: composed.problem, agentur: verdacht, nebenfach };
               const gruende = unsicherGruende(sicherInput, loadSettings());
               sicherLabel = gruende.length ? `❓ Rückfrage: ${gruende.join("; ")}` : "✅ sicher";
