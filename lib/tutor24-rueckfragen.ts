@@ -51,6 +51,8 @@ export type Rueckfrage = {
   status: RueckfrageStatus;
   /** Omid hat die Anrede per Knopf geaendert: zaehlt nicht als "unklar in Folge freigegeben" */
   anredeGeaendert?: boolean;
+  /** Probe-Rueckfrage (Probemodus): Knoepfe zum Ausprobieren — zaehlt nirgends, wird nie gesendet, nie in Listen */
+  probe?: boolean;
   /** letzter Knopfdruck (Sammeln der Freigaben) */
   aktionAm?: string;
   meldung?: string;
@@ -113,7 +115,7 @@ export function rueckfrageArt(i: SicherInput): RueckfrageArt {
 
 // ── Stellen ───────────────────────────────────────────────────────────────────
 
-export const heuteGestellt = (s: Store, tag: string) => s.items.filter((r) => r.tag === tag).length;
+export const heuteGestellt = (s: Store, tag: string) => s.items.filter((r) => r.tag === tag && !r.probe).length;
 
 /**
  * Rueckfrage anlegen oder, wenn das Tageslimit erreicht ist, direkt in die Liste "markiert".
@@ -122,8 +124,8 @@ export const heuteGestellt = (s: Store, tag: string) => s.items.filter((r) => r.
 export function rueckfrageAnlegen(r: Omit<Rueckfrage, "tag" | "erstelltAm" | "status">, now = new Date(), path = RUECKFRAGEN_PATH, markiertPath = MARKIERT_PATH): "gestellt" | "liste" | "schon" {
   const s = loadRueckfragen(path);
   const tag = zurichDay(now);
-  if (s.items.some((x) => x.id === r.id && x.status !== "verfallen" && x.status !== "fehler")) return "schon";
-  if (heuteGestellt(s, tag) >= MAX_PRO_TAG || zurichHour(now) >= VERFALL_H) {
+  if (s.items.some((x) => x.id === r.id && !x.probe && x.status !== "verfallen" && x.status !== "fehler")) return "schon";
+  if (!r.probe && (heuteGestellt(s, tag) >= MAX_PRO_TAG || zurichHour(now) >= VERFALL_H)) {
     addMarkiert({ id: r.id, titel: r.titel, link: r.link, grund: `${r.grund} (ohne Rückfrage: ${heuteGestellt(s, tag) >= MAX_PRO_TAG ? `${MAX_PRO_TAG} am Tag erreicht` : `nach ${VERFALL_H} Uhr`})`, am: now.toISOString() }, markiertPath);
     return "liste";
   }
@@ -138,7 +140,7 @@ const ANREDE_LABEL: Record<AnredeWahl, string> = { du: "du", Tochter: "Eltern ·
 /** Telegram-Text der Rueckfrage (kein HTML: der Inserat-Titel ist fremder Text) */
 export function rueckfrageText(r: Rueckfrage, nr: number, von = MAX_PRO_TAG): string {
   return (
-    `❓ Rückfrage ${nr}/${von} · ${r.grund}\n` +
+    `${r.probe ? "🧪 PROBE · " : ""}❓ Rückfrage ${nr}/${von} · ${r.grund}\n` +
     `${r.titel} · Stufe: ${r.stufe || "–"} · Anrede: ${ANREDE_LABEL[r.anrede]}${r.sprache !== "de" ? ` · ${r.sprache === "en" ? "Englisch" : "Französisch"}` : ""}\n` +
     `${r.link}\n\n${r.text}`
   ).slice(0, 4000);
@@ -178,6 +180,7 @@ export function freigeben(id: string, now = new Date(), path = RUECKFRAGEN_PATH)
     if (r.status !== "offen" && r.status !== "verfallen") return;
     r.status = "freigegeben";
     r.aktionAm = now.toISOString();
+    if (r.probe) return;
     if (r.art === "ki" || r.art === "en") s.folge[r.art]++;
     else if (r.art === "unklar" && !r.anredeGeaendert) s.folge.unklar++;
   }, path);
@@ -189,6 +192,7 @@ export function ueberspringen(id: string, now = new Date(), path = RUECKFRAGEN_P
     if (r.status === "gesendet") return;
     r.status = "uebersprungen";
     r.aktionAm = now.toISOString();
+    if (r.probe) return; // Probe: weder Zaehler noch ki_verbesserungen.md
     if (r.art === "ki" || r.art === "en" || r.art === "unklar") s.folge[r.art] = 0;
     const satz = persoenlicherTeil(r.text);
     appendFileSync(
@@ -231,6 +235,7 @@ export function verfallenLassen(now = new Date(), path = RUECKFRAGEN_PATH, marki
     if (r.status !== "offen") continue;
     if (r.tag < tag || (r.tag === tag && zurichHour(now) >= VERFALL_H)) {
       r.status = "verfallen";
+      if (r.probe) continue;
       addMarkiert({ id: r.id, titel: r.titel, link: r.link, grund: `Rückfrage unbeantwortet: ${r.grund}`, am: now.toISOString() }, markiertPath);
       out.push(r);
     }
@@ -239,7 +244,7 @@ export function verfallenLassen(now = new Date(), path = RUECKFRAGEN_PATH, marki
   return out;
 }
 
-export const freigegebene = (path = RUECKFRAGEN_PATH) => loadRueckfragen(path).items.filter((r) => r.status === "freigegeben");
+export const freigegebene = (path = RUECKFRAGEN_PATH) => loadRueckfragen(path).items.filter((r) => r.status === "freigegeben" && !r.probe);
 
 /** Freigaben gesammelt: SAMMEL_MIN nach dem letzten Knopfdruck darf der Sende-Lauf starten */
 export function sendeLaufFaellig(now = new Date(), path = RUECKFRAGEN_PATH): boolean {
@@ -253,6 +258,6 @@ export function sendeLaufFaellig(now = new Date(), path = RUECKFRAGEN_PATH): boo
 export function tagesStand(tag: string, path = RUECKFRAGEN_PATH): Record<RueckfrageStatus, number> & { folge: Folge } {
   const s = loadRueckfragen(path);
   const n: Record<RueckfrageStatus, number> = { offen: 0, freigegeben: 0, gesendet: 0, uebersprungen: 0, verfallen: 0, fehler: 0 };
-  for (const r of s.items) if (r.tag === tag || r.status === "offen" || r.status === "freigegeben") n[r.status]++;
+  for (const r of s.items) if (!r.probe && (r.tag === tag || r.status === "offen" || r.status === "freigegeben")) n[r.status]++;
   return { ...n, folge: s.folge };
 }

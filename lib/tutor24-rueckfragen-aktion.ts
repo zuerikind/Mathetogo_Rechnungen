@@ -15,9 +15,19 @@ const hhmm = (d: Date) => d.toLocaleTimeString("de-CH", { timeZone: "Europe/Zuri
 export async function rueckfrageAktion(aktion: RueckfrageAktion, id: string, now = new Date()): Promise<{ text: string; knoepfe?: object }> {
   const r = findeRueckfrage(id);
   if (!r) return { text: `Rückfrage ${id} nicht (mehr) bekannt.` };
+  if (r.status === "freigegeben" && aktion !== "skip") return { text: `„${r.titel}“ ist schon freigegeben${r.probe ? " (Probe)" : ""}.` };
   if (r.status === "gesendet") return { text: `„${r.titel}“ ist schon gesendet.` };
   if (r.status === "uebersprungen") return { text: `„${r.titel}“ wurde schon übersprungen.` };
 
+  // Probe: Knoepfe wirken auf die Probe-Rueckfrage, aber nichts wird gesendet, gezaehlt oder notiert
+  if (r.probe && aktion === "send") {
+    freigeben(id, now);
+    return { text: `🧪 PROBE: „${r.titel}“ wäre jetzt freigegeben und würde im nächsten erlaubten Lauf gesendet (10 min nach dem letzten Knopf, 2 h Abstand, 8–20 Uhr, Tageslimit). Im Probemodus wird nichts gesendet.` };
+  }
+  if (r.probe && aktion === "skip") {
+    ueberspringen(id, now);
+    return { text: `🧪 PROBE: „${r.titel}“ wäre übersprungen und in ki_verbesserungen.md notiert. Im Probemodus wird nichts notiert.` };
+  }
   if (aktion === "send") {
     const f = freigeben(id, now);
     if (!f || f.status !== "freigegeben") return { text: `„${r.titel}“ konnte nicht freigegeben werden (Stand: ${r.status}).` };

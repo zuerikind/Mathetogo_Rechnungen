@@ -231,6 +231,12 @@ const rueckfrage = async (r: Omit<Rueckfrage, "tag" | "erstelltAm" | "status">) 
   }
   return erg;
 };
+/** Optionen fuer Schritt 1; in der Probe sammelt runTutor24Messaging hier Probe-Rueckfragen bzw. ein Beispiel */
+const erstAuto: import("../lib/tutor24").AutoErst = {
+  limit: 0, dryRun, mayContinue, counts: pass.erst, probe: pass.probe, notes: pass.notes, texte: pass.texte, rueckfrage,
+  ...(max ? { maxOpen: max * 2 } : {}),
+  ...(dryRun ? { probeRueckfragen: [] } : {}),
+};
 // Unterwegs: der Stand in der Datenbank fuer /status ("läuft gerade"), alle 5 min erneuert.
 let schritt = "1/3 Neue Inserate";
 let zaehler = "";
@@ -259,9 +265,8 @@ try {
   else if (erstLimit === 0) log((erstNote = `Tageslimit Erst-Nachrichten (${settings.autoErstLimit}) erreicht.`));
   else {
     log(`Erst-Nachrichten: höchstens ${erstLimit}${dryRun ? " (PROBE, sendet nichts)" : ""} …`);
-    const r = await runTutor24Messaging(true, max ? 1 : 10, max ? ["Mathematik"] : ["Mathematik", "Physik"], {
-      limit: erstLimit, dryRun, mayContinue, counts: pass.erst, probe: pass.probe, notes: pass.notes, texte: pass.texte, rueckfrage, ...(max ? { maxOpen: max * 2 } : {}),
-    });
+    erstAuto.limit = erstLimit;
+    const r = await runTutor24Messaging(true, max ? 1 : 10, max ? ["Mathematik"] : ["Mathematik", "Physik"], erstAuto);
     for (const l of r.log) console.log(`  ${l}`);
     pass.fehler.push(...r.errors);
     erstNote =
@@ -390,6 +395,17 @@ await notify(
 );
 // Probe: jede Erst-Nachricht vollstaendig als eigene Meldung, mit "✅ sicher" oder "❓ Rückfrage: Grund" (Telegram: hoechstens 4096 Zeichen)
 for (const [i, t] of texte.entries()) await notify(`${P}✉️ Erst-Nachricht ${i + 1}/${texte.length} (würde gesendet)\n${t}`.slice(0, 4000));
+// Probe: Rueckfragen mit Knoepfen zum Ausprobieren (nichts wird gesendet, gezaehlt oder notiert); ohne unsichere ein Beispiel
+if (dryRun) {
+  const probeRf = (erstAuto.probeRueckfragen ?? []).slice(0, 5);
+  if (!probeRf.length && erstAuto.probeBeispiel) probeRf.push(erstAuto.probeBeispiel);
+  for (const [i, r] of probeRf.entries()) {
+    rueckfrageAnlegen({ ...r, probe: true });
+    const voll = { ...r, probe: true, tag: "", erstelltAm: "", status: "offen" as const };
+    await notify(rueckfrageText(voll, i + 1, probeRf.length), undefined, false, rueckfrageKnoepfe(voll));
+  }
+  if (!probeRf.length && pass.erst.wuerde === 0) await notify(`${P}Keine Erst-Nachricht in diesem Lauf — darum auch keine Beispiel-Rückfrage.`);
+}
 
 // Abend-Zusammenfassung um 20:00 schickt seit 11.11. der Telegram-Bot (scripts/telegram-bot.mts, lib/tutor24-abend.ts).
 process.exit(0);

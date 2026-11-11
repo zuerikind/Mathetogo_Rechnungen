@@ -57,6 +57,10 @@ export type AutoErst = {
    * Fehlt die Funktion, gelten alle als Rueckfrage → Liste "markiert".
    */
   rueckfrage?: (r: Omit<Rueckfrage, "tag" | "erstelltAm" | "status">) => Promise<"gestellt" | "liste" | "schon">;
+  /** Probe: unsichere Nachrichten fuer Probe-Rueckfragen (Knoepfe ausprobieren, nichts wird gesendet) */
+  probeRueckfragen?: Array<Omit<Rueckfrage, "tag" | "erstelltAm" | "status">>;
+  /** Probe: erste sichere Nachricht, falls keine unsichere dabei ist */
+  probeBeispiel?: Omit<Rueckfrage, "tag" | "erstelltAm" | "status">;
   /** Batch vorbereiten (scripts/batch.mts): Nachricht nur sammeln, nichts senden */
   collect?: (item: CollectedListing) => void;
 };
@@ -449,11 +453,16 @@ export async function runTutor24Messaging(
               const sicherInput = { sprache: language, wer: plan.addressee.wer, satz: composed.satz, problem: composed.problem, agentur: verdacht, nebenfach };
               const gruende = unsicherGruende(sicherInput, loadSettings());
               sicherLabel = gruende.length ? `❓ Rückfrage: ${gruende.join("; ")}` : "✅ sicher";
+              const r = {
+                id: tutor24Id, titel: info.title || displayName, stufe: info.schulstufe, link: href, sprache: language, anrede: wahlOf(plan.addressee),
+                grund: gruende.join("; "), art: rueckfrageArt(sicherInput), text: composed.text, kursId: composed.course?.id ?? null, hint: composed.hint, satz: composed.satz, info,
+              };
+              // Probe: unsichere als Probe-Rueckfrage (Knoepfe ohne echtes Senden); gibt es keine, eine sichere als Beispiel
+              if (auto.dryRun && auto.probeRueckfragen) {
+                if (gruende.length) auto.probeRueckfragen.push(r);
+                else if (!auto.probeBeispiel) auto.probeBeispiel = { ...r, grund: "Beispiel — diese Nachricht gilt als sicher" };
+              }
               if (gruende.length && !auto.dryRun) {
-                const r = {
-                  id: tutor24Id, titel: info.title || displayName, stufe: info.schulstufe, link: href, sprache: language, anrede: wahlOf(plan.addressee),
-                  grund: gruende.join("; "), art: rueckfrageArt(sicherInput), text: composed.text, kursId: composed.course?.id ?? null, hint: composed.hint, satz: composed.satz, info,
-                };
                 const ergebnis = auto.rueckfrage ? await auto.rueckfrage(r) : "liste";
                 if (ergebnis === "liste") markieren(`${r.grund} (ohne Rückfrage)`);
                 else {

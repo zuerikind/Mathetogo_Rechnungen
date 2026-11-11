@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { loadMarkiert } from "./tutor24-batch";
 import {
   MAX_PRO_TAG,
+  heuteGestellt,
   anredeSetzen,
   freigeben,
   freigegebene,
@@ -131,5 +132,31 @@ describe("Rueckfragen stellen, Knoepfe, Verfall", () => {
     expect(verfallenLassen(T(8, 13), p, mp).map((r) => r.id)).toEqual(["3"]);
     expect(loadMarkiert(mp).map((m) => m.id)).toEqual(["1", "3"]);
     expect(loadMarkiert(mp)[0].grund).toBe("Rückfrage unbeantwortet: Anrede unklar");
+  });
+});
+
+describe("Probe-Rueckfragen (11.11.): Knoepfe ausprobieren, nichts zaehlt", () => {
+  it("zaehlen nicht zum Tageslimit, nie in Liste/Freigaben/Zaehler/ki_verbesserungen", () => {
+    const dir = tmp();
+    const p = join(dir, "rf.json");
+    const mp = join(dir, "markiert.json");
+    const md = join(dir, "ki.md");
+    writeFileSync(md, "# Liste\n");
+    for (let i = 1; i <= MAX_PRO_TAG; i++) rueckfrageAnlegen(mk(String(i)), T(11), p, mp);
+    expect(rueckfrageAnlegen({ ...mk("50"), probe: true }, T(11), p, mp)).toBe("gestellt");
+    expect(rueckfrageAnlegen({ ...mk("51"), probe: true }, T(21), p, mp)).toBe("gestellt"); // auch nach 20 Uhr
+    expect(heuteGestellt(loadRueckfragen(p), "2026-11-11")).toBe(MAX_PRO_TAG);
+    expect(rueckfrageAnlegen({ ...mk("1"), probe: true }, T(11), p, mp)).toBe("schon"); // echte geht vor
+    expect(rueckfrageText({ ...mk("50"), probe: true, tag: "", erstelltAm: "", status: "offen" }, 1, 1)).toMatch(/^🧪 PROBE · ❓ Rückfrage 1\/1/);
+    freigeben("50", T(12), p);
+    expect(freigegebene(p)).toHaveLength(0);
+    expect(sendeLaufFaellig(T(13), p)).toBe(false);
+    rueckfrageAnlegen({ ...mk("52", { art: "ki" }), probe: true }, T(11), p, mp);
+    ueberspringen("52", T(12), p, md);
+    expect(readFileSync(md, "utf8")).toBe("# Liste\n");
+    expect(loadRueckfragen(p).folge).toEqual({ ki: 0, en: 0, unklar: 0 });
+    verfallenLassen(T(8, 12), p, mp);
+    expect(loadMarkiert(mp).some((m) => ["50", "51", "52"].includes(m.id))).toBe(false);
+    expect(tagesStand("2026-11-11", p).freigegeben).toBe(0);
   });
 });

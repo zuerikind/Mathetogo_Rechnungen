@@ -33,7 +33,7 @@ function state() {
     /** von der Automatik markiert, nicht angeschrieben (Agentur, Nebenfach, Pruefung) */
     markiert: loadMarkiert().filter((m) => !m.erledigt),
     /** offene und freigegebene Rueckfragen (Telegram): hier dieselben Knoepfe */
-    rueckfragen: loadRueckfragen().items.filter((r) => r.status === "offen" || r.status === "freigegeben").map(({ info: _i, ...r }) => r),
+    rueckfragen: loadRueckfragen().items.filter((r) => !r.probe && (r.status === "offen" || r.status === "freigegeben")).map(({ info: _i, ...r }) => r),
   };
 }
 
