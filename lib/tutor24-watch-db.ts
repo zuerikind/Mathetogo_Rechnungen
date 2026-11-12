@@ -31,7 +31,7 @@ export async function runsSince(since: Date): Promise<(RunRow & { daten: unknown
   return prisma.tutor24Run.findMany({
     where: { startedAt: { gte: since } },
     orderBy: { startedAt: "asc" },
-    select: { startedAt: true, endedAt: true, ergebnis: true, stopp: true, is429: true, daten: true },
+    select: { startedAt: true, endedAt: true, ergebnis: true, stopp: true, is429: true, quelle: true, daten: true },
   });
 }
 

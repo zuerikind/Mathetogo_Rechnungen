@@ -45,6 +45,12 @@ describe("Waechter", () => {
     expect(err?.text).toContain("09:00 Abgebrochen: Unerwarteter Seitenaufbau");
   });
 
+  it("begrenzte Probe per /run kurz vor dem Durchgang ersetzt ihn nicht: Erinnerung bleibt (12.11.)", () => {
+    const online = laptop({ at: "2026-11-06T08:44:00Z" });
+    const probe = run("2026-11-06T07:46:00Z", { quelle: "run" });
+    expect(watchDecision({ now, laptop: online, runs: [probe], alreadySent: [] })?.text).toContain("fehlt");
+    expect(watchDecision({ now, laptop: online, runs: [probe, run("2026-11-06T08:00:30Z", { quelle: "plan" })], alreadySent: [] })).toBeNull();
+  });
   it("absichtlich aus: keine Erinnerung; automatisch aus: Grund", () => {
     expect(watchDecision({ now, laptop: laptop({ modus: "aus", gestoppt: { grund: "per Telegram /stop", am: "2026-11-05T13:00:00Z" } }), runs: [], alreadySent: [] })).toBeNull();
     const auto = watchDecision({ now, laptop: laptop({ modus: "aus", gestoppt: { grund: "Derselbe Fehler zweimal hintereinander: X", am: "2026-11-05T16:01:00Z" } }), runs: [], alreadySent: [] });

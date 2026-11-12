@@ -33,7 +33,7 @@ export type LaptopSignal = {
 };
 /** Stand des laufenden Durchgangs (scripts/autopilot.mts, alle 5 min erneuert) */
 export type Progress = { start: string; modus: AutoMode; schritt: string; zaehler?: string; at: string };
-export type RunRow ={ startedAt: Date; endedAt: Date | null; ergebnis: string; stopp: string | null; is429: boolean };
+export type RunRow = { startedAt: Date; endedAt: Date | null; ergebnis: string; stopp: string | null; is429: boolean; /** "run" = begrenzte Probe per Telegram /run: zaehlt nicht als geplanter Durchgang */ quelle?: string };
 
 export const laptopOnline = (l: LaptopSignal | null, now: Date) => !!l && now.getTime() - new Date(l.at).getTime() < OFFLINE_AFTER_MS;
 export const offlineText = (l: LaptopSignal | null) =>
@@ -64,7 +64,8 @@ export function watchDecision(p: {
   const check = currentCheck(p.now, normTimes(p.laptop?.zeiten) ?? DEFAULT_TIMES);
   if (!check || p.alreadySent.includes(check.key)) return null;
   const dueAt = zurichTime(check.day, Math.floor(toMin(check.due) / 60), toMin(check.due) % 60);
-  const runs = p.runs.filter((r) => r.startedAt >= new Date(dueAt.getTime() - 30 * 60_000));
+  // Ein begrenzter Probelauf per /run (3 Inserate) ist kein Durchgang: er darf den geplanten nicht stillschweigend ersetzen (12.11.).
+  const runs = p.runs.filter((r) => r.quelle !== "run" && r.startedAt >= new Date(dueAt.getTime() - 30 * 60_000));
   const last = runs[runs.length - 1];
   const online = laptopOnline(p.laptop, p.now);
   const dueLabel = check.due.replace(/^0/, "");

@@ -109,7 +109,7 @@ if (pause) {
 const soon = earliestNext();
 if (soon) {
   log(`Zu früh, nicht gestartet: ${tooSoonText(soon)}`);
-  if (!quiet) await notify(`⏳ Durchgang nicht gestartet. ${tooSoonText(soon)}`);
+  if (!quiet) await notify(`⏳ ${quelle === "plan" ? "Geplanter Durchgang" : "Durchgang"} nicht gestartet. ${tooSoonText(soon)}${quelle === "plan" ? "\nDer Bot holt ihn nach, sobald der Abstand erreicht ist." : ""}`);
   process.exit(0);
 }
 // Speicher vor dem Browserstart (wie beim Batch, mind. 1.5 GB frei). Der Bot holt den Durchgang nach, sobald es wieder geht.
@@ -180,7 +180,7 @@ if (FREIGABEN) {
     fehler = shortError(err instanceof Error ? err.message : String(err));
     log(`✖ ${fehler}`);
   }
-  appendPassLog({ start, ende: new Date().toISOString(), modus, erst: counts, nachfassen: emptyCounts(), antworten: 0, fehler: fehler ? [fehler] : [], stopp: fehler && is429(fehler) ? fehler : null });
+  appendPassLog({ start, ende: new Date().toISOString(), modus, quelle, erst: counts, nachfassen: emptyCounts(), antworten: 0, fehler: fehler ? [fehler] : [], stopp: fehler && is429(fehler) ? fehler : null });
   const rest = items.filter((i) => i.ergebnis !== "gesendet").map((i) => `• ${i.titel}: ${i.ergebnis ?? "nicht versucht"} ${i.meldung ?? ""}`.trim());
   await notify(`✉️ Freigaben gesendet: ${counts.gesendet} von ${items.length}.${rest.length ? `\n${rest.join("\n")}` : ""}${fehler ? `\n⚠ ${fehler}` : ""}`);
   process.exit(0);
@@ -191,7 +191,7 @@ const runId = await db("Durchgang anlegen", () => startRun(modus, quelle));
 await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
 
 const pass = {
-  start: new Date().toISOString(), ende: "", modus,
+  start: new Date().toISOString(), ende: "", modus, quelle,
   erst: emptyCounts(), nachfassen: emptyCounts(), antworten: 0, fehler: [] as string[], stopp: null as string | null, probe: [] as string[],
   /** nur Probe: vollstaendige Erst-Nachrichten (je eine Telegram-Meldung am Schluss, nicht im Protokoll) */
   texte: [] as string[],

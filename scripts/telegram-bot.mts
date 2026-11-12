@@ -185,7 +185,8 @@ const pflege = async () => {
     const due = runTimes().map((t) => toMin(t)).filter((m) => m + 10 <= mins).pop();
     if (due !== undefined) {
       const dueAt = zurichTime(today, Math.floor(due / 60), due % 60);
-      const seit = readPassLog(50).some((p) => new Date(p.start).getTime() >= dueAt.getTime() - 30 * 60_000);
+      // Ein begrenzter Probelauf per /run zaehlt nicht: der geplante Durchgang wird trotzdem nachgeholt (12.11., Omid).
+      const seit = readPassLog(50).some((p) => p.quelle !== "run" && new Date(p.start).getTime() >= dueAt.getTime() - 30 * 60_000);
       if (!seit) {
         const h = await startHindernis();
         if (h) console.log(`${stamp()} Durchgang von ${String(Math.floor(due / 60)).padStart(2, "0")}:${String(due % 60).padStart(2, "0")} fehlt, warte (${h}).`);

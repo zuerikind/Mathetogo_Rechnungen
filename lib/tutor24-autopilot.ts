@@ -65,6 +65,8 @@ export type PassLog = {
   probe?: string[];
   /** Datenmenge des Durchgangs in MB (ganzer Laptop), seit 7.11. */
   mb?: number | null;
+  /** plan | run (Telegram /run, begrenzte Probe) | knopf | nachgeholt | freigabe | erst | hand — seit 12.11.; ein /run ersetzt keinen geplanten Durchgang */
+  quelle?: string;
 };
 export const emptyCounts = (): PassCounts => ({ gesendet: 0, wuerde: 0, uebersprungen: 0, pruefungFehler: 0 });
 
