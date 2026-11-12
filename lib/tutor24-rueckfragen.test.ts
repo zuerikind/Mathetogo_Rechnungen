@@ -159,4 +159,13 @@ describe("Probe-Rueckfragen (11.11.): Knoepfe ausprobieren, nichts zaehlt", () =
     expect(loadMarkiert(mp).some((m) => ["50", "51", "52"].includes(m.id))).toBe(false);
     expect(tagesStand("2026-11-11", p).freigegeben).toBe(0);
   });
+
+  it("nur Probe offen: verfällt trotzdem und wird gespeichert (Gesamttest 12.11.)", () => {
+    const dir = tmp();
+    const p = join(dir, "rf.json");
+    const mp = join(dir, "markiert.json");
+    rueckfrageAnlegen({ ...mk("60"), probe: true }, T(11), p, mp);
+    expect(verfallenLassen(T(20), p, mp)).toHaveLength(0);
+    expect(loadRueckfragen(p).items[0].status).toBe("verfallen");
+  });
 });

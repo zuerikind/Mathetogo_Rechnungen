@@ -231,16 +231,18 @@ export function verfallenLassen(now = new Date(), path = RUECKFRAGEN_PATH, marki
   const s = loadRueckfragen(path);
   const tag = zurichDay(now);
   const out: Rueckfrage[] = [];
+  let geaendert = false;
   for (const r of s.items) {
     if (r.status !== "offen") continue;
     if (r.tag < tag || (r.tag === tag && zurichHour(now) >= VERFALL_H)) {
       r.status = "verfallen";
+      geaendert = true;
       if (r.probe) continue;
       addMarkiert({ id: r.id, titel: r.titel, link: r.link, grund: `Rückfrage unbeantwortet: ${r.grund}`, am: now.toISOString() }, markiertPath);
       out.push(r);
     }
   }
-  if (out.length) save(s, path);
+  if (geaendert) save(s, path); // auch reine Probe-Rueckfragen (blieben sonst fuer immer "offen")
   return out;
 }
 
