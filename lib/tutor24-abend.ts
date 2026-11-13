@@ -1,89 +1,94 @@
 /**
- * Abend-Zusammenfassung (20:00, vom Telegram-Bot verschickt, 11.11.): Durchgaenge des Tages, Rueckfragen
- * (offen, freigegeben, gesendet, uebersprungen, verfallen), Stand der aktiven Kurse, und bis UNKLAR_ZEIGEN_BIS
- * die vollstaendigen Texte der heute als "sicher" gesendeten Nachrichten mit Anrede unklar (Omids Kontrolle).
+ * TAGESBERICHT (20:00, vom Telegram-Bot, neu 13.11.): kurz. Erste Zeile "✅ Alles in Ordnung" oder
+ * "⚠️ Handlung nötig: …", dann gesendet heute, Antworten, vom Agenten zurueckgehalten, Durchgaenge gelaufen ja/nein,
+ * 2 gesendete Nachrichten eingeklappt (Telegram-HTML) und der Link auf /kurse/texte mit allen Texten des Tages.
  */
 import { prisma } from "./prisma";
-import { daySummary, readPassLog } from "./tutor24-autopilot";
-import { capacity, courseStats } from "./tutor24-followup";
-import { loadCourses } from "./tutor24-followup-store";
-import { loadLog } from "./tutor24-leads";
-import { UNKLAR_ZEIGEN_BIS, tagesStand, zurichDay } from "./tutor24-rueckfragen";
-import { AGENT_DETAIL_BIS, loadAgentLog, type AgentEintrag } from "./tutor24-pruefagent";
+import { APP_URL, type AutoState, type PassLog } from "./tutor24-autopilot";
+import { type AgentEintrag } from "./tutor24-pruefagent";
+import { zurichDay } from "./tutor24-rueckfragen";
 
 const NACHFASSEN_KNOPF_BIS = "2026-11-26";
-const dm = (iso: string) => `${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7))}.`;
+const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+const zurichMin = (iso: string) => {
+  const [h, m] = new Date(iso).toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" }).split(":").map(Number);
+  return h * 60 + m;
+};
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/** Erster Teil: Zahlen (ohne Datenbank, testbar) */
-export function abendText(tag: string, passes = readPassLog(50), stand = tagesStand(tag), courses = loadCourses(), log: Array<Partial<import("./tutor24-followup").LogRow>> = [], now = new Date()): string {
-  const rf = `Rückfragen: ${stand.gesendet} gesendet, ${stand.uebersprungen} übersprungen, ${stand.freigegeben} freigegeben (warten auf den nächsten Lauf), ${stand.offen} offen, ${stand.verfallen} verfallen`;
-  const kurse = courses
-    .filter((c) => c.active)
-    .map((c) => {
-      const st = courseStats(c, log, now);
-      return `• ${c.name}: ${st.zusagen} von ${capacity(c)} angemeldet (mind. ${c.minParticipants}), ${st.angeschrieben} angeschrieben, ${st.geantwortet} geantwortet, Anmeldeschluss ${dm(c.deadline)}`;
-    });
-  return [daySummary(tag, passes), rf, kurse.length ? `Kurse:\n${kurse.join("\n")}` : "Kurse: keiner aktiv"].join("\n");
+export type Tagesdaten = {
+  tag: string;
+  passes: PassLog[];
+  zeiten: string[];
+  state: Pick<AutoState, "modus" | "gestoppt">;
+  agent: AgentEintrag[];
+  /** Rueckfragen heute verfallen (unbeantwortet, stehen in der Liste auf /kurse) */
+  verfallen: number;
+};
+
+/** Text ohne Stichproben (testbar, ohne Datenbank) */
+export function tagesberichtText(d: Tagesdaten): string {
+  const heute = d.passes.filter((p) => zurichDay(new Date(p.start)) === d.tag);
+  const geplant = heute.filter((p) => p.quelle !== "run" && p.quelle !== "freigabe" && p.quelle !== "erst");
+  const sum = (f: (p: PassLog) => number) => heute.reduce((n, p) => n + f(p), 0);
+  const probe = d.state.modus === "probe" || (heute.length > 0 && heute.every((p) => p.modus === "probe"));
+
+  // Durchgang gelaufen: ein (nicht per /run gestarteter) Durchgang ab 30 min vor der Zeit bis vor die naechste Zeit
+  const slots = [...d.zeiten].sort();
+  const gelaufen = slots.map((t, i) => {
+    const von = toMin(t) - 30;
+    const bis = i + 1 < slots.length ? toMin(slots[i + 1]) - 30 : 24 * 60;
+    return { t, ok: geplant.some((p) => zurichMin(p.start) >= von && zurichMin(p.start) < bis) };
+  });
+
+  const echt = d.agent.filter((e) => e.tag === d.tag && !!e.probe === probe);
+  const zurueck = echt.filter((e) => e.urteil !== "ok");
+  const nf = d.agent.filter((e) => !e.probe && e.art !== "erst" && e.urteil === "auffaellig");
+
+  const handlung: string[] = [];
+  if (d.state.modus === "aus" && d.state.gestoppt && !/\/stop/.test(d.state.gestoppt.grund))
+    handlung.push(`Automatik gestoppt (${d.state.gestoppt.grund}) — prüfen, dann /enable`);
+  if (d.state.modus !== "aus") for (const g of gelaufen.filter((g) => !g.ok)) handlung.push(`Durchgang ${g.t} ist nicht gelaufen`);
+  const fehler = sum((p) => p.fehler.length);
+  if (fehler) handlung.push(`${fehler} Fehler in den Durchgängen (/kurse → Protokoll)`);
+  if (d.verfallen) handlung.push(`${d.verfallen} Rückfrage${d.verfallen === 1 ? "" : "n"} unbeantwortet (Liste auf /kurse)`);
+  if (d.tag <= NACHFASSEN_KNOPF_BIS && nf.length > 2 && nf.some((e) => e.tag === d.tag))
+    handlung.push(`seit Start ${nf.length} Nachfassen vom Agenten zurückgehalten: Senden-Knopf fürs Nachfassen neu entscheiden`);
+
+  const w = probe ? "würden gesendet" : "gesendet";
+  return [
+    `📋 TAGESBERICHT ${d.tag.split("-").reverse().join(".")}${probe ? " (PROBE)" : ""}`,
+    handlung.length ? `⚠️ Handlung nötig: ${handlung.join("; ")}` : "✅ Alles in Ordnung",
+    `${w[0].toUpperCase()}${w.slice(1)}: ${sum((p) => (probe ? p.erst.wuerde : p.erst.gesendet))} Erst-Nachrichten, ${sum((p) => (probe ? p.nachfassen.wuerde : p.nachfassen.gesendet))} Nachfassen`,
+    `Antworten: ${sum((p) => p.antworten)}`,
+    `Vom Agenten zurückgehalten: ${zurueck.length}${zurueck.length ? `\n${zurueck.map((e) => `• ${e.titel.slice(0, 50)}: ${e.grund}`).join("\n")}` : ""}`,
+    `Durchgänge: ${gelaufen.length ? gelaufen.map((g) => `${g.t} ${g.ok ? "ja" : "nein"}`).join(", ") : "keine geplant"}`,
+  ].join("\n");
 }
 
-/** Pruef-Agent: heute durchgelassen/zurueckgehalten mit Grund; erste Woche zusaetzlich die Summe seit Start */
-export function agentText(tag: string, eintraege: AgentEintrag[] = loadAgentLog()): string {
-  const echt = eintraege.filter((e) => !e.probe);
-  if (!echt.length) return "";
-  const heute = echt.filter((e) => e.tag === tag);
-  const nicht = heute.filter((e) => e.urteil !== "ok");
-  const zeilen = [`Prüf-Agent heute: ${heute.length - nicht.length} mit ok durchgelassen, ${nicht.length} zurückgehalten${nicht.length ? ":" : "."}`];
-  for (const e of nicht) zeilen.push(`• ${e.art === "erst" ? "Erst-Nachricht" : "Nachfassen"} ${e.titel.slice(0, 50)}: ${e.grund}`);
-  if (tag <= AGENT_DETAIL_BIS)
-    zeilen.push(
-      `Seit Start insgesamt: ${echt.filter((e) => e.urteil === "ok").length} ok, ${echt.filter((e) => e.urteil === "auffaellig").length} auffällig, ` +
-        `${echt.filter((e) => e.urteil === "fehler").length} Agent nicht erreichbar.`
-    );
-  // Omid 12.11.: kein Senden-Knopf fuer auffaellige Nachfassen; melden, wenn es in den ersten zwei Wochen mehr als zweimal vorkommt
-  const nf = echt.filter((e) => e.art !== "erst" && e.urteil === "auffaellig");
-  if (tag <= NACHFASSEN_KNOPF_BIS && nf.length > 2 && nf.some((e) => e.tag === tag))
-    zeilen.push(`⚠ Seit Start ${nf.length} Nachfassen vom Agenten zurückgehalten (mehr als 2): Entscheidung zum Senden-Knopf fürs Nachfassen neu treffen.`);
-  return zeilen.join("\n");
-}
-
-/** 2 zufaellig gewaehlte heute gesendete Nachrichten, vollstaendig (Omid schaut ab und zu selbst rein) */
+/** 2 zufaellige heute gesendete Nachrichten, eingeklappt (Telegram-HTML, blockquote expandable) */
 export async function stichprobe(now = new Date(), n = 2): Promise<string[]> {
   const start = new Date(`${zurichDay(now)}T00:00:00+01:00`);
   const rows = await prisma.tutor24Message.findMany({
     where: { status: "gesendet", sentAt: { gte: start } },
-    select: { art: true, text: true, lead: { select: { name: true, inseratId: true, conversationId: true } } },
+    select: { art: true, text: true, lead: { select: { inseratId: true, conversationId: true } } },
   });
   return rows
     .sort(() => Math.random() - 0.5)
     .slice(0, n)
-    .map((r, i, a) => {
-      const link = r.lead.conversationId ? `https://www.tutor24.ch/de/conversations/${r.lead.conversationId}?tab=sent` : r.lead.inseratId ? `https://tutor24.ch/de/jobs/${r.lead.inseratId}` : r.lead.name;
-      return `🔎 Stichprobe ${i + 1}/${a.length} (${r.art === "erst" ? "Erst-Nachricht" : "Nachfassen"}, heute gesendet)\n${link}\n\n${r.text}`;
+    .map((r) => {
+      const link = r.lead.conversationId ? `https://www.tutor24.ch/de/conversations/${r.lead.conversationId}?tab=sent` : r.lead.inseratId ? `https://tutor24.ch/de/jobs/${r.lead.inseratId}` : "";
+      return `${r.art === "erst" ? "Erst-Nachricht" : "Nachfassen"} ${esc(link)}\n<blockquote expandable>${esc(r.text.slice(0, 1500))}</blockquote>`;
     });
 }
 
-/** Heute als "sicher" gesendete Erst-Nachrichten mit Anrede unklar (volle Texte), bis UNKLAR_ZEIGEN_BIS */
-export async function unklarTexte(now = new Date()): Promise<string[]> {
-  if (zurichDay(now) > UNKLAR_ZEIGEN_BIS) return [];
-  const start = new Date(`${zurichDay(now)}T00:00:00+01:00`);
-  const rows = await prisma.tutor24Message.findMany({
-    where: { art: "erst", status: "gesendet", sentAt: { gte: start }, lead: { wer: "unklar" } },
-    select: { text: true, lead: { select: { name: true, inseratId: true } } },
-    orderBy: { sentAt: "asc" },
-  });
-  return rows.map((r, i, a) => `Anrede unklar ${i + 1}/${a.length} (heute gesendet)\n${r.lead.inseratId ? `https://tutor24.ch/de/jobs/${r.lead.inseratId}` : r.lead.name}\n\n${r.text}`);
-}
-
-export async function abendZusammenfassung(now = new Date()): Promise<{ text: string; texte: string[] }> {
-  const tag = zurichDay(now);
-  const log = await loadLog().catch(() => []);
-  const unklar = await unklarTexte(now).catch(() => []);
+/** Ganze Meldung als Telegram-HTML (eine einzige Nachricht, unter 4096 Zeichen) */
+export async function tagesbericht(d: Tagesdaten, now = new Date()): Promise<string> {
   const proben = await stichprobe(now).catch(() => []);
-  const agent = agentText(tag);
-  const text =
-    abendText(tag, readPassLog(50), tagesStand(tag), loadCourses(), log, now) +
-    (agent ? `\n\n${agent}` : "") +
-    (proben.length ? `\n\n${proben.length} zufällig gewählte gesendete Nachrichten folgen vollständig.` : "") +
-    (unklar.length ? `\n\nAnrede unklar gesendet (${unklar.length}): die Texte folgen einzeln.` : "");
-  return { text, texte: [...proben, ...unklar] };
+  return [
+    esc(tagesberichtText(d)),
+    ...(proben.length ? ["", "Zum Reinschauen:", ...proben] : []),
+    "",
+    `Alle Texte von heute: ${APP_URL}/kurse/texte?tag=${d.tag}`,
+  ].join("\n").slice(0, 4090);
 }

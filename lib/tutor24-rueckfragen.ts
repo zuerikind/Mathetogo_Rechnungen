@@ -140,7 +140,8 @@ const ANREDE_LABEL: Record<AnredeWahl, string> = { du: "du", Tochter: "Eltern ·
 /** Telegram-Text der Rueckfrage (kein HTML: der Inserat-Titel ist fremder Text) */
 export function rueckfrageText(r: Rueckfrage, nr: number, von = MAX_PRO_TAG): string {
   return (
-    `${r.probe ? "🧪 PROBE · " : ""}❓ Rückfrage ${nr}/${von} · ${r.grund}\n` +
+    `${r.probe ? "🧪 PROBE · " : ""}🟠 ENTSCHEIDUNG NÖTIG: Diese Erst-Nachricht senden oder überspringen?\n` +
+    `❓ Rückfrage ${nr}/${von} · ${r.grund}\n` +
     `${r.titel} · Stufe: ${r.stufe || "–"} · Anrede: ${ANREDE_LABEL[r.anrede]}${r.sprache !== "de" ? ` · ${r.sprache === "en" ? "Englisch" : "Französisch"}` : ""}\n` +
     `${r.link}\n\n${r.text}`
   ).slice(0, 4000);

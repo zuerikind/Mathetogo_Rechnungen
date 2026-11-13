@@ -83,7 +83,7 @@ describe("Rueckfragen stellen, Knoepfe, Verfall", () => {
   it("Meldung: Grund, Titel, Stufe, Link, Text; Knoepfe du/Sie nur bei Deutsch; Knopfdaten streng", () => {
     const r = { ...mk("77"), tag: "2026-11-11", erstelltAm: "", status: "offen" as const };
     const t = rueckfrageText(r, 2);
-    expect(t).toMatch(/^❓ Rückfrage 2\/10 · Anrede unklar\nInserat 77 · Stufe: Sekundarstufe · Anrede: Sie \(neutral\)\nhttps:\/\/tutor24.ch\/de\/jobs\/77\n\nGuten Tag,/);
+    expect(t).toMatch(/^🟠 ENTSCHEIDUNG NÖTIG: Diese Erst-Nachricht senden oder überspringen\?\n❓ Rückfrage 2\/10 · Anrede unklar\nInserat 77 · Stufe: Sekundarstufe · Anrede: Sie \(neutral\)\nhttps:\/\/tutor24.ch\/de\/jobs\/77\n\nGuten Tag,/);
     expect(rueckfrageKnoepfe(r).inline_keyboard).toHaveLength(2);
     expect(rueckfrageKnoepfe({ ...r, sprache: "en" }).inline_keyboard).toHaveLength(1);
     expect(parseRueckfrageKnopf("rf:send:77")).toEqual({ aktion: "send", id: "77" });
@@ -147,7 +147,7 @@ describe("Probe-Rueckfragen (11.11.): Knoepfe ausprobieren, nichts zaehlt", () =
     expect(rueckfrageAnlegen({ ...mk("51"), probe: true }, T(21), p, mp)).toBe("gestellt"); // auch nach 20 Uhr
     expect(heuteGestellt(loadRueckfragen(p), "2026-11-11")).toBe(MAX_PRO_TAG);
     expect(rueckfrageAnlegen({ ...mk("1"), probe: true }, T(11), p, mp)).toBe("schon"); // echte geht vor
-    expect(rueckfrageText({ ...mk("50"), probe: true, tag: "", erstelltAm: "", status: "offen" }, 1, 1)).toMatch(/^🧪 PROBE · ❓ Rückfrage 1\/1/);
+    expect(rueckfrageText({ ...mk("50"), probe: true, tag: "", erstelltAm: "", status: "offen" }, 1, 1)).toMatch(/^🧪 PROBE · 🟠 ENTSCHEIDUNG NÖTIG.*\n❓ Rückfrage 1\/1/);
     freigeben("50", T(12), p);
     expect(freigegebene(p)).toHaveLength(0);
     expect(sendeLaufFaellig(T(13), p)).toBe(false);

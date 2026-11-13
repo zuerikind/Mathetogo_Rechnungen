@@ -16,7 +16,7 @@ config({ path: ".env.local" });
 
 const {
   RATE_LIMIT_TEXT, activePause, appendPassLog, emptyCounts, errorKey, firstName, fmtZurich, inSendWindow, is429, isBusy,
-  loadAutopilot, nextScheduled, notify, passResult, passSummary, rateLimitUntil, readPassLog, shortError, stopReason, updateAutopilot,
+  loadAutopilot, nextScheduled, notify, passResult, problemText, antwortText, probeText, passSummary, rateLimitUntil, readPassLog, shortError, stopReason, updateAutopilot,
 } = await import("../lib/tutor24-autopilot");
 const { loadCourses, loadLeadInfo, loadLog, loadSettings, sentToday } = await import("../lib/tutor24-followup-store");
 const { runFollowup } = await import("../lib/tutor24-followup-runner");
@@ -68,7 +68,7 @@ const asked = quelle === "knopf" || quelle === "run" || quelle === "erst";
 const quiet = quelle === "nachgeholt" || quelle === "freigabe";
 // --freigaben: nur die per Telegram/auf /kurse freigegebenen Rueckfragen senden (Bot, 10 min nach dem letzten Knopf)
 const FREIGABEN = process.argv.includes("--freigaben");
-if (asked) {
+if (asked || quiet) {
   // Vom Bot gestartet: Ausgabe selbst ins Protokoll schreiben (weder vererbter Handle noch cmd-Umleitung kamen an).
   const { appendFileSync } = await import("node:fs");
   for (const k of ["log", "error"] as const) {
@@ -90,7 +90,7 @@ const minutes = (from: string) => `${Math.max(1, Math.round((Date.now() - new Da
 if ((await db("Stopp-Befehle", takeStops)) && loadAutopilot().modus !== "aus") {
   updateAutopilot({ modus: "aus", gestoppt: { grund: "per Telegram /stop", am: new Date().toISOString() } });
   log("/stop vom Handy angewendet: Automatik ist AUS.");
-  await notify("🔴 /stop angewendet: Automatik ist AUS. Der Durchgang wurde nicht gestartet.");
+  // keine Meldung (13.11.): /stop kam von mir, der Bot hat schon geantwortet
 }
 const state = loadAutopilot();
 const modus = forcedProbe ? "probe" : state.modus;
@@ -109,7 +109,7 @@ if (pause) {
 const soon = earliestNext();
 if (soon) {
   log(`Zu früh, nicht gestartet: ${tooSoonText(soon)}`);
-  if (!quiet) await notify(`⏳ ${quelle === "plan" ? "Geplanter Durchgang" : "Durchgang"} nicht gestartet. ${tooSoonText(soon)}${quelle === "plan" ? "\nDer Bot holt ihn nach, sobald der Abstand erreicht ist." : ""}`);
+  if (asked) await notify(`⏳ Durchgang nicht gestartet. ${tooSoonText(soon)}`);
   process.exit(0);
 }
 // Speicher vor dem Browserstart (wie beim Batch, mind. 1.5 GB frei). Der Bot holt den Durchgang nach, sobald es wieder geht.
@@ -117,7 +117,7 @@ const { speicherProblem } = await import("../lib/tutor24-batch");
 const zuWenig = speicherProblem();
 if (zuWenig) {
   log(`Nicht gestartet: ${zuWenig}`);
-  if (!quiet) await notify(`🧠 Durchgang nicht gestartet. ${zuWenig}\nDer Bot versucht es alle 10 Minuten nochmals, sobald genug frei ist.`);
+  if (asked) await notify(`🧠 Durchgang nicht gestartet. ${zuWenig}\nDer Bot versucht es alle 10 Minuten nochmals, sobald genug frei ist.`);
   process.exit(0);
 }
 // Kein Internet: nicht als Fehler werten, sondern verschieben — alle 2 min pruefen, hoechstens 30 min.
@@ -136,7 +136,8 @@ while (!(await hasInternet())) {
 const settings = loadSettings();
 const dryRun = modus === "probe";
 // Meldungen (11.11.): "wenig" = nur Rueckfragen, Antworten, Stopps/Fehler, Abend-Zusammenfassung (Bot); Probe immer alles.
-const laut = dryRun || settings.meldungen === "alle";
+// 13.11.: nur noch "alle" meldet unterwegs; die Probe schickt eine einzige Meldung am Schluss.
+const laut = settings.meldungen === "alle";
 if (offlineChecks && laut)
   await notify(`📶 Um ${hhmm(plannedAt.toISOString())} kein Internet, Durchgang verschoben. Jetzt wieder verbunden — er startet.`);
 const hotspot = isHotspot(currentSsid());
@@ -182,7 +183,7 @@ if (FREIGABEN) {
   }
   appendPassLog({ start, ende: new Date().toISOString(), modus, quelle, erst: counts, nachfassen: emptyCounts(), antworten: 0, fehler: fehler ? [fehler] : [], stopp: fehler && is429(fehler) ? fehler : null });
   const rest = items.filter((i) => i.ergebnis !== "gesendet").map((i) => `• ${i.titel}: ${i.ergebnis ?? "nicht versucht"} ${i.meldung ?? ""}`.trim());
-  await notify(`✉️ Freigaben gesendet: ${counts.gesendet} von ${items.length}.${rest.length ? `\n${rest.join("\n")}` : ""}${fehler ? `\n⚠ ${fehler}` : ""}`);
+  if (laut || rest.length || fehler) await notify(`${rest.length || fehler ? "⚠️ PROBLEM\n" : ""}✉️ Freigaben gesendet: ${counts.gesendet} von ${items.length}.${rest.length ? `\n${rest.join("\n")}` : ""}${fehler ? `\n⚠ ${fehler}` : ""}`);
   process.exit(0);
 }
 
@@ -206,7 +207,7 @@ const pass = {
 };
 const bytesAtStart = netBytes();
 /** neue Antworten laut Liste "Gesendet" (runFollowup auto) */
-const listReplies: { id: string; name: string; absage: boolean }[] = [];
+const listReplies: { id: string; name: string; absage: boolean; satz?: string }[] = [];
 
 /** Vor jeder einzelnen Nachricht und direkt vor dem Senden: Zeitfenster und Notbremse (Telegram /stop, /kurse). */
 const mayContinue = () => {
@@ -254,7 +255,7 @@ const pruefeNachfassen = async (r: { conversation_id: string; inserat_id: string
   }
   if (u.urteil !== "ok") {
     addMarkiert({ id: r.conversation_id, titel: `Nachfassen: ${r.name}`, link, grund: u.urteil === "auffaellig" ? `Prüf-Agent: ${u.grund}` : u.grund, am: new Date().toISOString() });
-    await notify(`❓ Nachfassen an ${firstName(r.name)} nicht gesendet — ${urteilLabel(u)}
+    if (laut) await notify(`❓ Nachfassen an ${firstName(r.name)} nicht gesendet — ${urteilLabel(u)}
 ${link}
 Steht auf /kurse unter „Von der Automatik markiert“; senden nur von Hand.
 
@@ -370,18 +371,15 @@ const kursOf = (id: string) => {
   const kursId = logRows.find((r) => r.conversation_id === id)?.kurs || leadInfo[id]?.erstKursId;
   return courses.find((c) => c.id === kursId)?.name ?? "ohne Kurs";
 };
-const toNotify = new Map(listReplies.map((r) => [r.id, r]));
+const toNotify = new Map<string, { id: string; name: string; absage: boolean; satz?: string }>(listReplies.map((r) => [r.id, r]));
 for (const r of logRows.filter((r) => r.geantwortet === "ja" && !repliedBefore.has(r.conversation_id)))
   if (!toNotify.has(r.conversation_id)) toNotify.set(r.conversation_id, { id: r.conversation_id, name: r.name, absage: r.markierung === "Absage" });
 pass.antworten = toNotify.size;
 for (const r of toNotify.values()) {
-  const link = `https://www.tutor24.ch/de/conversations/${r.id}?tab=sent`;
   const lead = leadInfo[r.id];
-  await notify(
-    lead?.erstHinweis && !r.absage
-      ? `${P}💬 Antwort auf Kurs-Hinweis von ${firstName(r.name)} · Stufe ${lead.stufe || "unbekannt"}\n${link}\nBekommt keine automatischen Nachrichten mehr.`
-      : `${P}💬 ${r.absage ? "Absage" : "Antwort"} von ${firstName(r.name)} · ${kursOf(r.id)}\n${link}`
-  );
+  const kurs = lead?.erstHinweis ? "Kurs-Hinweis" : kursOf(r.id);
+  // Probe: Antworten stehen in der einen Schlussmeldung (Zahl), keine Einzelmeldung
+  if (!dryRun || laut) await notify(`${P}${antwortText(r, lead?.stufe ?? "", kurs)}`);
 }
 
 // Stopp-Regeln
@@ -390,10 +388,10 @@ pass.mb = megabytes(bytesAtStart, netBytes());
 await db("Fortschritt", () => writeProgress(null));
 pass.ende = new Date().toISOString();
 const agentGrund = !dryRun && pass.agent.aus ? pass.agent.halt : null;
-if (!dryRun && pass.agent.halt && !pass.agent.aus) await notify(`⚠ ${pass.agent.halt}. Automatik bleibt an; der nächste Durchgang versucht es wieder.`);
+if (!dryRun && pass.agent.halt && !pass.agent.aus && laut) await notify(`⚠ ${pass.agent.halt}. Automatik bleibt an; der nächste Durchgang versucht es wieder.`);
 const abweichend = pass.kontrolliert.filter((k) => !k.ok);
 if (abweichend.length)
-  await notify(`⚠ Nachkontrolle: ${abweichend.length} von ${pass.kontrolliert.length} gesendeten Chats weichen vom gespeicherten Text ab\n` +
+  await notify(problemText(`Nachkontrolle: ${abweichend.length} von ${pass.kontrolliert.length} gesendeten Chats weichen vom gespeicherten Text ab.`, "Die Chats unten öffnen und prüfen, was wirklich angekommen ist.") + "\n" +
     abweichend.map((k) => `• ${firstName(k.name)}: ${k.hinweis}\nhttps://www.tutor24.ch/de/conversations/${k.conversationId}?tab=sent`).join("\n"));
 const reason = agentGrund ?? stopReason({ pruefungFehler: pass.erst.pruefungFehler + pass.nachfassen.pruefungFehler, fehler: fatal, letzterFehler: state.letzterFehler });
 if (reason) {
@@ -402,19 +400,19 @@ if (reason) {
   const until = rateLimitUntil([pass]);
   await notify(
     is429(reason) && until
-      ? `${P}⛔ ${RATE_LIMIT_TEXT}\n429 um ${fmtZurich(new Date(pass.ende))}. Pausiert bis ${fmtZurich(until)}; vorher startet kein Lauf.\n` +
-        `Automatik ist AUS. Frühester geplanter Lauf nach dem Einschalten: ${fmtZurich(nextScheduled(until))}.\nWieder einschalten mit /enable oder auf /kurse.`
-      : `${P}⛔ Automatik gestoppt: ${reason}\nWieder einschalten mit /enable oder auf /kurse.`
+      ? `${P}` + problemText(`${RATE_LIMIT_TEXT} (429 um ${fmtZurich(new Date(pass.ende))}). Automatik ist AUS, Pause bis ${fmtZurich(until)}.`, `Nach der Pause mit /enable einschalten; frühester Lauf danach ${fmtZurich(nextScheduled(until))}.`)
+      : `${P}` + problemText(`Automatik gestoppt: ${reason}.`, "Ursache ansehen (/kurse → Protokoll), dann mit /enable wieder einschalten.")
   );
 } else {
   if (!busy) updateAutopilot({ letzterFehler: fatal ? errorKey(fatal) : null });
-  if (fatal) await notify(`${P}⚠ Durchgang abgebrochen: ${fatal}\nKommt derselbe Fehler beim nächsten Mal wieder, stoppt die Automatik.`);
+  if (fatal && laut) await notify(`${P}⚠ Durchgang abgebrochen: ${fatal}\nKommt derselbe Fehler beim nächsten Mal wieder, stoppt die Automatik.`);
 }
 
 const { texte, ...passOhneTexte } = pass;
 appendPassLog(passOhneTexte);
 log(passSummary(pass));
-if (runId) await db("Durchgang abschliessen", () => finishRun(runId, passOhneTexte));
+// Texte mit in die Datenbank: /kurse/texte?lauf=<id> zeigt sie (Link in der Probe-Meldung, 13.11.)
+if (runId) await db("Durchgang abschliessen", () => finishRun(runId, dryRun ? { ...passOhneTexte, texte } as typeof passOhneTexte : passOhneTexte));
 await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
 
 // Schlussmeldung: bei "alle" und in der Probe immer; bei "wenig" nur, wenn etwas schiefging (Stopp, Abbruch, gestoppt).
@@ -422,7 +420,8 @@ const later = inSendWindow() ? "" : " — würde ab 8:00 gesendet";
 const list = dryRun ? `\nWürde senden:\n${pass.probe.length ? pass.probe.map((x) => `• ${x}${later}`).join("\n") : "niemand"}` : "";
 const n = dryRun ? pass.erst.wuerde : pass.erst.gesendet;
 const daten = pass.mb !== null ? `\nDaten ≈ ${pass.mb} MB (ganzer Laptop)` : "";
-if (laut || pass.stopp || fatal || busy)
+if (dryRun && !laut) await notify(probeText(pass, runId, busy ? "vorzeitig beendet (gestoppt)" : passResult(pass)));
+else if (laut)
 await notify(
   erstOnly
     ? `${P}${pass.stopp || fatal || busy ? "■" : "✉️"} Erst-Nachrichten ${hhmm(pass.start)} fertig (${minutes(pass.start)})\n` +
@@ -439,9 +438,9 @@ await notify(
         list.slice(0, 3500)
 );
 // Probe: jede Erst-Nachricht vollstaendig als eigene Meldung, mit "✅ sicher" oder "❓ Rückfrage: Grund" (Telegram: hoechstens 4096 Zeichen)
-for (const [i, t] of texte.entries()) await notify(`${P}✉️ Erst-Nachricht ${i + 1}/${texte.length} (würde gesendet)\n${t}`.slice(0, 4000));
+if (laut) for (const [i, t] of texte.entries()) await notify(`${P}✉️ Erst-Nachricht ${i + 1}/${texte.length} (würde gesendet)\n${t}`.slice(0, 4000));
 // Probe: Rueckfragen mit Knoepfen zum Ausprobieren (nichts wird gesendet, gezaehlt oder notiert); ohne unsichere ein Beispiel
-if (dryRun) {
+if (dryRun && laut) {
   const probeRf = (erstAuto.probeRueckfragen ?? []).slice(0, 5);
   if (!probeRf.length && erstAuto.probeBeispiel) probeRf.push(erstAuto.probeBeispiel);
   for (const [i, r] of probeRf.entries()) {

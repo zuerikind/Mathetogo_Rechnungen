@@ -21,7 +21,7 @@ type AgentInput = import("../lib/tutor24-pruefagent").AgentInput;
 const arg = (n: string) => process.argv[process.argv.indexOf(n) + 1];
 const NEU = process.argv.includes("--neu") ? Number(arg("--neu")) : 60;
 
-type Fall = { gruppe: "A" | "B" | "C" | "K"; id: string; titel: string; input: AgentInput; urteil?: string; grund?: string };
+type Fall = { gruppe: "A" | "B" | "C" | "K" | "G"; id: string; titel: string; input: AgentInput; urteil?: string; grund?: string };
 const faelle: Fall[] = [];
 
 // A + C: aus der Datenbank; Inserat aus batch.json (10.11., volles Inserat) bzw. aus dem Lead (Auszug, 300 Zeichen)
@@ -87,6 +87,16 @@ if (en) {
   if (de) faelle.push({ gruppe: "K", id: "kontrolle-sprache", titel: "Kontrolle: deutsche Nachricht auf englisches Inserat", input: { ...en.input, text: de.input.text } });
 }
 
+// 13.11.: echter Fall 6309766 (Probe 12.11., Agent sagte ok) — Grammatik und Wortwiederholung im persoenlichen Teil.
+// Dieselbe Nachricht mit sauberem Satz muss ok bleiben (Gruppe G).
+const shannon = (JSON.parse(readFileSync("tutor24-followup/rueckfragen.json", "utf8")) as { items: { id: string; text: string; info: ListingInfo }[] }).items.find((r) => r.id === "6309766");
+if (shannon) {
+  const inp = (text: string): AgentInput => ({ art: "erst", titel: shannon.info.title, fach: shannon.info.fach, stufe: shannon.info.schulstufe, beschreibung: shannon.info.description, text });
+  faelle.push({ gruppe: "K", id: "kontrolle-grammatik", titel: "Kontrolle: Grammatik/Wiederholung (6309766)", input: inp(shannon.text) });
+  const gut = shannon.text.replace(/Beim Berufsmatura Niveau[^\n]*ISME verlangt werden\./,"Auf Berufsmatura-Niveau würde ich zuerst die Grundlagen festigen, die du dort brauchst. Danach orientieren wir uns an den Themen, die an der ISME verlangt werden.");
+  if (gut !== shannon.text) faelle.push({ gruppe: "G", id: "gut-grammatik", titel: "Gleiche Nachricht, Satz korrigiert (soll ok sein)", input: inp(gut) });
+}
+
 for (const [k, f] of faelle.entries()) {
   const u = await pruefAgent(f.input);
   f.urteil = u.urteil;
@@ -94,8 +104,8 @@ for (const [k, f] of faelle.entries()) {
   console.log(`${k + 1}/${faelle.length} ${f.gruppe} ${f.id} ${u.urteil} ${u.grund}`);
 }
 
-const name = { A: "Deine Batches 9./10.11.", B: "Neu erstellte Erst-Nachrichten", C: "Gesendete Nachfassen", K: "Kontrolle (absichtlich fehlerhaft, soll auffallen)" } as const;
-const zeile = (g: "A" | "B" | "C" | "K") => {
+const name = { A: "Deine Batches 9./10.11.", B: "Neu erstellte Erst-Nachrichten", C: "Gesendete Nachfassen", K: "Kontrolle (absichtlich fehlerhaft, soll auffallen)", G: "Kontrolle gut (soll ok sein)" } as const;
+const zeile = (g: "A" | "B" | "C" | "K" | "G") => {
   const x = faelle.filter((f) => f.gruppe === g);
   const a = x.filter((f) => f.urteil === "auffaellig");
   const e = x.filter((f) => f.urteil === "fehler");
@@ -106,7 +116,7 @@ const auff = faelle.filter((f) => f.urteil === "auffaellig" && f.gruppe !== "K")
 const beispiele = [...auff, ...faelle.filter((f) => f.urteil === "auffaellig" && f.gruppe === "K")].slice(0, 5);
 const verpasst = faelle.filter((f) => f.gruppe === "K" && f.urteil !== "auffaellig").map((f) => `\n  ✗ nicht erkannt: ${f.titel}`).join("");
 const bericht =
-  `🤖 Test Prüf-Agent (nichts gesendet)\n\n${zeile("A")}\n\n${zeile("B")}${pruefungNicht ? `\n  (${pruefungNicht} weitere bestanden schon die feste Prüfung nicht — kämen nie zum Agenten)` : ""}\n\n${zeile("C")}\n\n${zeile("K")}${verpasst}`;
+  `🤖 Test Prüf-Agent (nichts gesendet)\n\n${zeile("A")}\n\n${zeile("B")}${pruefungNicht ? `\n  (${pruefungNicht} weitere bestanden schon die feste Prüfung nicht — kämen nie zum Agenten)` : ""}\n\n${zeile("C")}\n\n${zeile("K")}${verpasst}\n\n${zeile("G")}`;
 const md = [bericht, "", "Beispiele (vollständig):", ...beispiele.map((f, i) => `\n--- Beispiel ${i + 1} (${name[f.gruppe]}) · ${f.titel}\nGrund: ${f.grund}\nInserat: ${f.input.beschreibung.replace(/\s+/g, " ").slice(0, 400)}\n\n${f.input.text}`)].join("\n");
 writeFileSync("tutor24-followup/pruefagent_test.json", JSON.stringify(faelle, null, 1));
 writeFileSync("tutor24-followup/pruefagent_test.md", md);

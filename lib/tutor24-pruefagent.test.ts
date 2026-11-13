@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentPass, agentZaehlen, parseUrteil, pruefAgent } from "./tutor24-pruefagent";
-import { agentText } from "./tutor24-abend";
+import { agentPass, agentZaehlen, parseSprache, parseUrteil, pruefAgent } from "./tutor24-pruefagent";
 import { vergleicheGesendet } from "./tutor24-followup-runner";
 
 const ok = { urteil: "ok" as const, grund: "" };
@@ -12,6 +11,11 @@ describe("Prüf-Agent", () => {
     expect(parseUrteil('{"urteil":"ok"}')).toEqual(ok);
     expect(parseUrteil('{"urteil":"auffällig","grund":"Anrede falsch"}')).toEqual({ urteil: "auffaellig", grund: "Anrede falsch" });
     expect(parseUrteil("Sieht gut aus").urteil).toBe("fehler");
+    // 13.11.: Sprach-Aufruf — Sprachfehler eingetragen → auffaellig; leer oder {} → ok; unlesbar → fehler
+    expect(parseSprache('{"persoenlich":"x","sprachfehler":"Beim Berufsmatura Niveau"}').urteil).toBe("auffaellig");
+    expect(parseSprache('{"persoenlich":"x","sprachfehler":""}')).toEqual(ok);
+    expect(parseSprache("{}")).toEqual(ok);
+    expect(parseSprache("kaputt").urteil).toBe("fehler");
   });
 
   it("nicht erreichbar = fehler, nie ok", async () => {
@@ -58,23 +62,5 @@ describe("Prüf-Agent", () => {
     expect(vergleicheGesendet(text, ["11.11.26 10:05\nGuten Tag, \ngerne unterstütze ich Sie. WhatsApp ***\nFreundliche Grüsse Omid"]).ok).toBe(true);
     expect(vergleicheGesendet(text, ["Guten Tag, gerne unterstütze ich dich."]).ok).toBe(false);
     expect(vergleicheGesendet(text, []).hinweis).toMatch(/keine eigene/);
-  });
-
-  it("Abend: zurückgehalten mit Grund, erste Woche Summe seit Start, Probe zählt nicht", () => {
-    const e = (tag: string, urteil: "ok" | "auffaellig", probe?: boolean) => ({ am: "", tag, id: "1", art: "erst" as const, titel: "Mathe Sek", urteil, grund: urteil === "ok" ? "" : "Stufe passt nicht", probe });
-    const t = agentText("2026-11-12", [e("2026-11-12", "ok"), e("2026-11-12", "auffaellig"), e("2026-11-11", "ok"), e("2026-11-12", "ok", true)]);
-    expect(t).toContain("1 mit ok durchgelassen, 1 zurückgehalten");
-    expect(t).toContain("Stufe passt nicht");
-    expect(t).toContain("Seit Start insgesamt: 2 ok, 1 auffällig");
-    expect(agentText("2026-11-25", [e("2026-11-25", "ok")])).not.toContain("Seit Start");
-    expect(agentText("2026-11-12", [])).toBe("");
-  });
-
-  it("Abend: mehr als 2 zurückgehaltene Nachfassen → Hinweis (nur am Tag eines neuen, bis 26.11.)", () => {
-    const nf = (tag: string) => ({ am: "", tag, id: "1", art: "nachfassen" as const, titel: "t", urteil: "auffaellig" as const, grund: "g" });
-    expect(agentText("2026-11-13", [nf("2026-11-12"), nf("2026-11-13")])).not.toContain("Senden-Knopf");
-    expect(agentText("2026-11-14", [nf("2026-11-12"), nf("2026-11-13"), nf("2026-11-14")])).toContain("3 Nachfassen");
-    expect(agentText("2026-11-15", [nf("2026-11-12"), nf("2026-11-13"), nf("2026-11-14")])).not.toContain("Senden-Knopf");
-    expect(agentText("2026-11-27", [nf("2026-11-25"), nf("2026-11-26"), nf("2026-11-27")])).not.toContain("Senden-Knopf");
   });
 });

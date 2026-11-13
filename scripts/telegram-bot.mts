@@ -7,7 +7,7 @@
  *   → zeigt die Chat-ID der letzten Nachricht an den Bot (vorher dem Bot "/start" schreiben).
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { uptime } from "node:os";
 import { join } from "node:path";
 import { config } from "dotenv";
@@ -19,9 +19,11 @@ const { commandResult, takeCommands, writeLaptop } = await import("../lib/tutor2
 const { PROBE_MAX, createBot } = await import("../lib/tutor24-bot");
 const { readStatus, requestStop } = await import("../lib/tutor24-followup-store");
 const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock, earliestNext, pidAlive, readTutor24Lock } = await import("../lib/tutor24-lock");
-const { VERFALL_H, sendeLaufFaellig, verfallenLassen } = await import("../lib/tutor24-rueckfragen");
+const { VERFALL_H, sendeLaufFaellig, tagesStand, verfallenLassen } = await import("../lib/tutor24-rueckfragen");
 const { rueckfrageAktion } = await import("../lib/tutor24-rueckfragen-aktion");
-const { abendZusammenfassung } = await import("../lib/tutor24-abend");
+const { tagesbericht, tagesberichtText } = await import("../lib/tutor24-abend");
+const { loadAgentLog } = await import("../lib/tutor24-pruefagent");
+const { problemText } = await import("../lib/tutor24-autopilot");
 const { speicherProblem } = await import("../lib/tutor24-batch");
 const { hasInternet } = await import("../lib/tutor24-network");
 const { toMin, zurichParts, zurichTime } = await import("../lib/tutor24-schedule");
@@ -50,6 +52,9 @@ if (!me) {
 // Waehrend ein Durchgang laeuft, startet kein Bot — der naechste Versuch kommt 5 Minuten spaeter.
 const BOT_LOCK = join(process.cwd(), ".telegram-bot.lock");
 const EXIT_MARK = join(process.cwd(), "tutor24-followup", "telegram-bot.exit.json");
+/** Lebenszeichen auf der Festplatte (alle 2 min): daraus die Dauer eines Ausfalls */
+const ALIVE = join(process.cwd(), "tutor24-followup", "telegram-bot.alive");
+const ausfallMin = existsSync(ALIVE) ? Math.round((Date.now() - statSync(ALIVE).mtimeMs) / 60_000) : 0;
 const pass = readTutor24Lock(AUTOPILOT_LOCK_PATH);
 if (pass && !readTutor24Lock(BOT_LOCK)) {
   console.log(`${new Date().toLocaleString("de-CH")} Durchgang läuft (${pass.owner}) — Bot startet erst danach.`);
@@ -142,6 +147,8 @@ const handle = createBot({
 // Alles hoechstens einmal pro Minute, nie waehrend ein Lauf laeuft. Fehler hier duerfen den Bot nicht beenden.
 let pflegeAt = 0;
 let nachholVersuchAt = 0;
+/** "YYYY-MM-DD HH:MM" der schon gemeldeten Ausfaelle (ein Neustart des Bots meldet hoechstens nochmals) */
+const ausfallGemeldet = new Set<string>();
 let freigabeVersuchAt = 0;
 /** Darf jetzt ein Lauf auf tutor24 starten? null = ja, sonst der Grund (nur fuers Protokoll) */
 const startHindernis = async (): Promise<string | null> => {
@@ -166,7 +173,8 @@ const pflege = async () => {
 
   // 1. Offene Rueckfragen verfallen (ab 20 Uhr bzw. von gestern) → Liste auf /kurse
   const v = verfallenLassen(now);
-  if (v.length) await notify(`⏳ ${v.length} Rückfrage${v.length === 1 ? "" : "n"} unbeantwortet — in der Liste „Von der Automatik markiert“ auf /kurse.`);
+  // 13.11.: keine eigene Meldung mehr — der Tagesbericht nennt die Zahl
+  if (v.length) console.log(`${stamp()} ${v.length} Rückfragen verfallen.`);
 
   // 2. Freigaben senden: 10 min nach dem letzten Knopf, nur im Modus EIN, 8–20 Uhr, Mindestabstand, kein Lauf
   if (s.modus === "an" && sendeLaufFaellig(now) && inSendWindow(now) && Date.now() - freigabeVersuchAt > 10 * 60_000) {
@@ -189,7 +197,16 @@ const pflege = async () => {
       const seit = readPassLog(50).some((p) => p.quelle !== "run" && new Date(p.start).getTime() >= dueAt.getTime() - 30 * 60_000);
       if (!seit) {
         const h = await startHindernis();
-        if (h) console.log(`${stamp()} Durchgang von ${String(Math.floor(due / 60)).padStart(2, "0")}:${String(due % 60).padStart(2, "0")} fehlt, warte (${h}).`);
+        const slot = `${String(Math.floor(due / 60)).padStart(2, "0")}:${String(due % 60).padStart(2, "0")}`;
+        if (h) {
+          console.log(`${stamp()} Durchgang von ${slot} fehlt, warte (${h}).`);
+          // PROBLEM (13.11.): 60 min nach der Zeit immer noch nicht nachgeholt → einmal melden
+          const key = `${today} ${slot}`;
+          if (mins >= due + 60 && !ausfallGemeldet.has(key)) {
+            ausfallGemeldet.add(key);
+            await notify(problemText(`Der Durchgang von ${slot} ist ausgefallen und konnte noch nicht nachgeholt werden (${h}).`, h === "zu wenig Speicher" ? "Am Laptop Chrome/Cursor schliessen; der Bot holt ihn dann von selbst nach." : h === "kein Internet" ? "Internet am Laptop prüfen; der Bot holt ihn dann von selbst nach." : "Nichts sofort; der Bot versucht es weiter. Bleibt es so, /status schicken."));
+          }
+        }
         else {
           nachholVersuchAt = Date.now();
           spawnAutopilot("--quelle nachgeholt");
@@ -202,11 +219,9 @@ const pflege = async () => {
 
   // 4. Abend-Zusammenfassung um 20:00, einmal pro Tag (auch wenn die Automatik aus ist)
   if (z.h >= VERFALL_H && s.zusammenfassungAm !== today) {
-    const { text, texte } = await abendZusammenfassung(now);
-    if (await notify(text)) {
-      updateAutopilot({ zusammenfassungAm: today });
-      for (const t of texte) await notify(t.slice(0, 4000));
-    }
+    const d = { tag: today, passes: readPassLog(50), zeiten: runTimes(), state: s, agent: loadAgentLog(), verfallen: tagesStand(today).verfallen };
+    // Faellt die HTML-Fassung durch (z. B. Telegram lehnt sie ab), dieselbe Meldung ohne Stichproben als reiner Text
+    if ((await notify(await tagesbericht(d, now), undefined, true)) || (await notify(tagesberichtText(d)))) updateAutopilot({ zusammenfassungAm: today });
   }
 };
 
@@ -216,6 +231,11 @@ const HEARTBEAT_MS = 2 * 60_000;
 let lastBeat = 0;
 const heartbeat = async () => {
   if (Date.now() - lastBeat < HEARTBEAT_MS) return;
+  try {
+    writeFileSync(ALIVE, new Date().toISOString());
+  } catch {
+    // egal
+  }
   try {
     await writeLaptop(laptopSignal());
     lastBeat = Date.now();
@@ -241,7 +261,9 @@ const fromQueue = async () => {
 console.log(`${stamp()} Telegram-Bot läuft. Befehle: /status, /run, /stop, /enable, Knopf „Jetzt starten“, Rückfrage-Knöpfe; holt verpasste Durchgänge nach, sendet Freigaben, Abend-Zusammenfassung um ${VERFALL_H}:00`);
 if (crashed) {
   console.log(`${stamp()} Neu gestartet nach Ausfall (${crashed})`);
-  await notify(`♻️ Telegram-Bot war ausgefallen (${crashed}) und wurde automatisch neu gestartet. Befehle gehen wieder.`).catch(() => {});
+  // 13.11.: nur ein echter Ausfall von mehr als 15 Minuten ist eine Meldung wert (der Wiederbeleber startet alle 5 min)
+  if (ausfallMin > 15)
+    await notify(problemText(`Der Telegram-Bot war etwa ${ausfallMin} Minuten ausgefallen (${crashed}) und läuft wieder.`, "Nichts zu tun; Befehle aus dieser Zeit werden jetzt abgearbeitet. Ein /stop von damals gilt.")).catch(() => {});
 }
 // Solange kein Webhook gesetzt ist, liest der Bot selbst bei Telegram (getUpdates). Ist der Webhook auf
 // Vercel aktiv, antwortet Telegram darauf mit 409 — dann nur noch Befehle aus der Datenbank.

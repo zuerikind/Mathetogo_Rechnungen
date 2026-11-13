@@ -900,8 +900,22 @@ export function Tutor24Followup({
                   <Toggle id="set-sicher-en" checked={draft.settings.sicherEn} disabled={running} onChange={(v) => setSettings({ sicherEn: v })} />
                 </SettingRow>
                 </>)}
-                <SettingRow title="Alle Telegram-Meldungen" help="Aus (Standard): nur Rückfragen, Antworten von Interessenten, Stopps und Fehler, Abend-Zusammenfassung um 20:00. Ein: zusätzlich Start- und Schritt-Meldungen jedes Durchgangs. Im Probemodus kommen immer alle.">
-                  <Toggle id="set-meldungen" checked={draft.settings.meldungen === "alle"} disabled={running} onChange={(v) => setSettings({ meldungen: v ? "alle" : "wenig" })} />
+                <SettingRow title="Telegram: nur Wichtiges / alles" help="Nur Wichtiges (Standard): Entscheidung nötig (Rückfragen), Antworten von Interessenten, Probleme, bei denen du etwas tun musst, Tagesbericht um 20:00; die Probe schickt eine einzige Meldung mit Link zu allen Texten. Alles: zusätzlich Start-, Schritt- und Ende-Meldungen und jede Probe-Nachricht einzeln.">
+                  <div className="flex gap-1" role="radiogroup" aria-label="Telegram-Meldungen">
+                    {(["wenig", "alle"] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        role="radio"
+                        aria-checked={draft.settings.meldungen === m}
+                        disabled={running}
+                        onClick={() => setSettings({ meldungen: m })}
+                        className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${draft.settings.meldungen === m ? "border-[#4A7FC1] bg-blue-50 text-gray-900" : "border-gray-200 text-gray-500"}`}
+                      >
+                        {m === "wenig" ? "nur Wichtiges" : "alles"}
+                      </button>
+                    ))}
+                  </div>
                 </SettingRow>
                 <SettingRow title="Durchgänge um" help="Uhrzeiten, mit Komma getrennt, je mindestens 2 Stunden auseinander. Beim Speichern wird die Windows-Aufgabe angepasst; der Wächter richtet sich danach.">
                   <div className="w-full min-w-0 sm:w-56">
@@ -1084,7 +1098,7 @@ export function Tutor24Followup({
               <details className={card}>
                 <summary className="cursor-pointer font-semibold text-gray-900">Manuell ausführen</summary>
                 <p className="mt-2 text-sm text-gray-500">
-                  Die Automatik macht diese Schritte selbst um 9 und 17 Uhr. Hier nur, wenn du sie für <b>{selected.name || "diesen Kurs"}</b> von Hand starten willst. Es läuft immer nur ein Lauf; er läuft weiter, auch wenn du die Seite neu lädst.
+                  Die Automatik macht diese Schritte selbst zu den eingestellten Zeiten. Hier nur, wenn du sie für <b>{selected.name || "diesen Kurs"}</b> von Hand starten willst. Es läuft immer nur ein Lauf; er läuft weiter, auch wenn du die Seite neu lädst.
                 </p>
                 {errors.length > 0 ? (
                   <p className="mt-2 text-sm font-semibold text-red-700">Senden gesperrt: ein Kurs hat einen Fehler.</p>

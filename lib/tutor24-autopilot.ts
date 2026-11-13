@@ -173,6 +173,34 @@ async function telegram(method: string, body: Record<string, unknown>): Promise<
   return (await res.json()) as { ok: boolean; result?: unknown; description?: string };
 }
 
+// ── Vier Arten von Meldungen (Omid, 13.11.): ENTSCHEIDUNG NÖTIG, ANTWORT, PROBLEM, TAGESBERICHT ──
+export const APP_URL = process.env.APP_URL || "https://rechnungen.mathetogo.xyz";
+/** PROBLEM: nur wenn ich etwas tun muss. Ein Satz, was passiert ist; ein Satz, was ich tun soll. */
+export const problemText = (was: string, tun: string) => `⚠️ PROBLEM\n${was}\n👉 ${tun}`;
+/** ANTWORT: Name, Stufe, Kurs, ein Satz aus der Antwort, Link */
+export function antwortText(r: { id: string; name: string; absage?: boolean; satz?: string }, stufe: string, kurs: string): string {
+  const satz = (r.satz ?? "").replace(/\s+/g, " ").trim().match(/^.{1,200}?[.!?](?=\s|$)|^.{1,200}/)?.[0] ?? "";
+  return (
+    `💬 ANTWORT${r.absage ? " (Absage)" : ""}\n${r.name.split(/\s+/)[0] || r.name} · Stufe ${stufe || "unbekannt"} · ${kurs}\n` +
+    (satz ? `„${satz}“\n` : "") +
+    `https://www.tutor24.ch/de/conversations/${r.id}?tab=sent\nBekommt keine automatischen Nachrichten mehr.`
+  );
+}
+/** Probe: eine einzige Meldung nach dem Durchgang (Ergebnis, Zahlen, Agent, Link zu allen Texten) */
+export function probeText(p: Pick<PassLog, "start" | "erst" | "nachfassen" | "antworten" | "fehler" | "stopp"> & { agent?: { ok: number; auffaellig: number; fehler: number; gruende: string[] }; notes?: string[] }, runId: string | null, ergebnis: string): string {
+  const a = p.agent;
+  const zeit = new Date(p.start).toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" });
+  return [
+    `🧪 PROBE ${zeit}: ${ergebnis}`,
+    `Erst-Nachrichten: ${p.erst.wuerde} würden gesendet (${p.erst.kurs ?? 0} mit Kursblock, ${p.erst.hinweis ?? 0} mit Hinweis), ${p.erst.rueckfragen ?? 0} Rückfragen, ${p.erst.uebersprungen} übersprungen`,
+    `Nachfassen: ${p.nachfassen.wuerde} würden gesendet · Antworten: ${p.antworten}`,
+    a ? `Prüf-Agent: ${a.ok} ok, ${a.auffaellig} auffällig${a.fehler ? `, ${a.fehler} nicht erreichbar` : ""}${a.gruende.length ? `\n${a.gruende.map((g) => `• ${g}`).join("\n")}` : ""}` : "",
+    ...(p.notes ?? []),
+    p.fehler.length ? `Fehler: ${p.fehler.length} (/kurse → Protokoll)` : "",
+    runId ? `Alle Texte: ${APP_URL}/kurse/texte?lauf=${runId}` : "",
+  ].filter(Boolean).join("\n").slice(0, 4000);
+}
+
 /** Meldung an mich. Scheitert nie laut: eine fehlende Meldung darf keinen Durchgang abbrechen. */
 export async function notify(text: string, chatId = process.env.TELEGRAM_CHAT_ID, html = false, markup?: object): Promise<boolean> {
   if (!chatId) {

@@ -123,7 +123,7 @@ export type AutoSend = {
   maxScrollRounds?: number;
   maxReplyChecks?: number;
   /** Ausgabe: neue Antworten laut Liste "Gesendet" (auch auf Erst-Nachrichten ohne Kurs) */
-  antworten: { id: string; name: string; absage: boolean }[];
+  antworten: { id: string; name: string; absage: boolean; satz?: string }[];
   /** Batch: nur diese Konversationen (in der Vorschau freigegeben) */
   onlyIds?: string[];
   /** Batch: Text, wie er in der Vorschau stand; weicht der aktuelle ab, wird nicht gesendet */
@@ -268,6 +268,7 @@ async function collectList(
           lastSender: listSender(i.snippet, unread),
           unread,
           sig: snippetSig(i.snippet),
+          snippet: i.snippet.slice(0, 300),
           link: convoUrl(i.id),
         };
       });
@@ -1062,7 +1063,7 @@ export async function runFollowup(opts: FollowupRunOptions): Promise<void> {
       await preview(page, opts.maxChecks ?? 150, log, (sent) => {
         // Eigener Stand nur fuer Meldungen: ein Probelauf von Hand dazwischen verschluckt so keine Antwort.
         for (const e of newActivity(sent, loadListCache("notify:sent")))
-          auto.antworten.push({ id: e.id, name: e.name, absage: e.lastSender === "system" });
+          auto.antworten.push({ id: e.id, name: e.name, absage: e.lastSender === "system", satz: e.snippet });
         saveListCache("notify:sent", Object.fromEntries(sent.map((e) => [e.id, e])));
       });
       await auto.onStep?.("antworten");

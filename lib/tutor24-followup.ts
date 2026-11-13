@@ -345,7 +345,8 @@ const PARENT_RE = new RegExp(
 );
 // Unicode-Grenzen statt \b: \b kennt keine Umlaute ("möchte").
 const SELF_RE = new RegExp(
-  "(?<!\\p{L})(ich suche|ich bin \\d{2}|ich bin in der|ich bin im|ich brauche|ich gehe|ich besuche|ich besucht|ich mache|ich absolviere|absolviere|ich schreibe|ich möchte (die|meine|mich)|ich befinde mich|ich bereite mich|ich bin (momentan |zurzeit |aktuell |gerade |jetzt )?(an|in|im|am) (der|dem|einer|einem)|(helfen|hilfst|helft) (du |sie )?mir|mir (\\p{L}+ ){0,3}helfen|ich habe (mühe|probleme|schwierigkeiten)|meine (prüfung|matura|bm)|bin \\d{2} jahre)(?!\\p{L})",
+  // 13.11. (Fall 6241494, BM2): auch umgestellte Ich-Form ("brauche ich jemanden", "ich kann besser … lernen")
+  "(?<!\\p{L})(ich suche|suche ich|brauche ich|ich kann besser|ich lerne|ich verstehe|verstehe ich|ich bin \\d{2}|ich bin in der|ich bin im|ich brauche|ich gehe|ich besuche|ich besucht|ich mache|ich absolviere|absolviere|ich schreibe|ich möchte (die|meine|mich)|ich befinde mich|ich bereite mich|ich bin (momentan |zurzeit |aktuell |gerade |jetzt )?(an|in|im|am) (der|dem|einer|einem)|(helfen|hilfst|helft) (du |sie )?mir|mir (\\p{L}+ ){0,3}helfen|ich habe (mühe|probleme|schwierigkeiten)|meine (prüfung|matura|bm)|bin \\d{2} jahre)(?!\\p{L})",
   "u"
 );
 
@@ -681,6 +682,8 @@ export type ListEntry = {
   unread: number;
   /** Pruefsumme des Nachrichten-Ausschnitts: aendert sich mit jeder neuen Nachricht (auch am selben Tag) */
   sig: string;
+  /** Ausschnitt der letzten Nachricht laut Liste (fuer die Telegram-Meldung "Antwort", 13.11.) */
+  snippet?: string;
   link: string;
 };
 export type ListCache = Record<string, ListEntry>;

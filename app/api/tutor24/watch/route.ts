@@ -26,7 +26,7 @@ async function watch(req: NextRequest) {
   if (decision) {
     // Erst merken, dann senden: ein zweiter Aufruf (Sommer-/Winterzeit-Doppel) schickt nicht nochmals.
     await markReminder(decision.key);
-    await notify(decision.text, undefined, false, START_BUTTON);
+    await notify(`⚠️ PROBLEM\n${decision.text}`, undefined, false, START_BUTTON);
   }
   return NextResponse.json({ ok: true, check: check.key, reminder: decision?.text ?? null });
 }

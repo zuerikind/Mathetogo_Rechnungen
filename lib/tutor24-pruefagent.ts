@@ -52,6 +52,20 @@ Sei sonst grosszügig. Stil, Geschmack, "könnte persönlicher sein" und "geht n
 
 Antworte nur mit JSON: {"urteil":"ok"} oder {"urteil":"auffällig","grund":"<ein kurzer Satz auf Deutsch>"}.`;
 
+/**
+ * Zweiter, eigener Aufruf nur fuer die Sprache des persoenlichen Teils (13.11., Fall 6309766 "Beim Berufsmatura Niveau …").
+ * Eigener Aufruf, weil dieselbe Regel in der Hauptanweisung andere Pruefungen verdraengte (Test 13.11.: abgeschnitten,
+ * Notengarantie nicht mehr erkannt). Laeuft nur, wenn die Hauptpruefung "ok" ergab.
+ */
+export const SPRACH_ANWEISUNG = `Du bist Korrektor. Du siehst eine Nachricht eines Nachhilfelehrers an eine Familie oder einen Schüler. Sie besteht aus festen, bereits korrigierten Textbausteinen und einem kurzen persönlichen Teil (meist ein bis zwei Sätze direkt nach dem ersten Absatz mit der Vorstellung, die auf das Anliegen eingehen).
+
+Schreibe den persönlichen Teil wörtlich ab (leer, wenn es keinen gibt). Prüfe NUR diesen Teil:
+- klarer Grammatikfehler: falscher Fall, falscher Artikel, schiefer Satzbau (Beispiel: "Beim Berufsmatura Niveau würde ich …" statt "Auf Berufsmatura-Niveau würde ich …")
+- dasselbe Fachwort zweimal im selben Satz (Beispiel: "Beim Berufsmatura Niveau würde ich mit den Grundlagen beginnen, die für die Berufsmatura wichtig sind")
+Dasselbe Wort in zwei verschiedenen Sätzen ist ok. Stil, Geschmack und leicht formelle Sprache sind ok. Schweizer Schreibweise (ss statt ß) ist richtig.
+
+Antworte nur mit JSON: {"persoenlich":"<persönlicher Teil>","sprachfehler":""} oder {"persoenlich":"…","sprachfehler":"<kurz, welcher Fehler>"}.`;
+
 export function agentNachricht(i: AgentInput): string {
   return (
     `INSERAT\nTitel: ${i.titel}\n${i.fach ? `Fach: ${i.fach}\n` : ""}${i.stufe ? `Stufe: ${i.stufe}\n` : ""}Text:\n${i.beschreibung || "(kein Text)"}\n\n` +
@@ -69,6 +83,17 @@ export function parseUrteil(raw: string): AgentUrteil {
     /* unten */
   }
   return { urteil: "fehler", grund: `Antwort nicht lesbar: ${raw.slice(0, 80)}` };
+}
+
+/** Antwort des Sprach-Aufrufs: Sprachfehler eingetragen → auffaellig, leer → ok, unlesbar → fehler (nicht senden) */
+export function parseSprache(raw: string): AgentUrteil {
+  try {
+    const j = JSON.parse(raw.replace(/^```(?:json)?|```$/g, "").trim());
+    const sf = String(j.sprachfehler ?? "").trim();
+    return sf ? { urteil: "auffaellig", grund: `Sprachfehler im persönlichen Teil: ${sf}` } : { urteil: "ok", grund: "" };
+  } catch {
+    return { urteil: "fehler", grund: `Antwort nicht lesbar: ${raw.slice(0, 80)}` };
+  }
 }
 
 type Client = { chat: { completions: { create: (a: object, o?: object) => Promise<{ choices: { message: { content: string | null } }[] }> } } };
@@ -92,7 +117,21 @@ export async function pruefAgent(i: AgentInput, client?: Client): Promise<AgentU
       },
       { timeout: 45_000 }
     );
-    return parseUrteil(r.choices[0]?.message?.content ?? "");
+    const haupt = parseUrteil(r.choices[0]?.message?.content ?? "");
+    if (haupt.urteil !== "ok") return haupt;
+    const s = await client.chat.completions.create(
+      {
+        model: process.env.PRUEF_AGENT_MODEL || "gpt-4.1",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: SPRACH_ANWEISUNG },
+          { role: "user", content: i.text },
+        ],
+      },
+      { timeout: 45_000 }
+    );
+    return parseSprache(s.choices[0]?.message?.content ?? "");
   } catch (err) {
     return { urteil: "fehler", grund: `Prüf-Agent nicht erreichbar: ${err instanceof Error ? err.message : String(err)}`.slice(0, 160) };
   }

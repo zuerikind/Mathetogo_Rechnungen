@@ -137,7 +137,7 @@ export function Overview({ info, ov, attention, onMode }: { info: AutopilotInfo;
         <div className="space-y-2">
           <h3 className="font-semibold text-gray-900">Automatik</h3>
           <ModeSwitch modus={info.modus} onMode={onMode} />
-          <p className="text-xs text-gray-500">Läuft um 9 und 17 Uhr: neue Inserate → Erst-Nachrichten → Antworten prüfen → Nachfassen. Antworten schreibst immer du. Notbremse auch per Telegram: /stop</p>
+          <p className="text-xs text-gray-500">Läuft zu den eingestellten Zeiten (Einstellungen → Durchgänge um): neue Inserate → Erst-Nachrichten → Antworten prüfen → Nachfassen. Antworten schreibst immer du. Notbremse auch per Telegram: /stop</p>
         </div>
       </div>
 
@@ -177,7 +177,7 @@ export function Overview({ info, ov, attention, onMode }: { info: AutopilotInfo;
 
       <div className={card}>
         <h2 className="text-lg font-semibold text-gray-900">Erst-Nachrichten jetzt senden</h2>
-        <p className="mt-1 text-sm text-gray-500">Schreibt neue Inserate sofort an statt erst um 9 oder 17 Uhr. Modus, Tageslimit, 8–20 Uhr und 429-Pause gelten. Geht auch online, solange der Laptop an ist.</p>
+        <p className="mt-1 text-sm text-gray-500">Schreibt neue Inserate sofort an statt erst beim nächsten geplanten Durchgang. Modus, Tageslimit, 8–20 Uhr und 429-Pause gelten. Geht auch online, solange der Laptop an ist.</p>
         <ErstNow />
       </div>
     </div>

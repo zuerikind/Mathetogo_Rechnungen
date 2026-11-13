@@ -36,6 +36,9 @@ describe("Anrede", () => {
   it("drei Faelle, Kind nur bei genau einem", () => {
     expect(detectAddressee("Ich mache dieses Jahr Matura")).toEqual({ wer: "schueler", anrede: "du", kind: null });
     expect(detectAddressee("absolviere momentan die Vollzeit-Berufsmatura").wer).toBe("schueler");
+    // 13.11., Fall 6241494 (BM2): umgestellte Ich-Form
+    expect(detectAddressee("Um Math zu verstehen brauche ich jemanden der mir von Grundauf die Sachen erklärt wozu sie da sind was sie mir bringen. Ich kann besser mit jemandem gemeinsam lernen").anrede).toBe("du");
+    expect(detectAddressee("Ich suche für unseren Sohn, ich kann besser abends").kind).toBe("Sohn");
     expect(detectAddressee("Ich suche für meine Tochter Hilfe").kind).toBe("Tochter");
     expect(detectAddressee("Unser Sohn ist in der 2. Sek").kind).toBe("Sohn");
     expect(detectAddressee("meine beiden Söhne")).toEqual({ wer: "eltern", anrede: "Sie", kind: null });
