@@ -10,6 +10,7 @@ import {
   courseStats,
   demandOverview,
   detectAnrede,
+  erstLimits,
   effectiveStatus,
   entryChanged,
   extractAnlass,
@@ -514,5 +515,15 @@ describe("Konversationsliste", () => {
     expect(listSkipReason(e("1", { lastSender: "gegenseite" }))).toBe("ungelesene_nachricht");
     expect(listSkipReason(e("1"))).toBeNull();
     expect(listSkipReason(e("1", { lastSender: "unbekannt" }))).toBeNull();
+  });
+});
+
+describe("Erst-Limit stufenweise (16.11.)", () => {
+  const s = { ...mergeSettings({ autoErstLimit: 5, erstStufen: { "2026-11-17": 15, "2026-11-18": 30, kaputt: 9 } as Record<string, number>, durchgaenge: ["10:00", "13:00", "16:00"] }) };
+  it("Stufe des Tages gilt, sonst autoErstLimit; pro Durchgang gleichmaessig verteilt", () => {
+    expect(s.erstStufen).toEqual({ "2026-11-17": 15, "2026-11-18": 30 });
+    expect(erstLimits(s, "2026-11-16")).toEqual({ tag: 5, durchgang: 2 });
+    expect(erstLimits(s, "2026-11-17")).toEqual({ tag: 15, durchgang: 5 });
+    expect(erstLimits(s, "2026-11-18")).toEqual({ tag: 30, durchgang: 10 });
   });
 });

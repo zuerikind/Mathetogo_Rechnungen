@@ -19,6 +19,7 @@ const {
   loadAutopilot, nextScheduled, notify, passResult, problemText, antwortText, probeText, passSummary, rateLimitUntil, readPassLog, shortError, stopReason, updateAutopilot,
 } = await import("../lib/tutor24-autopilot");
 const { loadCourses, loadLeadInfo, loadLog, loadSettings, sentToday } = await import("../lib/tutor24-followup-store");
+const { erstLimits } = await import("../lib/tutor24-followup");
 const { runFollowup } = await import("../lib/tutor24-followup-runner");
 const { runTutor24Messaging, sendBatchErst } = await import("../lib/tutor24");
 const { followupJobState } = await import("../lib/automation-state");
@@ -167,13 +168,13 @@ if (FREIGABEN) {
     log(`Freigaben: nicht gesendet (${modus !== "an" ? "Automatik nicht EIN" : "ausserhalb 8–20 Uhr"}).`);
     process.exit(0);
   }
-  const limit = Math.max(0, settings.autoErstLimit - (await sentToday(new Date(), "erst")));
+  const limit = Math.max(0, erstLimits(settings, zurichDay(new Date())).tag - (await sentToday(new Date(), "erst")));
   const items = freigegebene().slice(0, limit).map((r) => ({
     id: r.id, art: "erst" as const, titel: r.titel, stufe: r.stufe, ort: "", link: r.link, sprache: r.sprache, anrede: r.anrede, block: "",
     kursId: r.kursId, hint: r.hint, satz: r.satz, text: r.text, problem: null, ausgewaehlt: true, info: r.info,
   }));
   if (!items.length) {
-    log(limit === 0 ? `Freigaben: Tageslimit (${settings.autoErstLimit}) erreicht — morgen.` : "Freigaben: nichts offen.");
+    log(limit === 0 ? `Freigaben: Tageslimit (${erstLimits(settings, zurichDay(new Date())).tag}) erreicht — morgen.` : "Freigaben: nichts offen.");
     process.exit(0);
   }
   const start = new Date().toISOString();
@@ -307,9 +308,10 @@ let busy = false;
 
 try {
   // 1. Erst-Nachrichten an neue Inserate (begrenzt: nur Mathematik, eine Suchseite)
-  const erstLimit = Math.min(max ?? erstN ?? Infinity, Math.max(0, settings.autoErstLimit - (await sentToday(new Date(), "erst"))));
+  const lim = erstLimits(settings, zurichDay(new Date()));
+  const erstLimit = Math.min(max ?? erstN ?? lim.durchgang, Math.max(0, lim.tag - (await sentToday(new Date(), "erst"))));
   if (!inSendWindow() && !dryRun) log((erstNote = "Ausserhalb 8–20 Uhr: keine Erst-Nachrichten."));
-  else if (erstLimit === 0) log((erstNote = `Tageslimit Erst-Nachrichten (${settings.autoErstLimit}) erreicht.`));
+  else if (erstLimit === 0) log((erstNote = `Tageslimit Erst-Nachrichten (${lim.tag}) erreicht.`));
   else {
     log(`Erst-Nachrichten: höchstens ${erstLimit}${dryRun ? " (PROBE, sendet nichts)" : ""} …`);
     erstAuto.limit = erstLimit;

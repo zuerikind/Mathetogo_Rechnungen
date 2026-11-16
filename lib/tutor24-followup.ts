@@ -437,6 +437,8 @@ export type FollowupSettings = {
   privatePricePerLesson: number;
   /** Automatik (scripts/autopilot.mts): hoechstens so viele pro Tag (gezaehlt aus der Datenbank) */
   autoErstLimit: number;
+  /** Stufenweise hoeher (16.11., Omid): Tag "YYYY-MM-DD" → Tageslimit Erst; gilt statt autoErstLimit an diesem Tag */
+  erstStufen?: Record<string, number>;
   autoNachfassLimit: number;
   /** Automatik: Nachfassen fruehestens so viele Tage nach der Erst-Nachricht */
   nachfassNachTagen: number;
@@ -600,6 +602,12 @@ function mergeZweiSaetze(saved: unknown): FollowupSettings["zweiSaetze"] {
   ) as FollowupSettings["zweiSaetze"];
 }
 
+/** Tageslimit Erst heute (Stufe des Tages, sonst autoErstLimit) und pro Durchgang (gleichmaessig auf die Durchgaenge verteilt, damit kein Durchgang zu viele Seitenaufrufe macht) */
+export function erstLimits(s: Pick<FollowupSettings, "autoErstLimit" | "erstStufen" | "durchgaenge">, tag: string): { tag: number; durchgang: number } {
+  const t = s.erstStufen?.[tag] ?? s.autoErstLimit;
+  return { tag: t, durchgang: Math.ceil(t / Math.max(1, s.durchgaenge.length)) };
+}
+
 /** ganze Zahl >= 0, sonst Standard */
 const count = (v: unknown, def: number) => (Number.isInteger(Number(v)) && Number(v) >= 0 && v !== null && v !== "" ? Number(v) : def);
 
@@ -613,6 +621,9 @@ export function mergeSettings(saved: Partial<FollowupSettings> | null | undefine
     kursPreisAb: Number(saved?.kursPreisAb) > 0 ? Number(saved?.kursPreisAb) : 55,
     privatePricePerLesson: Number(saved?.privatePricePerLesson) > 0 ? Number(saved?.privatePricePerLesson) : DEFAULT_PRIVATE_PRICE,
     autoErstLimit: count(saved?.autoErstLimit, 20),
+    ...(saved?.erstStufen && typeof saved.erstStufen === "object"
+      ? { erstStufen: Object.fromEntries(Object.entries(saved.erstStufen).filter(([d, n]) => /^\d{4}-\d{2}-\d{2}$/.test(d) && Number.isInteger(n) && n >= 0)) }
+      : {}),
     autoNachfassLimit: Math.min(count(saved?.autoNachfassLimit, 15), MAX_SENDS_PER_DAY),
     nachfassNachTagen: Math.max(count(saved?.nachfassNachTagen, 4), MIN_AGE_DAYS),
     durchgaenge: (!timesProblem(saved?.durchgaenge) && normTimes(saved?.durchgaenge)) || DEFAULT_TIMES,
