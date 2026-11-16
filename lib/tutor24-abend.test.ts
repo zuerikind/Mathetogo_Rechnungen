@@ -43,4 +43,10 @@ describe("Tagesbericht (13.11.)", () => {
     const nf = tagesberichtText({ ...base, agent: [e("auffaellig", "nachfassen", "2026-11-12"), e("auffaellig", "nachfassen", "2026-11-13"), e("auffaellig", "nachfassen")] });
     expect(nf).toContain("Senden-Knopf");
   });
+
+  it("Durchgang wegen Netzfehler abgebrochen: steht im Bericht, aber keine Handlung nötig (16.11.)", () => {
+    const t = tagesberichtText({ ...base, passes: [pass("2026-11-14T09:00:30Z"), pass("2026-11-14T15:00:20Z", { erst: emptyCounts(), fehler: ["Kein Netz bei der Anmeldung: page.goto: Timeout 30000ms exceeded."] })] });
+    expect(t.split("\n")[1]).toBe("✅ Alles in Ordnung");
+    expect(t).toContain("Durchgänge: 10:00 ja, 16:00 abgebrochen (kein Netz, Automatik blieb an)");
+  });
 });

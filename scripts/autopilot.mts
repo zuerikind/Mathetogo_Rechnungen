@@ -15,7 +15,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 const {
-  RATE_LIMIT_TEXT, activePause, appendPassLog, emptyCounts, errorKey, firstName, fmtZurich, inSendWindow, is429, isBusy,
+  RATE_LIMIT_TEXT, activePause, appendPassLog, emptyCounts, errorKey, firstName, fmtZurich, inSendWindow, is429, isBusy, isNetError,
   loadAutopilot, nextScheduled, notify, passResult, problemText, antwortText, probeText, passSummary, rateLimitUntil, readPassLog, shortError, stopReason, updateAutopilot,
 } = await import("../lib/tutor24-autopilot");
 const { loadCourses, loadLeadInfo, loadLog, loadSettings, sentToday } = await import("../lib/tutor24-followup-store");
@@ -146,6 +146,15 @@ const netWarn = hotspot ? "\n⚠ Laptop hängt am iPhone-Hotspot." : "";
 try {
   const release = acquireTutor24Lock(forcedProbe ? "Probelauf" : FREIGABEN ? "Freigaben senden" : erstOnly ? "Erst-Nachrichten-Lauf" : "Automatik-Durchgang", AUTOPILOT_LOCK_PATH);
   process.on("exit", release);
+  // Kein Standby, solange der Durchgang laeuft (16.11., Omid). ponytail: verhindert nur Leerlauf-Standby; Deckel zu / Ein-Taste schickt Windows trotzdem in den Standby.
+  if (process.platform === "win32") {
+    const { spawn } = await import("node:child_process");
+    const wach = spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-Command",
+      `$s=Add-Type -PassThru -Name W -Namespace K -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$s::SetThreadExecutionState([uint32]2147483649); Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue`],
+      { stdio: "ignore", windowsHide: true });
+    wach.on("error", () => { /* ohne Wachhalten weiter */ });
+    process.on("exit", () => { try { wach.kill(); } catch { /* schon weg */ } });
+  }
 } catch (err) {
   log(`Läuft schon, nicht gestartet: ${err instanceof Error ? err.message : String(err)}`);
   if (asked) await notify("Es läuft schon ein Durchgang — kein zweiter gestartet. Sein Ergebnis kommt als eigene Meldung.");
@@ -404,7 +413,7 @@ if (reason) {
       : `${P}` + problemText(`Automatik gestoppt: ${reason}.`, "Ursache ansehen (/kurse → Protokoll), dann mit /enable wieder einschalten.")
   );
 } else {
-  if (!busy) updateAutopilot({ letzterFehler: fatal ? errorKey(fatal) : null });
+  if (!busy) updateAutopilot({ letzterFehler: fatal && !isNetError(fatal) ? errorKey(fatal) : null });
   if (fatal && laut) await notify(`${P}⚠ Durchgang abgebrochen: ${fatal}\nKommt derselbe Fehler beim nächsten Mal wieder, stoppt die Automatik.`);
 }
 

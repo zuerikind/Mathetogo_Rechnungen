@@ -135,7 +135,10 @@ export const MAX_CHECK_FAILURES = 3;
 const HARD_RE = /captcha|sicherheits(abfrage|überprüfung|pruefung)|prüfung erkannt|kein roboter|verify you are human|(konto|account|zugang|profil)\S*\s[^.]{0,30}(gesperrt|blockiert|locked|suspended)|zu viele anfragen|too many requests|login|anmeldeseite|anmeldung fehlgeschlagen|sign_in/i;
 /** Eigene Sperre (ein anderer Lauf ist aktiv, lib/tutor24-lock.ts): kein Fehler, der Durchgang wartet aufs naechste Mal. */
 export const isBusy = (msg: string) => /^tutor24 ist gesperrt: „/.test(msg) || /automation is already running|Nachfassen läuft bereits/i.test(msg);
-export const isHardStop = (msg: string) => !isBusy(msg) && HARD_RE.test(msg);
+/** Netz weg (nach dem Aufwachen, kurz ohne Internet): nur dieser Durchgang bricht ab, Automatik bleibt an (16.11., Omid). 429 zaehlt nie dazu. */
+const NETZ_RE = /Timeout \d+ ?ms exceeded|net::ERR_|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|socket hang up|fetch failed|aborted due to timeout/i;
+export const isNetError = (msg: string) => !/429|too many requests|zu viele anfragen/i.test(msg) && NETZ_RE.test(msg);
+export const isHardStop = (msg: string) => !isBusy(msg) && !isNetError(msg) && HARD_RE.test(msg);
 
 /** Ohne "Stand: <Name> (<Konversation>) …" (summarizeRunError): kein Name in Meldungen, gleicher Fehler bleibt gleich. */
 export const shortError = (msg: string) => msg.replace(/ Stand: [\s\S]*$/, "").trim();
@@ -145,7 +148,7 @@ export const errorKey = (msg: string) => shortError(msg).replace(/\d+/g, "#").re
 /** Muss die Automatik nach diesem Durchgang aus? null = nein. */
 export function stopReason(p: { pruefungFehler: number; fehler: string | null; letzterFehler: string | null }): string | null {
   if (p.pruefungFehler > MAX_CHECK_FAILURES) return `${p.pruefungFehler} Nachrichten haben die Prüfung nicht bestanden (mehr als ${MAX_CHECK_FAILURES}).`;
-  if (!p.fehler || isBusy(p.fehler)) return null;
+  if (!p.fehler || isBusy(p.fehler) || isNetError(p.fehler)) return null;
   if (isHardStop(p.fehler)) return `tutor24: ${p.fehler}`;
   if (p.letzterFehler && errorKey(p.fehler) === p.letzterFehler) return `Derselbe Fehler zweimal hintereinander: ${p.fehler}`;
   return null;

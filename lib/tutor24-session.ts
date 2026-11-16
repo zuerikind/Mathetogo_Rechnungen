@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Page } from "playwright";
+import { isNetError } from "./tutor24-autopilot";
 import { loginToTutor24 } from "./tutor24-messaging";
 
 export const SESSION_PATH = join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Mathetogo", "tutor24-sitzung.json");
@@ -60,6 +61,8 @@ export async function signIn(page: Page, email: string, password: string, path =
     await login();
     result = lines.some((l) => l.includes("Bereits angemeldet")) ? "Sitzung wiederverwendet (keine neue Anmeldung)." : had ? "Sitzung abgelaufen — neu angemeldet." : "Neu angemeldet (keine gespeicherte Sitzung).";
   } catch (err) {
+    // Kein Netz (z. B. direkt nach dem Aufwachen): Sitzung behalten, nicht neu anmelden; nur dieser Durchgang bricht ab (16.11.)
+    if (err instanceof Error && isNetError(err.message)) throw new Error(`Kein Netz bei der Anmeldung: ${err.message}`);
     if (!had) {
       dropSession(path);
       throw err;
@@ -69,6 +72,12 @@ export async function signIn(page: Page, email: string, password: string, path =
     try {
       await login();
     } catch (err2) {
+      // 13.11.: Login-Schritte und Seite festhalten, sonst ist die Ursache weg
+      try {
+        const { writeFileSync } = await import("node:fs");
+        writeFileSync(join(process.cwd(), "tutor24-followup", "login-fehler.txt"), [`Versuch 1: ${err instanceof Error ? err.message : String(err)}`, `Versuch 2: ${err2 instanceof Error ? err2.message : String(err2)}`, `URL: ${page.url()}`, ...lines].join("\n"));
+        await page.screenshot({ path: join(process.cwd(), "tutor24-followup", "login-fehler.png"), fullPage: true });
+      } catch { /* nur Diagnose */ }
       dropSession(path);
       throw new Error(`Anmeldung fehlgeschlagen (auch neu angemeldet): ${err2 instanceof Error ? err2.message : String(err2)}`);
     }

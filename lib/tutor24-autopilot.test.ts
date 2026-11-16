@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RATE_LIMIT_TEXT, autoEligible, daySummary, emptyCounts, errorKey, firstName, inSendWindow, isBusy, isHardStop, passView, stopReason, type PassLog } from "./tutor24-autopilot";
+import { RATE_LIMIT_TEXT, autoEligible, daySummary, emptyCounts, errorKey, firstName, inSendWindow, isBusy, isHardStop, isNetError, passView, stopReason, type PassLog } from "./tutor24-autopilot";
 import { mergeSettings, newActivity, type ListEntry } from "./tutor24-followup";
 
 describe("Automatik", () => {
@@ -29,6 +29,21 @@ describe("Automatik", () => {
     const e2 = "Unerwarteter Seitenaufbau: keine Nachrichten-Blasen in Konversation 40000001.";
     expect(stopReason({ ...none, fehler: e1 })).toBeNull();
     expect(stopReason({ ...none, fehler: e2, letzterFehler: errorKey(e1) })).toMatch(/zweimal/);
+  });
+
+  it("Netzfehler (14.11. nach dem Aufwachen): nur Durchgang abbrechen, auch zweimal nicht stoppen; 429 und echter Login-Fehler stoppen weiter (16.11.)", () => {
+    const none = { pruefungFehler: 0, fehler: null, letzterFehler: null };
+    for (const f of [
+      "Anmeldung fehlgeschlagen (auch neu angemeldet): page.goto: Timeout 30000ms exceeded.",
+      "Kein Netz bei der Anmeldung: page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.tutor24.ch/de/sign_in",
+      "getaddrinfo ENOTFOUND www.tutor24.ch",
+    ]) {
+      expect(isNetError(f), f).toBe(true);
+      expect(stopReason({ ...none, fehler: f, letzterFehler: errorKey(f) }), f).toBeNull();
+    }
+    expect(stopReason({ ...none, fehler: "Fehlermeldung «Zu viele Anfragen» (429), Timeout 30000ms exceeded" })).toMatch(/^tutor24:/);
+    expect(stopReason({ ...none, fehler: "Anmeldung fehlgeschlagen (auch neu angemeldet): Login fehlgeschlagen: Passwort falsch" })).toMatch(/^tutor24:/);
+    expect(stopReason({ ...none, fehler: "Anmeldung fehlgeschlagen (auch neu angemeldet): E-Mail wurde nicht ins Login-Feld geschrieben — bitte erneut versuchen." })).toMatch(/^tutor24:/);
   });
 
   it("eigene Sperre (anderer Lauf aktiv) ist kein Fehler und kein harter Stopp", () => {

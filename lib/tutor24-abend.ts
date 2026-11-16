@@ -4,7 +4,7 @@
  * 2 gesendete Nachrichten eingeklappt (Telegram-HTML) und der Link auf /kurse/texte mit allen Texten des Tages.
  */
 import { prisma } from "./prisma";
-import { APP_URL, type AutoState, type PassLog } from "./tutor24-autopilot";
+import { APP_URL, isNetError, type AutoState, type PassLog } from "./tutor24-autopilot";
 import { type AgentEintrag } from "./tutor24-pruefagent";
 import { zurichDay } from "./tutor24-rueckfragen";
 
@@ -38,7 +38,9 @@ export function tagesberichtText(d: Tagesdaten): string {
   const gelaufen = slots.map((t, i) => {
     const von = toMin(t) - 30;
     const bis = i + 1 < slots.length ? toMin(slots[i + 1]) - 30 : 24 * 60;
-    return { t, ok: geplant.some((p) => zurichMin(p.start) >= von && zurichMin(p.start) < bis) };
+    const im = geplant.filter((p) => zurichMin(p.start) >= von && zurichMin(p.start) < bis);
+    // 16.11.: wegen Netzfehler abgebrochen = gelaufen, aber im Bericht als "abgebrochen (kein Netz)"
+    return { t, ok: im.length > 0, netz: im.length > 0 && im.every((p) => p.fehler.some(isNetError)) };
   });
 
   const echt = d.agent.filter((e) => e.tag === d.tag && !!e.probe === probe);
@@ -49,7 +51,7 @@ export function tagesberichtText(d: Tagesdaten): string {
   if (d.state.modus === "aus" && d.state.gestoppt && !/\/stop/.test(d.state.gestoppt.grund))
     handlung.push(`Automatik gestoppt (${d.state.gestoppt.grund}) — prüfen, dann /enable`);
   if (d.state.modus !== "aus") for (const g of gelaufen.filter((g) => !g.ok)) handlung.push(`Durchgang ${g.t} ist nicht gelaufen`);
-  const fehler = sum((p) => p.fehler.length);
+  const fehler = sum((p) => p.fehler.filter((f) => !isNetError(f)).length);
   if (fehler) handlung.push(`${fehler} Fehler in den Durchgängen (/kurse → Protokoll)`);
   if (d.verfallen) handlung.push(`${d.verfallen} Rückfrage${d.verfallen === 1 ? "" : "n"} unbeantwortet (Liste auf /kurse)`);
   if (d.tag <= NACHFASSEN_KNOPF_BIS && nf.length > 2 && nf.some((e) => e.tag === d.tag))
@@ -62,7 +64,7 @@ export function tagesberichtText(d: Tagesdaten): string {
     `${w[0].toUpperCase()}${w.slice(1)}: ${sum((p) => (probe ? p.erst.wuerde : p.erst.gesendet))} Erst-Nachrichten, ${sum((p) => (probe ? p.nachfassen.wuerde : p.nachfassen.gesendet))} Nachfassen`,
     `Antworten: ${sum((p) => p.antworten)}`,
     `Vom Agenten zurückgehalten: ${zurueck.length}${zurueck.length ? `\n${zurueck.map((e) => `• ${e.titel.slice(0, 50)}: ${e.grund}`).join("\n")}` : ""}`,
-    `Durchgänge: ${gelaufen.length ? gelaufen.map((g) => `${g.t} ${g.ok ? "ja" : "nein"}`).join(", ") : "keine geplant"}`,
+    `Durchgänge: ${gelaufen.length ? gelaufen.map((g) => `${g.t} ${g.netz ? "abgebrochen (kein Netz, Automatik blieb an)" : g.ok ? "ja" : "nein"}`).join(", ") : "keine geplant"}`,
   ].join("\n");
 }
 

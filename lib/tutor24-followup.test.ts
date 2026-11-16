@@ -324,7 +324,7 @@ describe("Zuordnung und effektiver Status", () => {
   });
 
   it("Status-Labels", () => {
-    const eff = (p: Partial<PreviewRow>, courses = [mathe], logged = new Set<string>()) => effectiveStatus(row(p), courses, settings, logged).label;
+    const eff = (p: Partial<PreviewRow>, courses = [mathe], logged = new Set<string>()) => effectiveStatus(row(p), courses, settings, logged, [], NOW).label;
     expect(eff({})).toBe("wird gesendet");
     expect(eff({ status: "skip" })).toBe("skip");
     expect(eff({}, [])).toBe("kein Kurs");
