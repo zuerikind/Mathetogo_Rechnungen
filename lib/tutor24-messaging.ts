@@ -831,12 +831,19 @@ export async function loginToTutor24(
   await gotoTutor24(page, `${TUTOR24_BASE_URL}/de/sign_in`, pushLog);
   await acceptTutor24Cookies(page, pushLog);
 
+  // 17.11.: mit gueltiger Sitzung leitet sign_in erst NACH domcontentloaded aufs Dashboard weiter —
+  // darum auf Formular ODER Dashboard warten, nicht nur aufs Formular (sonst 15 s Timeout, als "Kein Netz" gemeldet)
+  const loginForm = "#login-form, form.js-new-user-form";
+  await Promise.race([
+    page.waitForSelector(loginForm, { timeout: 15000 }).catch(() => {}),
+    page.waitForURL(/\/dashboard(?:\/|$|\?|#)/, { timeout: 15000 }).catch(() => {}),
+  ]);
   if (await isLoggedInToTutor24(page)) {
     pushLog(`${ts()} Bereits angemeldet`);
     return;
   }
 
-  await page.waitForSelector("#login-form, form.js-new-user-form", { timeout: 15000 });
+  await page.waitForSelector(loginForm, { timeout: 1000 });
   await sleep(600);
 
   const emailField = "#user_login, input[name='user[login]']";
