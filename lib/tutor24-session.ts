@@ -56,13 +56,25 @@ export async function signIn(page: Page, email: string, password: string, path =
   const had = (await page.context().cookies()).length > 0;
   const lines: string[] = [];
   const login = () => loginToTutor24(page, email, password, (s) => lines.push(s));
+  // 13.11.: Login-Schritte und Seite festhalten, sonst ist die Ursache weg
+  const diagnose = async (...head: string[]) => {
+    try {
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(join(process.cwd(), "tutor24-followup", "login-fehler.txt"), [new Date().toISOString(), ...head, `URL: ${page.url()}`, ...lines].join("\n"));
+      await page.screenshot({ path: join(process.cwd(), "tutor24-followup", "login-fehler.png"), fullPage: true, timeout: 10_000 });
+    } catch { /* nur Diagnose */ }
+  };
   let result: string;
   try {
     await login();
     result = lines.some((l) => l.includes("Bereits angemeldet")) ? "Sitzung wiederverwendet (keine neue Anmeldung)." : had ? "Sitzung abgelaufen — neu angemeldet." : "Neu angemeldet (keine gespeicherte Sitzung).";
   } catch (err) {
     // Kein Netz (z. B. direkt nach dem Aufwachen): Sitzung behalten, nicht neu anmelden; nur dieser Durchgang bricht ab (16.11.)
-    if (err instanceof Error && isNetError(err.message)) throw new Error(`Kein Netz bei der Anmeldung: ${err.message}`);
+    // 17.11.: URL in die Meldung und Seite speichern — dreimal "Kein Netz", obwohl tutor24 erreichbar war
+    if (err instanceof Error && isNetError(err.message)) {
+      await diagnose(`Netz-Fehler: ${err.message}`);
+      throw new Error(`Kein Netz bei der Anmeldung (Seite: ${page.url()}): ${err.message}`);
+    }
     if (!had) {
       dropSession(path);
       throw err;
@@ -72,12 +84,7 @@ export async function signIn(page: Page, email: string, password: string, path =
     try {
       await login();
     } catch (err2) {
-      // 13.11.: Login-Schritte und Seite festhalten, sonst ist die Ursache weg
-      try {
-        const { writeFileSync } = await import("node:fs");
-        writeFileSync(join(process.cwd(), "tutor24-followup", "login-fehler.txt"), [`Versuch 1: ${err instanceof Error ? err.message : String(err)}`, `Versuch 2: ${err2 instanceof Error ? err2.message : String(err2)}`, `URL: ${page.url()}`, ...lines].join("\n"));
-        await page.screenshot({ path: join(process.cwd(), "tutor24-followup", "login-fehler.png"), fullPage: true });
-      } catch { /* nur Diagnose */ }
+      await diagnose(`Versuch 1: ${err instanceof Error ? err.message : String(err)}`, `Versuch 2: ${err2 instanceof Error ? err2.message : String(err2)}`);
       dropSession(path);
       throw new Error(`Anmeldung fehlgeschlagen (auch neu angemeldet): ${err2 instanceof Error ? err2.message : String(err2)}`);
     }

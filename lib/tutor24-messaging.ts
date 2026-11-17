@@ -836,7 +836,7 @@ export async function loginToTutor24(
   const loginForm = "#login-form, form.js-new-user-form";
   await Promise.race([
     page.waitForSelector(loginForm, { timeout: 15000 }).catch(() => {}),
-    page.waitForURL(/\/dashboard(?:\/|$|\?|#)/, { timeout: 15000 }).catch(() => {}),
+    page.waitForURL(/\/dashboard(?:\/|$|\?|#)/, { timeout: 15000, waitUntil: "commit" }).catch(() => {}),
   ]);
   if (await isLoggedInToTutor24(page)) {
     pushLog(`${ts()} Bereits angemeldet`);
