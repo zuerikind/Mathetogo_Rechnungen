@@ -25,13 +25,15 @@ describe("Uhrzeiten der Durchgaenge", () => {
     expect(d?.key).toBe("2026-11-11 18:00");
     expect(d?.text).toContain("Durchgang von 10:00 fehlt");
   });
-  it("Pruefung beim Speichern: Format, 1–4, mindestens 2 Stunden auseinander", () => {
+  it("Pruefung beim Speichern: Format, 1–7, mindestens 2 h 15 min auseinander", () => {
     expect(timesProblem(["9:00", "17:00"])).toBeNull();
     expect(normTimes(["17:00", "9:00"])).toEqual(["09:00", "17:00"]);
-    expect(timesProblem(["09:00", "10:30"])).toMatch(/weniger als 2 Stunden/);
-    expect(timesProblem(["23:00", "00:30"])).toMatch(/weniger als 2 Stunden/); // ueber Mitternacht
+    expect(timesProblem(["09:00", "10:30"])).toMatch(/weniger als 2 h 15/);
+    expect(timesProblem(["09:00", "11:00"])).toMatch(/weniger als 2 h 15/); // Lauf dauert, Abstand zaehlt ab Ende
+    expect(timesProblem(["09:00", "11:15"])).toBeNull();
+    expect(timesProblem(["23:00", "00:30"])).toMatch(/weniger als 2 h 15/); // ueber Mitternacht
     expect(timesProblem(["9 Uhr"])).toMatch(/HH:MM/);
-    expect(timesProblem([])).toMatch(/1 bis 4/);
+    expect(timesProblem([])).toMatch(/1 bis 7/);
     expect(mergeSettings({ durchgaenge: ["09:00", "10:00"] }).durchgaenge).toEqual(DEFAULT_TIMES);
   });
   it("naechster Durchgang in Zuercher Zeit, auch auf einem Rechner in UTC", () => {

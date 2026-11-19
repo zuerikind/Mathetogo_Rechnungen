@@ -72,9 +72,28 @@ export async function gotoTutor24(
       await sleep(delay);
     }
   }
+  await waitOutBrowserCheck(page, pushLog);
   await sleep(400);
   // Gemeinsame Stelle fuer alle Automationen: jede tutor24-Seite laeuft hier durch.
   await closeCookieBanner(page, pushLog);
+}
+
+/**
+ * Seit 18.11. 16:00 leitet tutor24 zuerst auf /janus/challenge um ("Checking your browser… usually takes a few seconds").
+ * Vorher galt das nach 15 s als "Kein Netz" (18.11. 16:00, 19.11. 10:00 ausgefallen). Jetzt bis 60 s warten;
+ * klappt es nicht, Sicherheitsueberpruefung = harter Stopp wie beim Captcha (HARD_RE in lib/tutor24-autopilot.ts).
+ */
+export const BROWSER_CHECK_MS = 60_000;
+async function waitOutBrowserCheck(page: import("playwright").Page, pushLog?: (s: string) => void): Promise<void> {
+  if (!page.url().includes("/janus/")) return;
+  pushLog?.(`${ts()} tutor24 prüft den Browser („Checking your browser…“) — warte bis ${BROWSER_CHECK_MS / 1000} s`);
+  const t0 = Date.now();
+  try {
+    await page.waitForURL((u) => !u.pathname.startsWith("/janus/"), { timeout: BROWSER_CHECK_MS, waitUntil: "domcontentloaded" });
+  } catch {
+    throw new Error(`Sicherheitsüberprüfung von tutor24 („Checking your browser…“) nach ${BROWSER_CHECK_MS / 1000} s nicht bestanden: ${page.url()}`);
+  }
+  pushLog?.(`${ts()} ✓ Browser-Prüfung bestanden nach ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 }
 
 async function isLoggedInToTutor24(page: import("playwright").Page): Promise<boolean> {

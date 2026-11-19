@@ -6,7 +6,7 @@
  *   npx tsx scripts/autopilot.mts --probe          Probe erzwingen (liest alles, sendet NICHTS)
  *   npx tsx scripts/autopilot.mts --probe --max 3  begrenzter Probelauf (Telegram /run): je höchstens 3, Listen kurz
  *
- * Gesendet wird nur im Modus "an" und nur 8–20 Uhr; Tageslimits zaehlen aus der Datenbank, ein
+ * Gesendet wird nur im Modus "an" und nur 8–24 Uhr; Tageslimits zaehlen aus der Datenbank, ein
  * nachgeholter Durchgang sendet also nie doppelt. Nach einem 429 startet 12 h lang kein Durchgang.
  * Regeln und Meldungen: lib/tutor24-autopilot.ts.
  */
@@ -165,7 +165,7 @@ try {
 // ── Freigaben senden (--freigaben, vom Bot): genau die freigegebenen Rueckfragen, Text wie in der Rueckfrage ──
 if (FREIGABEN) {
   if (modus !== "an" || !inSendWindow()) {
-    log(`Freigaben: nicht gesendet (${modus !== "an" ? "Automatik nicht EIN" : "ausserhalb 8–20 Uhr"}).`);
+    log(`Freigaben: nicht gesendet (${modus !== "an" ? "Automatik nicht EIN" : "ausserhalb 8–24 Uhr"}).`);
     process.exit(0);
   }
   const limit = Math.max(0, erstLimits(settings, zurichDay(new Date())).tag - (await sentToday(new Date(), "erst")));
@@ -224,7 +224,7 @@ const mayContinue = () => {
   if (forcedProbe) return null; // von Hand / Telegram /run: sendet ohnehin nichts
   if (!dryRun && pass.agent.halt) return pass.agent.halt;
   // Probe sendet nichts: das Fenster gilt nur im echten Betrieb; die Liste vermerkt "würde ab 8:00 gesendet".
-  if (!dryRun && !inSendWindow()) return "ausserhalb 8–20 Uhr";
+  if (!dryRun && !inSendWindow()) return "ausserhalb 8–24 Uhr";
   const now = loadAutopilot().modus;
   if (now === "aus" || (!dryRun && now !== "an")) return "Automatik wurde ausgeschaltet";
   return null;
@@ -310,7 +310,7 @@ try {
   // 1. Erst-Nachrichten an neue Inserate (begrenzt: nur Mathematik, eine Suchseite)
   const lim = erstLimits(settings, zurichDay(new Date()));
   const erstLimit = Math.min(max ?? erstN ?? lim.durchgang, Math.max(0, lim.tag - (await sentToday(new Date(), "erst"))));
-  if (!inSendWindow() && !dryRun) log((erstNote = "Ausserhalb 8–20 Uhr: keine Erst-Nachrichten."));
+  if (!inSendWindow() && !dryRun) log((erstNote = "Ausserhalb 8–24 Uhr: keine Erst-Nachrichten."));
   else if (erstLimit === 0) log((erstNote = `Tageslimit Erst-Nachrichten (${lim.tag}) erreicht.`));
   else {
     log(`Erst-Nachrichten: höchstens ${erstLimit}${dryRun ? " (PROBE, sendet nichts)" : ""} …`);

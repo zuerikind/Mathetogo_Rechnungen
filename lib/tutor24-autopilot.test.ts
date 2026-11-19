@@ -6,8 +6,8 @@ describe("Automatik", () => {
   it("Sendefenster 8:00–19:59", () => {
     expect(inSendWindow(new Date(2026, 10, 5, 7, 59))).toBe(false);
     expect(inSendWindow(new Date(2026, 10, 5, 8, 0))).toBe(true);
-    expect(inSendWindow(new Date(2026, 10, 5, 19, 59))).toBe(true);
-    expect(inSendWindow(new Date(2026, 10, 5, 20, 0))).toBe(false);
+    expect(inSendWindow(new Date(2026, 10, 5, 23, 59))).toBe(true);
+    expect(inSendWindow(new Date(2026, 10, 5, 0, 30))).toBe(false);
   });
 
   it("Stopp: mehr als 3 Pruef-Fehler, harte Fehler sofort, gleicher Fehler zweimal", () => {

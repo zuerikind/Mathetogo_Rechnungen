@@ -88,7 +88,7 @@ export function createBot(deps: BotDeps) {
   };
   const busyNow = () => deps.busy() ?? (deps.now().getTime() - spawnedAt < 90_000 ? "Durchgang wurde eben gestartet" : null);
 
-  /** Knopf "Jetzt starten": wie ein geplanter Durchgang — Modus, Tageslimits, 8–20 Uhr und 429-Pause gelten. */
+  /** Knopf "Jetzt starten": wie ein geplanter Durchgang — Modus, Tageslimits, 8–24 Uhr und 429-Pause gelten. */
   async function startNow(): Promise<string> {
     const s = deps.state();
     if (s.modus === "aus") {
@@ -111,7 +111,7 @@ export function createBot(deps: BotDeps) {
     const h = deps.now().getHours();
     await deps.reply(
       `▶️ <b>Durchgang gestartet</b> (${s.modus === "probe" ? "Probe — sendet nichts" : "EIN — sendet"}).\n` +
-        (s.modus === "an" && (h < 8 || h >= 20) ? "Ausserhalb 8–20 Uhr: er liest nur und sendet nichts.\n" : "") +
+        (s.modus === "an" && !inSendWindow(deps.now()) ? "Ausserhalb 8–24 Uhr: er liest nur und sendet nichts.\n" : "") +
         "Tageslimits gelten. Schritte: 1 neue Inserate · 2 Antworten prüfen · 3 Nachfassen — ich melde mich nach jedem Schritt und am Ende."
     );
     return "start: gestartet";
@@ -228,8 +228,8 @@ export function createBot(deps: BotDeps) {
       }
       if (await tooSoon()) return "erst: zu früh";
       if (s.modus === "an" && !inSendWindow(deps.now())) {
-        await deps.reply("Ausserhalb 8–20 Uhr wird nichts gesendet — nicht gestartet.");
-        return "erst: ausserhalb 8–20 Uhr";
+        await deps.reply("Ausserhalb 8–24 Uhr wird nichts gesendet — nicht gestartet.");
+        return "erst: ausserhalb 8–24 Uhr";
       }
       const running = busyNow();
       if (running) {

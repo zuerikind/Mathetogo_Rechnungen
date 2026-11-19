@@ -75,6 +75,11 @@ export async function signIn(page: Page, email: string, password: string, path =
       await diagnose(`Netz-Fehler: ${err.message}`);
       throw new Error(`Kein Netz bei der Anmeldung (Seite: ${page.url()}): ${err.message}`);
     }
+    // 19.11.: Browser-Pruefung von tutor24 nicht bestanden — Sitzung ist nicht schuld, kein zweiter Versuch
+    if (err instanceof Error && err.message.startsWith("Sicherheitsüberprüfung von tutor24")) {
+      await diagnose(err.message);
+      throw err;
+    }
     if (!had) {
       dropSession(path);
       throw err;

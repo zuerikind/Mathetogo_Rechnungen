@@ -211,7 +211,7 @@ describe("/erst N", () => {
     for (const t of ["/erst 0", "/erst 21", "/erst 5 6", "/erst -3", "/erst 5; del", "/erst abc", "/erst 5.5"]) expect(parseErst(t), t).toBeNull();
   });
 
-  it("Modus, 429-Pause, 8–20 Uhr (nur EIN), ein Lauf zur Zeit", async () => {
+  it("Modus, 429-Pause, 8–24 Uhr (nur EIN), ein Lauf zur Zeit", async () => {
     const b = setup(NOW);
     expect(await b.handle(b.msg("/erst 5"))).toBe("erst: aus");
     b.deps.update({ modus: "probe" });
@@ -221,9 +221,9 @@ describe("/erst N", () => {
     expect(await b.handle(b.msg("/erst"))).toBe("erst: belegt"); // eben gestartet
     expect(b.calls.erst).toEqual([5]);
 
-    const night = setup(new Date(2026, 10, 5, 21, 30));
+    const night = setup(new Date(2026, 10, 5, 6, 30));
     night.deps.update({ modus: "an" });
-    expect(await night.handle(night.msg("/erst 3"))).toBe("erst: ausserhalb 8–20 Uhr");
+    expect(await night.handle(night.msg("/erst 3"))).toBe("erst: ausserhalb 8–24 Uhr");
     night.deps.update({ modus: "probe" });
     expect(await night.handle(night.msg("/erst 3"))).toBe("erst: gestartet"); // Probe: Fenster gilt nicht
     expect(night.calls.erst).toEqual([3]);

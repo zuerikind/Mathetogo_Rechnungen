@@ -176,7 +176,7 @@ const pflege = async () => {
   // 13.11.: keine eigene Meldung mehr — der Tagesbericht nennt die Zahl
   if (v.length) console.log(`${stamp()} ${v.length} Rückfragen verfallen.`);
 
-  // 2. Freigaben senden: 10 min nach dem letzten Knopf, nur im Modus EIN, 8–20 Uhr, Mindestabstand, kein Lauf
+  // 2. Freigaben senden: 10 min nach dem letzten Knopf, nur im Modus EIN, 8–24 Uhr, Mindestabstand, kein Lauf
   if (s.modus === "an" && sendeLaufFaellig(now) && inSendWindow(now) && Date.now() - freigabeVersuchAt > 10 * 60_000) {
     const h = await startHindernis();
     if (h) console.log(`${stamp()} Freigaben warten (${h}).`);
