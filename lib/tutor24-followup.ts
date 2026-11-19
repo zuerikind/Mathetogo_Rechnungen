@@ -442,7 +442,7 @@ export type FollowupSettings = {
   autoNachfassLimit: number;
   /** Automatik: Nachfassen fruehestens so viele Tage nach der Erst-Nachricht */
   nachfassNachTagen: number;
-  /** Uhrzeiten der Durchgaenge (Windows-Aufgabe, Waechter), "HH:MM", je mind. 2 h auseinander */
+  /** Uhrzeiten der Durchgaenge (Windows-Aufgabe, Waechter), "HH:MM", je mind. 2 h 05 min auseinander */
   durchgaenge: string[];
   /**
    * Persoenlicher Satz v3 (9.11., erst nach Omids OK einschalten): KI nur bei konkretem Detail im Inserat,

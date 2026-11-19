@@ -917,7 +917,7 @@ export function Tutor24Followup({
                     ))}
                   </div>
                 </SettingRow>
-                <SettingRow title="Durchgänge um" help="Uhrzeiten, mit Komma getrennt, je mindestens 2 h 15 min auseinander (2 h Mindestabstand ab Ende des Laufs). Beim Speichern wird die Windows-Aufgabe angepasst; der Wächter richtet sich danach.">
+                <SettingRow title="Durchgänge um" help="Uhrzeiten, mit Komma getrennt, je mindestens 2 h 05 min auseinander (1 h 50 min Mindestabstand ab Ende des Laufs). Beim Speichern wird die Windows-Aufgabe angepasst; der Wächter richtet sich danach.">
                   <div className="w-full min-w-0 sm:w-56">
                     <input
                       id="set-zeiten"

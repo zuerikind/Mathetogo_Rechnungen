@@ -14,7 +14,7 @@ export const AUTOPILOT_LOCK_PATH = join(process.cwd(), ".autopilot.lock");
 /** Ende des letzten tutor24-Laufs (jede Sitzung mit TUTOR24_LOCK_PATH) — fuer den Mindestabstand. */
 export const LAST_RUN_PATH = join(process.cwd(), "tutor24-followup", "letzter-lauf.json");
 /** Mindestabstand zwischen zwei tutor24-Laeufen, ab Ende des letzten (Entscheid 7.11. nach dem 429 von 9:42). */
-export const MIN_GAP_MS = 2 * 3_600_000;
+export const MIN_GAP_MS = 110 * 60_000; // 19.11. (Omid): 1 h 50 min statt 2 h, fuer 7 Durchgaenge
 
 export function lastRunEnd(path = LAST_RUN_PATH): Date | null {
   try {
@@ -31,7 +31,7 @@ export function earliestNext(now = new Date(), path = LAST_RUN_PATH): Date | nul
   return next && next > now ? next : null;
 }
 export const tooSoonText = (d: Date) =>
-  `Nächster Lauf frühestens um ${d.toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" })} (2 Stunden Abstand zum letzten Lauf).`;
+  `Nächster Lauf frühestens um ${d.toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" })} (1 h 50 min Abstand zum letzten Lauf).`;
 
 export function pidAlive(pid: number): boolean {
   try {

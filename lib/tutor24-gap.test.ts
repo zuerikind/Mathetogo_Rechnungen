@@ -12,8 +12,8 @@ describe("Mindestabstand 2 h zwischen tutor24-Laeufen", () => {
   it("ab Ende des letzten Laufs; ohne Datei frei", () => {
     expect(earliestNext(new Date(), file)).toBeNull();
     writeFileSync(file, JSON.stringify({ ende: "2026-11-08T08:36:00Z" })); // 9:36 Zuerich
-    expect(earliestNext(new Date("2026-11-08T09:00:00Z"), file)?.toISOString()).toBe("2026-11-08T10:36:00.000Z");
-    expect(tooSoonText(new Date("2026-11-08T10:36:00Z"))).toBe("Nächster Lauf frühestens um 11:36 (2 Stunden Abstand zum letzten Lauf).");
+    expect(earliestNext(new Date("2026-11-08T09:00:00Z"), file)?.toISOString()).toBe("2026-11-08T10:26:00.000Z");
+    expect(tooSoonText(new Date("2026-11-08T10:36:00Z"))).toBe("Nächster Lauf frühestens um 11:36 (1 h 50 min Abstand zum letzten Lauf).");
     // 12:00 nach einem 9-Uhr-Durchgang bis 9:36: erlaubt
     expect(earliestNext(new Date("2026-11-08T11:00:00Z"), file)).toBeNull();
   });
@@ -33,7 +33,7 @@ describe("Mindestabstand 2 h zwischen tutor24-Laeufen", () => {
     expect(await handle(msg("/erst 5", 2))).toBe("erst: zu früh");
     expect(await handle(msg("start", 3))).toBe("start: zu früh");
     expect(started).toBe(0);
-    expect(replies[0]).toBe("⏳ Nicht gestartet. Nächster Lauf frühestens um 11:36 (2 Stunden Abstand zum letzten Lauf).");
+    expect(replies[0]).toBe("⏳ Nicht gestartet. Nächster Lauf frühestens um 11:36 (1 h 50 min Abstand zum letzten Lauf).");
   });
 });
 

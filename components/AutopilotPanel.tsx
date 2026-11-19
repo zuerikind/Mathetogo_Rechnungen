@@ -130,7 +130,7 @@ export function Overview({ info, ov, attention, onMode }: { info: AutopilotInfo;
             <Fact label="Nächster Durchgang">
               {info.modus === "aus" ? "keiner, die Automatik ist aus" : fmt(ov.naechster)}
               {ov.pauseBis && <span className="text-red-700"> · 429-Pause bis {fmt(ov.pauseBis)}</span>}
-              {ov.abstandBis && !ov.pauseBis && <span className="text-amber-700"> · Nächster Lauf frühestens um {new Date(ov.abstandBis).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" })} (2 h Abstand)</span>}
+              {ov.abstandBis && !ov.pauseBis && <span className="text-amber-700"> · Nächster Lauf frühestens um {new Date(ov.abstandBis).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" })} (1 h 50 min Abstand)</span>}
             </Fact>
           </dl>
         </div>

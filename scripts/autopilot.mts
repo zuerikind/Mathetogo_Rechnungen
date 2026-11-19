@@ -106,7 +106,7 @@ if (pause) {
   if (asked) await notify(`⏸ ${RATE_LIMIT_TEXT} Pause bis ${fmtZurich(pause)} — Durchgang nicht gestartet.`);
   process.exit(0);
 }
-// Mindestabstand 2 h zum letzten tutor24-Lauf (gilt fuer alle: geplant, /run, /erst, Knopf, von Hand).
+// Mindestabstand 1 h 50 min zum letzten tutor24-Lauf (gilt fuer alle: geplant, /run, /erst, Knopf, von Hand).
 const soon = earliestNext();
 if (soon) {
   log(`Zu früh, nicht gestartet: ${tooSoonText(soon)}`);

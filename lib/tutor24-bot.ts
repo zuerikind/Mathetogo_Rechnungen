@@ -50,7 +50,7 @@ export type BotDeps = {
   startErst?: (n: number | null) => void;
   /** Telegram: Knopf-Druck quittieren (sonst dreht sich die Uhr am Knopf) */
   answerCallback?: (id: string, text: string) => Promise<unknown>;
-  /** Mindestabstand 2 h zum letzten tutor24-Lauf: frühester Start, null = erlaubt (lib/tutor24-lock.ts earliestNext) */
+  /** Mindestabstand 1 h 50 min zum letzten tutor24-Lauf: frühester Start, null = erlaubt (lib/tutor24-lock.ts earliestNext) */
   gapUntil?: () => Date | null;
   /** laufenden Nachfass-Lauf vor der naechsten Nachricht anhalten (stop.request) */
   requestStop: () => void;

@@ -6,7 +6,7 @@
 const TZ = "Europe/Zurich";
 export const DEFAULT_TIMES = ["09:00", "17:00"];
 /** Mindestabstand zwischen zwei Durchgaengen (wie lib/tutor24-lock.ts MIN_GAP_MS) */
-export const MIN_GAP_MIN = 120;
+export const MIN_GAP_MIN = 110;
 export const TASK_NAME = "Mathetogo tutor24 Automatik";
 
 /** Datum (YYYY-MM-DD) und Uhrzeit in Zuerich */
@@ -45,11 +45,11 @@ export function normTimes(v: unknown): string[] | null {
 
 /**
  * Puffer fuer die Laufdauer: der Mindestabstand zaehlt ab ENDE des letzten Laufs (lib/tutor24-lock.ts).
- * Bei genau 2 h waere jeder naechste Durchgang "zu frueh", der Bot holt ihn nach und alles rutscht (19.11.).
+ * Ohne Puffer waere jeder naechste Durchgang "zu frueh", der Bot holt ihn nach und alles rutscht (19.11.).
  */
 export const SLOT_BUFFER_MIN = 15;
 
-/** Fehler fuer /kurse, null = in Ordnung: 1–7 Zeiten, HH:MM, je mindestens 2 h 15 min auseinander (auch ueber Mitternacht). */
+/** Fehler fuer /kurse, null = in Ordnung: 1–7 Zeiten, HH:MM, je mindestens 2 h 05 min auseinander (auch ueber Mitternacht). */
 export function timesProblem(v: unknown): string | null {
   const t = normTimes(v);
   if (!t) return "Uhrzeiten im Format HH:MM, z. B. 09:00, 17:00.";
@@ -57,7 +57,7 @@ export function timesProblem(v: unknown): string | null {
   for (let i = 0; i < t.length; i++) {
     const next = i + 1 < t.length ? toMin(t[i + 1]) : toMin(t[0]) + 24 * 60;
     if (t.length > 1 && next - toMin(t[i]) < MIN_GAP_MIN + SLOT_BUFFER_MIN)
-      return `${t[i]} und ${t[(i + 1) % t.length]} liegen weniger als 2 h 15 min auseinander (2 h Mindestabstand ab Ende des Laufs + Laufdauer).`;
+      return `${t[i]} und ${t[(i + 1) % t.length]} liegen weniger als 2 h 05 min auseinander (1 h 50 min Mindestabstand ab Ende des Laufs + Laufdauer).`;
   }
   return null;
 }
