@@ -51,6 +51,16 @@ describe("Tagesbericht (13.11.)", () => {
   });
 });
 
+describe("Tagesbericht: Automatik aus (20.11.)", () => {
+  it("Durchgang nach dem Stopp: nein (Automatik aus); davor fehlend: nur nein", () => {
+    const am = "2026-11-14T12:00:00Z"; // 13:00 Zuerich
+    const t = tagesberichtText({ ...base, zeiten: ["10:00", "12:00", "16:00"], passes: [pass("2026-11-14T09:00:30Z")], state: { modus: "aus", gestoppt: { grund: "Prüf-Agent", am } } });
+    expect(t).toContain("Durchgänge: 10:00 ja, 12:00 nein, 16:00 nein (Automatik aus)");
+    const gestern = tagesberichtText({ ...base, passes: [], state: { modus: "aus", gestoppt: { grund: "per Telegram /stop", am: "2026-11-13T20:00:00Z" } } });
+    expect(gestern).toContain("10:00 nein (Automatik aus), 16:00 nein (Automatik aus)");
+  });
+});
+
 describe("/heute (20.11.)", () => {
   it("nachgeholt, verschoben, geplant, ausgefallen", () => {
     const zeiten = ["10:55", "13:00", "15:05", "17:10"];

@@ -45,6 +45,9 @@ export function tagesberichtText(d: Tagesdaten): string {
 
   // 16.11.: wegen Netzfehler abgebrochen = gelaufen, aber im Bericht als "abgebrochen (kein Netz)"
   const gelaufen = slotPasses(d.passes, d.zeiten, d.tag).map(({ t, im }) => ({ t, ok: im.length > 0, netz: im.length > 0 && im.every((p) => p.fehler.some(isNetError)) }));
+  // 20.11.: ab wann die Automatik heute aus war (Minute; 0 = ganzer Tag) → "nein (Automatik aus)"
+  const g = d.state.gestoppt;
+  const ausAb = d.state.modus !== "aus" ? null : g && zurichDay(new Date(g.am)) === d.tag ? zurichMin(g.am) : 0;
 
   const echt = d.agent.filter((e) => e.tag === d.tag && !!e.probe === probe);
   const zurueck = echt.filter((e) => e.urteil !== "ok");
@@ -67,7 +70,7 @@ export function tagesberichtText(d: Tagesdaten): string {
     `${w[0].toUpperCase()}${w.slice(1)}: ${sum((p) => (probe ? p.erst.wuerde : p.erst.gesendet))} Erst-Nachrichten, ${sum((p) => (probe ? p.nachfassen.wuerde : p.nachfassen.gesendet))} Nachfassen`,
     `Antworten: ${sum((p) => p.antworten)}`,
     `Vom Agenten zurückgehalten: ${zurueck.length}${zurueck.length ? `\n${zurueck.map((e) => `• ${e.titel.slice(0, 50)}: ${e.grund}`).join("\n")}` : ""}`,
-    `Durchgänge: ${gelaufen.length ? gelaufen.map((g) => `${g.t} ${g.netz ? "abgebrochen (kein Netz, Automatik blieb an)" : g.ok ? "ja" : "nein"}`).join(", ") : "keine geplant"}`,
+    `Durchgänge: ${gelaufen.length ? gelaufen.map((g) => `${g.t} ${g.netz ? "abgebrochen (kein Netz, Automatik blieb an)" : g.ok ? "ja" : ausAb !== null && toMin(g.t) >= ausAb ? "nein (Automatik aus)" : "nein"}`).join(", ") : "keine geplant"}`,
   ].join("\n");
 }
 
