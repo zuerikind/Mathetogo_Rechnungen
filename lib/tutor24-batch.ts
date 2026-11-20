@@ -96,18 +96,32 @@ export const MIN_FREI_GB = 1.5;
 export function speicherProblem(freiBytes = freemem(), gesamtBytes = totalmem()): string | null {
   const gb = (b: number) => (b / 2 ** 30).toFixed(1);
   if (freiBytes / 2 ** 30 >= MIN_FREI_GB) return null;
-  let top = "";
+  const top = topProzesse().join(", ");
+  return `Zu wenig Arbeitsspeicher frei: ${gb(freiBytes)} von ${gb(gesamtBytes)} GB (nötig ${MIN_FREI_GB} GB). ${top ? `Am meisten brauchen: ${top}. ` : ""}Bitte etwas schliessen (z. B. Chrome-Tabs, Cursor) und nochmals versuchen.`;
+}
+
+/** Programme mit dem meisten Arbeitsspeicher ("Notion 11.4 GB"); leer, wenn PowerShell nicht antwortet */
+export function topProzesse(n = 5): string[] {
   try {
-    top = execFileSync(
+    return execFileSync(
       "powershell.exe",
       ["-NoProfile", "-NonInteractive", "-Command",
-        "Get-Process | Group-Object ProcessName | ForEach-Object { '{0} {1:N1} GB' -f $_.Name, (($_.Group | Measure-Object WorkingSet64 -Sum).Sum/1GB) } | Sort-Object { [double](($_ -split ' ')[-2]) } -Descending | Select-Object -First 5"],
+        `Get-Process | Group-Object ProcessName | ForEach-Object { '{0} {1:N1} GB' -f $_.Name, (($_.Group | Measure-Object WorkingSet64 -Sum).Sum/1GB) } | Sort-Object { [double](($_ -split ' ')[-2]) } -Descending | Select-Object -First ${n}`],
       { encoding: "utf8", timeout: 15_000 }
-    ).trim().split(/\r?\n/).join(", ");
+    ).trim().split(/\r?\n/).filter(Boolean);
   } catch {
-    // Liste ist Beiwerk
+    return []; // Liste ist Beiwerk
   }
-  return `Zu wenig Arbeitsspeicher frei: ${gb(freiBytes)} von ${gb(gesamtBytes)} GB (nötig ${MIN_FREI_GB} GB). ${top ? `Am meisten brauchen: ${top}. ` : ""}Bitte etwas schliessen (z. B. Chrome-Tabs, Cursor) und nochmals versuchen.`;
+}
+
+/** /speicher (20.11.): frei/gesamt, reicht es fuer einen Lauf, die groessten Programme */
+export function speicherText(freiBytes = freemem(), gesamtBytes = totalmem(), top = topProzesse()): string {
+  const frei = freiBytes / 2 ** 30;
+  return [
+    `🧠 <b>Arbeitsspeicher</b>: ${frei.toFixed(1)} von ${(gesamtBytes / 2 ** 30).toFixed(1)} GB frei`,
+    frei >= MIN_FREI_GB ? `✅ Reicht für einen Lauf (nötig ${MIN_FREI_GB} GB).` : `⚠️ Zu wenig für einen Lauf (nötig ${MIN_FREI_GB} GB): etwas schliessen.`,
+    ...(top.length ? ["", "Am meisten brauchen:", ...top.map((t) => `• ${t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}`)] : []),
+  ].join("\n");
 }
 
 // ── Von der Automatik markiert, nicht angeschrieben (10.11.): Omid prüft selbst auf /kurse → Batch ──

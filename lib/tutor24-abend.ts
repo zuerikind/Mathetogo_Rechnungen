@@ -26,22 +26,25 @@ export type Tagesdaten = {
   verfallen: number;
 };
 
+/** Durchgang gelaufen: ein (nicht per /run gestarteter) Durchgang ab 30 min vor der Zeit bis vor die naechste Zeit */
+function slotPasses(passes: PassLog[], zeiten: string[], tag: string) {
+  const geplant = passes.filter((p) => zurichDay(new Date(p.start)) === tag && p.quelle !== "run" && p.quelle !== "freigabe" && p.quelle !== "erst");
+  const slots = [...zeiten].sort();
+  return slots.map((t, i) => {
+    const von = toMin(t) - 30;
+    const bis = i + 1 < slots.length ? toMin(slots[i + 1]) - 30 : 24 * 60;
+    return { t, bis, im: geplant.filter((p) => zurichMin(p.start) >= von && zurichMin(p.start) < bis) };
+  });
+}
+
 /** Text ohne Stichproben (testbar, ohne Datenbank) */
 export function tagesberichtText(d: Tagesdaten): string {
   const heute = d.passes.filter((p) => zurichDay(new Date(p.start)) === d.tag);
-  const geplant = heute.filter((p) => p.quelle !== "run" && p.quelle !== "freigabe" && p.quelle !== "erst");
   const sum = (f: (p: PassLog) => number) => heute.reduce((n, p) => n + f(p), 0);
   const probe = d.state.modus === "probe" || (heute.length > 0 && heute.every((p) => p.modus === "probe"));
 
-  // Durchgang gelaufen: ein (nicht per /run gestarteter) Durchgang ab 30 min vor der Zeit bis vor die naechste Zeit
-  const slots = [...d.zeiten].sort();
-  const gelaufen = slots.map((t, i) => {
-    const von = toMin(t) - 30;
-    const bis = i + 1 < slots.length ? toMin(slots[i + 1]) - 30 : 24 * 60;
-    const im = geplant.filter((p) => zurichMin(p.start) >= von && zurichMin(p.start) < bis);
-    // 16.11.: wegen Netzfehler abgebrochen = gelaufen, aber im Bericht als "abgebrochen (kein Netz)"
-    return { t, ok: im.length > 0, netz: im.length > 0 && im.every((p) => p.fehler.some(isNetError)) };
-  });
+  // 16.11.: wegen Netzfehler abgebrochen = gelaufen, aber im Bericht als "abgebrochen (kein Netz)"
+  const gelaufen = slotPasses(d.passes, d.zeiten, d.tag).map(({ t, im }) => ({ t, ok: im.length > 0, netz: im.length > 0 && im.every((p) => p.fehler.some(isNetError)) }));
 
   const echt = d.agent.filter((e) => e.tag === d.tag && !!e.probe === probe);
   const zurueck = echt.filter((e) => e.urteil !== "ok");
@@ -69,6 +72,33 @@ export function tagesberichtText(d: Tagesdaten): string {
 }
 
 /** 2 zufaellige heute gesendete Nachrichten, eingeklappt (Telegram-HTML, blockquote expandable) */
+/** /heute (20.11., Omid): jeder Durchgang des Tages mit Stand, dazu gesendet/Tageslimit und frühester nächster Lauf. */
+export function heuteText(d: { tag: string; passes: PassLog[]; zeiten: string[]; now: Date; erstLimit: number; busy: string | null; abstandBis: Date | null }): string {
+  const hm = (iso: string | Date) => new Date(iso).toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" });
+  const jetzt = zurichMin(d.now.toISOString());
+  const heute = d.passes.filter((p) => zurichDay(new Date(p.start)) === d.tag);
+  const erst = heute.reduce((n, p) => n + p.erst.gesendet, 0);
+  const zeilen = slotPasses(d.passes, d.zeiten, d.tag).map(({ t, bis, im }) => {
+    if (im.length) {
+      const p = im[im.length - 1];
+      const spaet = zurichMin(p.start) - toMin(t) > 15 ? ` (nachgeholt ${hm(p.start)})` : "";
+      const was = p.fehler.length ? `abgebrochen: ${p.fehler[0].slice(0, 60)}` : `${p.erst.gesendet} Erst, ${p.nachfassen.gesendet} Nachfassen`;
+      return `✅ ${t}${spaet}: ${p.ende ? was : "läuft"}`;
+    }
+    if (jetzt < toMin(t)) return `🕒 ${t}: geplant`;
+    if (jetzt < bis) return `⏳ ${t}: noch nicht gelaufen${d.busy ? ` (läuft: ${d.busy})` : d.abstandBis ? `, frühestens ${hm(d.abstandBis)} (Mindestabstand)` : ", wird nachgeholt"}`;
+    return `❌ ${t}: ausgefallen`;
+  });
+  return [
+    `📅 <b>HEUTE ${d.tag.split("-").reverse().join(".")}</b> · ${hm(d.now)}`,
+    `Gesendet: ${erst}/${d.erstLimit} Erst-Nachrichten · Antworten: ${heute.reduce((n, p) => n + p.antworten, 0)}`,
+    "",
+    ...zeilen.map(esc),
+    "",
+    d.busy ? `Läuft gerade: ${esc(d.busy)}` : d.abstandBis ? `Nächster Lauf frühestens ${hm(d.abstandBis)} (Mindestabstand 1 h 50 min).` : "Ein Lauf könnte jetzt starten.",
+  ].join("\n");
+}
+
 export async function stichprobe(now = new Date(), n = 2): Promise<string[]> {
   const start = new Date(`${zurichDay(now)}T00:00:00+01:00`);
   const rows = await prisma.tutor24Message.findMany({

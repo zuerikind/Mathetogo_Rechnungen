@@ -17,14 +17,15 @@ config({ path: ".env.local" });
 const { activePause, answerCallback, getUpdates, inSendWindow, laptopSignal, loadAutopilot, notify, readPassLog, runTimes, updateAutopilot } = await import("../lib/tutor24-autopilot");
 const { commandResult, takeCommands, writeLaptop } = await import("../lib/tutor24-watch-db");
 const { PROBE_MAX, createBot } = await import("../lib/tutor24-bot");
-const { readStatus, requestStop } = await import("../lib/tutor24-followup-store");
+const { loadSettings, readStatus, requestStop } = await import("../lib/tutor24-followup-store");
 const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock, earliestNext, pidAlive, readTutor24Lock } = await import("../lib/tutor24-lock");
 const { VERFALL_H, sendeLaufFaellig, tagesStand, verfallenLassen } = await import("../lib/tutor24-rueckfragen");
 const { rueckfrageAktion } = await import("../lib/tutor24-rueckfragen-aktion");
-const { tagesbericht, tagesberichtText } = await import("../lib/tutor24-abend");
+const { heuteText, tagesbericht, tagesberichtText } = await import("../lib/tutor24-abend");
+const { erstLimits } = await import("../lib/tutor24-followup");
 const { loadAgentLog } = await import("../lib/tutor24-pruefagent");
 const { problemText } = await import("../lib/tutor24-autopilot");
-const { speicherProblem } = await import("../lib/tutor24-batch");
+const { speicherProblem, speicherText } = await import("../lib/tutor24-batch");
 const { hasInternet } = await import("../lib/tutor24-network");
 const { toMin, zurichParts, zurichTime } = await import("../lib/tutor24-schedule");
 
@@ -141,6 +142,12 @@ const handle = createBot({
   // Rueckfragen (11.11.): Knoepfe Senden / Ueberspringen / du / Sie
   rueckfrage: (aktion, id) => rueckfrageAktion(aktion, id),
   replyKnoepfe: (text, knoepfe) => notify(text, me, false, knoepfe),
+  heute: () => {
+    const now = new Date();
+    const tag = zurichParts(now).day;
+    return heuteText({ tag, passes: readPassLog(50), zeiten: runTimes(), now, erstLimit: erstLimits(loadSettings(), tag).tag, busy: busy(), abstandBis: earliestNext(now) });
+  },
+  speicher: () => speicherText(),
 });
 
 // ── Selbst wieder anlaufen, Freigaben senden, Verfall, Abend-Zusammenfassung (11.11.) ─────────────
@@ -202,9 +209,15 @@ const pflege = async () => {
           console.log(`${stamp()} Durchgang von ${slot} fehlt, warte (${h}).`);
           // PROBLEM (13.11.): 60 min nach der Zeit immer noch nicht nachgeholt → einmal melden
           const key = `${today} ${slot}`;
-          if (mins >= due + 60 && !ausfallGemeldet.has(key)) {
+          // 20.11.: Mindestabstand/laufender Lauf ist nur die Folge eines frueheren, verspaeteten Laufs — nichts zu tun, keine Meldung (/heute zeigt es)
+          const folge = h.startsWith("Mindestabstand") || h.startsWith("läuft");
+          if (mins >= due + 60 && !folge && !ausfallGemeldet.has(key)) {
             ausfallGemeldet.add(key);
-            await notify(problemText(`Der Durchgang von ${slot} ist ausgefallen und konnte noch nicht nachgeholt werden (${h}).`, h === "zu wenig Speicher" ? "Am Laptop Chrome/Cursor schliessen; der Bot holt ihn dann von selbst nach." : h === "kein Internet" ? "Internet am Laptop prüfen; der Bot holt ihn dann von selbst nach." : "Nichts sofort; der Bot versucht es weiter. Bleibt es so, /status schicken."));
+            const grund = h === "zu wenig Speicher" ? (speicherProblem() ?? h) : h;
+            await notify(problemText(
+              `Der Durchgang von ${slot} ist ausgefallen und konnte noch nicht nachgeholt werden. Grund: ${grund}\nFolge: Die späteren Durchgänge verschieben sich (1 h 50 min Abstand); am Abend kann einer wegfallen.`,
+              (h === "zu wenig Speicher" ? "Am Laptop Programme schliessen (/speicher zeigt, was am meisten braucht); der Bot holt ihn dann von selbst nach." : h === "kein Internet" ? "Internet am Laptop prüfen; der Bot holt ihn dann von selbst nach." : "Nichts sofort; der Bot versucht es weiter.") + " Stand: /heute"
+            ));
           }
         }
         else {

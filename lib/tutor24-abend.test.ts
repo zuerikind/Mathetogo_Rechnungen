@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { tagesberichtText, type Tagesdaten } from "./tutor24-abend";
+import { heuteText, tagesberichtText, type Tagesdaten } from "./tutor24-abend";
 import { emptyCounts, type PassLog } from "./tutor24-autopilot";
 
 const pass = (start: string, p: Partial<PassLog> = {}): PassLog => ({
@@ -48,5 +48,20 @@ describe("Tagesbericht (13.11.)", () => {
     const t = tagesberichtText({ ...base, passes: [pass("2026-11-14T09:00:30Z"), pass("2026-11-14T15:00:20Z", { erst: emptyCounts(), fehler: ["Kein Netz bei der Anmeldung: page.goto: Timeout 30000ms exceeded."] })] });
     expect(t.split("\n")[1]).toBe("✅ Alles in Ordnung");
     expect(t).toContain("Durchgänge: 10:00 ja, 16:00 abgebrochen (kein Netz, Automatik blieb an)");
+  });
+});
+
+describe("/heute (20.11.)", () => {
+  it("nachgeholt, verschoben, geplant, ausgefallen", () => {
+    const zeiten = ["10:55", "13:00", "15:05", "17:10"];
+    const passes = [pass("2026-11-20T09:55:15Z", { ende: "2026-11-20T10:05:37Z" }), pass("2026-11-20T13:11:36Z", { quelle: "nachgeholt", ende: "2026-11-20T13:24:07Z" })];
+    const t = heuteText({ tag: "2026-11-20", passes, zeiten, now: new Date("2026-11-20T15:09:00Z"), erstLimit: 56, busy: null, abstandBis: new Date("2026-11-20T15:13:00Z") });
+    expect(t).toContain("Gesendet: 8/56");
+    expect(t).toContain("✅ 10:55: 4 Erst, 1 Nachfassen");
+    expect(t).toContain("✅ 13:00 (nachgeholt 14:11)");
+    expect(t).toContain("⏳ 15:05: noch nicht gelaufen, frühestens 16:13 (Mindestabstand)");
+    expect(t).toContain("🕒 17:10: geplant");
+    const spaet = heuteText({ tag: "2026-11-20", passes, zeiten, now: new Date("2026-11-20T16:30:00Z"), erstLimit: 56, busy: null, abstandBis: null });
+    expect(spaet).toContain("❌ 15:05: ausgefallen");
   });
 });

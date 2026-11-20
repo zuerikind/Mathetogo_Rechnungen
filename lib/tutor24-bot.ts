@@ -58,6 +58,10 @@ export type BotDeps = {
   rueckfrage?: (aktion: "send" | "skip" | "du" | "sie", id: string) => Promise<{ text: string; knoepfe?: object }>;
   /** Klartext mit Knoepfen (neuer Text nach Anrede-Wechsel) */
   replyKnoepfe?: (text: string, knoepfe: object) => Promise<unknown>;
+  /** /heute: Tagesplan (lib/tutor24-abend.ts heuteText), Telegram-HTML */
+  heute?: () => string;
+  /** /speicher: freier Arbeitsspeicher und groesste Programme (lib/tutor24-batch.ts speicherText), Telegram-HTML */
+  speicher?: () => string;
 };
 
 const help = () => HELP_LINES.join("\n");
@@ -173,6 +177,14 @@ export function createBot(deps: BotDeps) {
     if (cmd === "/status") {
       await deps.reply(statusHtml(deps.state(), deps.passes(), deps.now()));
       return "status";
+    }
+    if (cmd === "/heute" && deps.heute) {
+      await deps.reply(deps.heute());
+      return "heute";
+    }
+    if (cmd === "/speicher" && deps.speicher) {
+      await deps.reply(deps.speicher());
+      return "speicher";
     }
 
     if (cmd === "/stop") {

@@ -317,6 +317,8 @@ export function passResult(p: PassLog): string {
 
 export const HELP_LINES = [
   "/status zeigt den Stand.",
+  "/heute zeigt alle Durchgänge von heute (gelaufen, verschoben, geplant).",
+  "/speicher zeigt den freien Arbeitsspeicher am Laptop.",
   "/run startet einen Probelauf ohne Versand.",
   "/erst 5 schreibt jetzt bis zu 5 neue Inserate an (/erst allein: bis zum Tageslimit).",
   "/stop schaltet die Automatik aus.",

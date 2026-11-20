@@ -25,7 +25,7 @@ export type WebhookDeps = {
   answerCallback: (id: string, text: string) => Promise<unknown>;
 };
 
-const FORWARD = new Set(["/run", "/enable"]);
+const FORWARD = new Set(["/run", "/enable", "/heute", "/speicher"]);
 
 /** /status ohne Laptop: Zustand aus dem letzten Lebenszeichen, Laeufe aus Tutor24Run */
 export function remoteStatus(l: LaptopSignal | null, passes: PassLog[], now: Date, p: Progress | null = null): string {

@@ -40,6 +40,8 @@ function setup(now: Date, passes: PassLog[] = [], busy: string | null = null) {
     startErst: (n: number | null) => void calls.erst.push(n),
     requestStop: () => void calls.stop++,
     answerCallback: async () => void calls.answered++,
+    heute: () => "HEUTE-TEXT",
+    speicher: () => "SPEICHER-TEXT",
   };
   let id = 1;
   const msg = (text: string, o: { chat?: number; type?: string; ageS?: number } = {}): TgUpdate => ({
@@ -72,9 +74,12 @@ describe("Telegram-Bot", () => {
     expect(t).toContain("/run startet einen Probelauf ohne Versand.");
     expect(t).toContain("/stop schaltet die Automatik aus.");
     const commands = t.match(/^\/\w+/gm) ?? [];
-    expect(commands.sort()).toEqual(["/enable", "/erst", "/run", "/status", "/stop"]);
+    expect(commands.sort()).toEqual(["/enable", "/erst", "/heute", "/run", "/speicher", "/status", "/stop"]);
     await b.handle(b.msg("/irgendwas; rm -rf /"));
     expect(b.replies[1]).not.toContain("rm");
+    expect(await b.handle(b.msg("/heute"))).toBe("heute");
+    expect(await b.handle(b.msg("/speicher"))).toBe("speicher");
+    expect(b.replies.slice(2)).toEqual(["HEUTE-TEXT", "SPEICHER-TEXT"]);
     expect(b.calls).toEqual({ probe: 0, stop: 0, pass: 0, answered: 0, erst: [] });
   });
 
