@@ -886,7 +886,7 @@ export function Tutor24Followup({
                 <SettingRow title="Nachfassen frühestens nach" help="So viele Tage nach der Erst-Nachricht, und nur ohne Antwort (mindestens 3).">
                   <NumberField id="set-tage" value={draft.settings.nachfassNachTagen} min={3} unit="Tagen" disabled={running} onChange={(v) => setSettings({ nachfassNachTagen: v })} />
                 </SettingRow>
-                <SettingRow title="Prüf-Agent vor dem Senden" help="Ein: ein separater KI-Agent liest jede Nachricht (Erst-Nachricht und Nachfassen) vor dem Senden. ok → wird gesendet (auch KI-Satz, Englisch, Französisch, Anrede unklar); auffällig → Rückfrage per Telegram. Agentur, Nebenfach und nicht bestandene Prüfung nie automatisch. Mehr als 4 oder (ab 5) mehr als 30 % auffällig → Automatik aus. Aus: die drei Schalter darunter gelten.">
+                <SettingRow title="Prüf-Agent vor dem Senden" help="Ein: ein separater KI-Agent liest jede Nachricht (Erst-Nachricht und Nachfassen) vor dem Senden. ok → wird gesendet (auch KI-Satz, Englisch, Französisch, Anrede unklar); auffällig → Rückfrage per Telegram. Agentur, Nebenfach und nicht bestandene Prüfung nie automatisch. Mehr als 4 auffällig in einem Durchgang → Automatik aus. Aus: die drei Schalter darunter gelten.">
                   <Toggle id="set-pruef-agent" checked={draft.settings.pruefAgent} disabled={running} onChange={(v) => setSettings({ pruefAgent: v })} />
                 </SettingRow>
                 {!draft.settings.pruefAgent && (<>

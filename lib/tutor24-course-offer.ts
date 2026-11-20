@@ -741,6 +741,12 @@ export function matheNebenfach(info: ListingInfo): string | null {
   const SAETZE = t.split(new RegExp("(?<=[.!?])\\s+"));
   const ANDERES = new RegExp("(?<!\\p{L})(deutsch|lrs|legasthenie|lesen|rechtschreibung|englisch|französisch|franz|italienisch|spanisch|latein|chemie|biologie|bio|geschichte|geografie|nmg|wirtschaft|musik)(?!\\p{L})", "iu");
   const MP = /mathe|physik|rechnen/i;
+  // 20.11.: Inserat nennt nur andere Faecher (Anatomie, Latein, ABU …), Mathe/Physik gar nicht — tutor24 liefert es trotzdem
+  // in der Mathe-Suche. Vorher ging es an den Pruef-Agenten, der es zu Recht beanstandete und so die Automatik stoppte.
+  const FREMD = new RegExp("(?<!\\p{L})(anatomie|physiologie|pathophysiologie|pharmakologie|pflege|medizin|abu|latein|chemie|biologie|geschichte|geografie|wirtschaft|rechnungswesen|buchhaltung|informatik|programmieren|chemistry|biology|history|latin)(?!\\p{L})", "iu");
+  const fremd = t.match(FREMD)?.[0];
+  if (fremd && !/math|physik|physics|physique|rechnen|algebra|geometrie|geometry|stochastik|statistik/i.test(t))
+    return `Mathe/Physik kommt im Inserat nicht vor (gesucht u. a. „${fremd}“)`;
   for (const s of SAETZE) {
     const sp = s.match(/schwerpunkt[^.!?]*/i)?.[0];
     if (sp && ANDERES.test(sp) && !MP.test(sp)) return `Schwerpunkt auf einem anderen Fach („${sp.slice(0, 50).trim()}“)`;

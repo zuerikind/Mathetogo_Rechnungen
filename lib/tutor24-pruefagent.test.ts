@@ -32,18 +32,13 @@ describe("Prüf-Agent", () => {
     expect(p.aus).toBe(true);
   });
 
-  it("Stopp: mehr als 30 % erst ab 5 geprüften", () => {
+  it("kein Anteil-Stopp mehr (20.11., Omid): 2 von 5 und 4 von 4 stoppen nicht", () => {
     const p = agentPass();
-    agentZaehlen(p, auff);
-    agentZaehlen(p, ok);
-    agentZaehlen(p, ok);
-    expect(p.halt).toBeNull(); // 1 von 3, aber erst 3 geprueft
-    agentZaehlen(p, ok);
-    agentZaehlen(p, auff); // 2 von 5 = 40 %
-    expect(p.aus).toBe(true);
+    for (const u of [auff, ok, ok, ok, auff]) agentZaehlen(p, u); // 40 %: stoppte am 20.11.
+    expect(p.halt).toBeNull();
     const q = agentPass();
-    for (const u of [auff, ok, ok, ok, ok]) agentZaehlen(q, u); // 20 %
-    expect(q.halt).toBeNull();
+    for (let i = 0; i < 4; i++) agentZaehlen(q, auff);
+    expect(q.aus).toBe(false);
   });
 
   it("zweimal nicht erreichbar → Durchgang hält an, Automatik bleibt an", () => {

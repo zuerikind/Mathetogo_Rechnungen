@@ -1,7 +1,8 @@
 /**
  * Pruef-Agent (Omid, 11.11.): liest jede Nachricht vor dem Senden — eigener KI-Aufruf, kennt nur das Inserat und die
  * fertige Nachricht, nicht den Prompt, mit dem sie geschrieben wurde. "ok" → Automatik sendet; "auffaellig" → Rueckfrage.
- * Stopp im Durchgang: mehr als 4 auffaellig oder (ab 5 geprueften) mehr als 30 % → nichts mehr senden, Automatik aus.
+ * Stopp im Durchgang: mehr als 4 auffaellig → nichts mehr senden, Automatik aus. (Anteil-Regel "30 % ab 5" am 20.11. entfernt,
+ * Omid: 2 von 5 aus Zufall stoppten; auffaellige gehen ohnehin nie raus.)
  * Agent nicht erreichbar: nicht senden (Rueckfrage), zaehlt nicht zum Stopp; 2× hintereinander → Durchgang sendet nichts mehr.
  */
 import { existsSync, readFileSync, writeFileSync } from "fs";
@@ -9,8 +10,6 @@ import { zurichDay } from "./tutor24-rueckfragen";
 
 export const AGENT_LOG = "tutor24-followup/pruefagent.json";
 export const AGENT_MAX_AUFFAELLIG = 4;
-export const AGENT_MAX_ANTEIL = 0.3;
-export const AGENT_ANTEIL_AB = 5;
 /** erste Woche: Abend-Zusammenfassung zeigt zusaetzlich alle ok und die Liste der Gruende */
 export const AGENT_DETAIL_BIS = "2026-11-19";
 
@@ -35,7 +34,7 @@ Die Nachricht besteht fast ganz aus festen Textbausteinen, die der Lehrer bewuss
 - Alle tutor24-Inserate sind von der Plattform als Angebot an Lehrkräfte formuliert ("Sind Sie Tutor?", "Haben Sie Lust auf einen Nachhilfejob?", "Neues Jobangebot!", "wir freuen uns auf Sie"). Das ist normal und KEIN Stellenangebot einer Agentur, und das "Sie" darin richtet sich an den Lehrer, nicht an die Person, die Nachhilfe sucht.
 
 Zu prüfen ist vor allem der persönliche Teil (meist ein bis zwei Sätze nach der Vorstellung, die aufs Anliegen eingehen) und die Anrede. Prüfe nur diese Punkte:
-1. Anrede: Schreibt die Person in der Ich-Form über sich selbst ("ich brauche Hilfe", "ich habe bald Prüfung"), ist "du" richtig, auch bei Erwachsenen. Schreiben Eltern über ihr Kind ("mein Sohn", "unsere Tochter", "unser Kind"), ist "Sie" mit Bezug auf das Kind richtig. Ist es unklar, ist "Sie" richtig. Englisch "you", Französisch "vous" sind immer richtig. Auffällig nur bei klarem Widerspruch (z. B. "du" an Eltern, "Ihr Kind" obwohl der Schüler selbst schreibt, falsches Geschlecht des Kindes).
+1. Anrede: Schreibt die Person in der Ich-Form über sich selbst ("ich brauche Hilfe", "ich habe bald Prüfung"), ist "du" richtig, auch bei Erwachsenen. Schreiben Eltern über ihr Kind ("mein Sohn", "unsere Tochter", "unser Kind"), ist "Sie" mit Bezug auf das Kind richtig. Ist es unklar, ist "Sie" richtig. Englisch "you", Französisch "vous" sind immer richtig; englische und französische Nachrichten sind absichtlich neutral, ein fehlender Bezug auf das Kind ("your daughter") ist dort kein Fehler. Auffällig nur bei klarem Widerspruch (z. B. "du" an Eltern, "Ihr Kind" obwohl der Schüler selbst schreibt, falsches Geschlecht des Kindes).
 2. Stufe: Nennt der persönliche Teil oder der Kursblock eine Stufe oder Prüfung, die dem Inserat klar widerspricht (z. B. Gymiprüfung, aber das Inserat sucht Hilfe an der Uni)?
 3. Behauptet der persönliche Teil etwas über die Person oder ihr Anliegen, das nicht im Inserat steht (erfundene Prüfung, erfundenes Thema, erfundener Name), oder verspricht er etwas, das niemand halten kann (Notengarantie)?
 4. Klingt der persönliche Teil deutlich nach KI (hohle Floskeln, das Inserat wörtlich nacherzählt, schwülstig)? Sachlich und leicht formell ist ok.
@@ -155,8 +154,8 @@ export function agentZaehlen(p: AgentPass, u: AgentUrteil): AgentPass {
     p.gruende.push(u.grund);
   }
   const geprueft = p.ok + p.auffaellig;
-  if (p.auffaellig > AGENT_MAX_AUFFAELLIG || (geprueft >= AGENT_ANTEIL_AB && p.auffaellig / geprueft > AGENT_MAX_ANTEIL)) {
-    p.halt = `Prüf-Agent: ${p.auffaellig} von ${geprueft} Nachrichten auffällig (Grenze: mehr als ${AGENT_MAX_AUFFAELLIG} oder mehr als 30 % ab ${AGENT_ANTEIL_AB}) — deutet auf einen Fehler`;
+  if (p.auffaellig > AGENT_MAX_AUFFAELLIG) {
+    p.halt = `Prüf-Agent: ${p.auffaellig} von ${geprueft} Nachrichten auffällig (Grenze: mehr als ${AGENT_MAX_AUFFAELLIG}) — deutet auf einen Fehler`;
     p.aus = true;
   }
   return p;

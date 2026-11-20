@@ -543,5 +543,11 @@ describe("FMS-Texte, Mathe nur Nebenfach (10.11.)", () => {
     expect(O.matheNebenfach(info("Hauptsächlich Englisch. Bei Bedarf auch etwas Mathe."))).toMatch(/nebenbei/);
     expect(O.matheNebenfach(info("Mein Sohn braucht Hilfe in Mathe, Schwerpunkt Bruchrechnen."))).toBeNull();
     expect(O.matheNebenfach(info("Nachhilfe in Mathe und Deutsch für die 6. Klasse."))).toBeNull();
+    // 20.11. (6312084, 6325302): nur andere Faecher, kein Mathe/Physik → Liste statt Pruef-Agent
+    expect(O.matheNebenfach(info("Ich brauche Unterstützung in Anatomie, Physiologie, Pathophysiologie, Pharmakologie und Pflege."))).toMatch(/kommt im Inserat nicht vor/);
+    expect(O.matheNebenfach(info("Bildung ist mir wichtig. Gesucht: Anatomie, Physiologie, ABU und Latein."))).toMatch(/„Anatomie“/);
+    expect(O.matheNebenfach(info("Physik und Chemie für die Kanti."))).toBeNull();
+    expect(O.matheNebenfach(info("Lernen soll Spass machen! Wir suchen in Triengen jemanden."))).toBeNull();
+    expect(O.matheNebenfach(info("Help with maths and biology, please."))).toBeNull();
   });
 });
