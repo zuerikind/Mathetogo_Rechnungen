@@ -217,8 +217,11 @@ const pflege = async () => {
     }
   }
 
-  // 4. Abend-Zusammenfassung um 20:00, einmal pro Tag (auch wenn die Automatik aus ist)
-  if (z.h >= VERFALL_H && s.zusammenfassungAm !== today) {
+  // 4. Abend-Zusammenfassung einmal pro Tag (auch wenn die Automatik aus ist): ab 20:00, aber erst 45 min nach dem
+  // letzten Durchgang (spaetestens 23:50) und nicht waehrend eines Laufs. 20.11.: um 20:00 standen 21:20/23:25 als "nicht gelaufen".
+  const letzter = Math.max(...runTimes().map(toMin));
+  const berichtAb = Math.max(VERFALL_H * 60, Math.min(letzter + 45, 23 * 60 + 50));
+  if (mins >= berichtAb && !busy() && s.zusammenfassungAm !== today) {
     const d = { tag: today, passes: readPassLog(50), zeiten: runTimes(), state: s, agent: loadAgentLog(), verfallen: tagesStand(today).verfallen };
     // Faellt die HTML-Fassung durch (z. B. Telegram lehnt sie ab), dieselbe Meldung ohne Stichproben als reiner Text
     if ((await notify(await tagesbericht(d, now), undefined, true)) || (await notify(tagesberichtText(d)))) updateAutopilot({ zusammenfassungAm: today });
