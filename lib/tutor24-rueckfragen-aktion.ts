@@ -4,7 +4,6 @@
  * du/Sie = Text mit der anderen Anrede neu erstellen (gleiche Pruefung wie beim Batch) und nochmals zeigen.
  */
 import { composeFirstMessage } from "./tutor24";
-import { inSendWindow } from "./tutor24-autopilot";
 import { addresseeFor } from "./tutor24-batch";
 import { earliestNext } from "./tutor24-lock";
 import { SAMMEL_MIN, anredeSetzen, findeRueckfrage, freigeben, rueckfrageKnoepfe, rueckfrageText, ueberspringen } from "./tutor24-rueckfragen";
@@ -22,7 +21,7 @@ export async function rueckfrageAktion(aktion: RueckfrageAktion, id: string, now
   // Probe: Knoepfe wirken auf die Probe-Rueckfrage, aber nichts wird gesendet, gezaehlt oder notiert
   if (r.probe && aktion === "send") {
     freigeben(id, now);
-    return { text: `🧪 PROBE: „${r.titel}“ wäre jetzt freigegeben und würde im nächsten erlaubten Lauf gesendet (10 min nach dem letzten Knopf, 1 h 50 min Abstand, 8–24 Uhr, Tageslimit). Im Probemodus wird nichts gesendet.` };
+    return { text: `🧪 PROBE: „${r.titel}“ wäre jetzt freigegeben und würde im nächsten erlaubten Lauf gesendet (10 min nach dem letzten Knopf, 1 h 50 min Abstand, Tageslimit). Im Probemodus wird nichts gesendet.` };
   }
   if (r.probe && aktion === "skip") {
     ueberspringen(id, now);
@@ -33,8 +32,7 @@ export async function rueckfrageAktion(aktion: RueckfrageAktion, id: string, now
     if (!f || f.status !== "freigegeben") return { text: `„${r.titel}“ konnte nicht freigegeben werden (Stand: ${r.status}).` };
     const gap = earliestNext(now);
     const soonest = new Date(Math.max(now.getTime() + SAMMEL_MIN * 60_000, gap?.getTime() ?? 0));
-    const wann = inSendWindow(soonest) ? `frühestens um ${hhmm(soonest)}` : "morgen ab 8:00";
-    return { text: `✅ Freigegeben: „${r.titel}“. Gesendet wird im nächsten erlaubten Lauf, ${wann} (1 h 50 min Abstand, 8–24 Uhr, Tageslimit). Vorher wird nochmals geprüft, dass niemand doppelt angeschrieben wird.` };
+    return { text: `✅ Freigegeben: „${r.titel}“. Gesendet wird im nächsten erlaubten Lauf, frühestens um ${hhmm(soonest)} (1 h 50 min Abstand, Tageslimit). Vorher wird nochmals geprüft, dass niemand doppelt angeschrieben wird.` };
   }
   if (aktion === "skip") {
     ueberspringen(id, now);

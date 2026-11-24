@@ -26,7 +26,7 @@ const inputClass = "w-20 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
 export const MODE_LABEL: Record<AutoMode, { text: string; pill: string }> = {
   aus: { text: "Aus · sendet nichts", pill: "bg-red-50 text-red-700" },
   probe: { text: "Probe · sendet nichts", pill: "bg-amber-50 text-amber-800" },
-  an: { text: "Ein · sendet 8–24 Uhr", pill: "bg-green-50 text-green-700" },
+  an: { text: "Ein · sendet rund um die Uhr", pill: "bg-green-50 text-green-700" },
 };
 export function ModePill({ modus }: { modus: AutoMode }) {
   return <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${MODE_LABEL[modus].pill}`}><Dot tone={modus === "an" ? "ok" : modus === "probe" ? "warn" : "bad"} />{MODE_LABEL[modus].text}</span>;
@@ -58,7 +58,7 @@ export function ModeSwitch({ modus, onMode }: { modus: AutoMode; onMode: (m: Aut
       </div>
       {ask && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          <p><b>Wirklich einschalten?</b> Ab dem nächsten Durchgang werden echte Nachrichten gesendet (8–24 Uhr, Tageslimits gelten).</p>
+          <p><b>Wirklich einschalten?</b> Ab dem nächsten Durchgang werden echte Nachrichten gesendet (Tageslimits gelten).</p>
           <div className="mt-2 flex gap-2">
             <button onClick={() => { setAsk(false); onMode("an"); }} className="rounded-lg bg-green-600 px-4 py-1.5 font-semibold text-white hover:bg-green-700">Ja, einschalten</button>
             <button onClick={() => setAsk(false)} className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 font-semibold text-gray-700">Abbrechen</button>
@@ -177,7 +177,7 @@ export function Overview({ info, ov, attention, onMode }: { info: AutopilotInfo;
 
       <div className={card}>
         <h2 className="text-lg font-semibold text-gray-900">Erst-Nachrichten jetzt senden</h2>
-        <p className="mt-1 text-sm text-gray-500">Schreibt neue Inserate sofort an statt erst beim nächsten geplanten Durchgang. Modus, Tageslimit, 8–24 Uhr und 429-Pause gelten. Geht auch online, solange der Laptop an ist.</p>
+        <p className="mt-1 text-sm text-gray-500">Schreibt neue Inserate sofort an statt erst beim nächsten geplanten Durchgang. Modus, Tageslimit und 429-Pause gelten. Geht auch online, solange der Laptop an ist.</p>
         <ErstNow />
       </div>
     </div>
@@ -254,7 +254,6 @@ const ERST_RESULT: Record<string, string> = {
   "erst: gestartet": "Gestartet. Das Ergebnis kommt per Telegram.",
   "erst: aus": "Nicht gestartet: Automatik ist aus.",
   "erst: 429-Pause": "Nicht gestartet: 429-Pause läuft.",
-  "erst: ausserhalb 8–24 Uhr": "Nicht gestartet: ausserhalb 8–24 Uhr (Modus Ein).",
   "erst: belegt": "Nicht gestartet: es läuft schon ein Lauf.",
   "erst: ungültig": "Nicht gestartet: ungültige Anzahl.",
   "ignoriert: zu alt": "Nicht gestartet: der Laptop hat den Befehl zu spät abgeholt.",
@@ -262,7 +261,7 @@ const ERST_RESULT: Record<string, string> = {
 
 /**
  * Knopf "Erst-Nachrichten jetzt senden": legt /erst N in die Befehlstabelle (app/api/tutor24/erst), der Laptop holt ihn ab.
- * Modus, Tageslimit, 8–24 Uhr, 429-Pause und "nur ein Lauf" prueft der Laptop.
+ * Modus, Tageslimit, 429-Pause und "nur ein Lauf" prueft der Laptop.
  */
 export function ErstNow() {
   const [anzahl, setAnzahl] = useState("5");

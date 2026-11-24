@@ -125,10 +125,7 @@ export function readPassLog(limit = 20): PassLog[] {
 
 // ── Regeln ────────────────────────────────────────────────────────────────────
 
-export const SEND_FROM_HOUR = 8;
-export const SEND_UNTIL_HOUR = 24; // 19.11. (Omid): auch abends/nachts senden, Durchgaenge bis 23:00
-/** Senden nur 8:00–19:59 */
-export const inSendWindow = (now = new Date()) => now.getHours() >= SEND_FROM_HOUR && now.getHours() < SEND_UNTIL_HOUR;
+// 24.11. (Omid): kein Sendefenster mehr — gesendet werden darf rund um die Uhr.
 export const MAX_CHECK_FAILURES = 3;
 
 /** Sicherheitsabfrage, Captcha, Sperre, Login: sofort stoppen, nicht weiterprobieren. */

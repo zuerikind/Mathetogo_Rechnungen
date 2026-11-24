@@ -44,8 +44,8 @@ export function normTimes(v: unknown): string[] | null {
 }
 
 /**
- * Puffer fuer die Laufdauer: der Mindestabstand zaehlt ab ENDE des letzten Laufs (lib/tutor24-lock.ts).
- * Ohne Puffer waere jeder naechste Durchgang "zu frueh", der Bot holt ihn nach und alles rutscht (19.11.).
+ * Puffer zwischen den Slots. Seit 24.11. zaehlt der Mindestabstand ab START des Durchgangs (lib/tutor24-lock.ts);
+ * die 15 min bleiben als Reserve fuer einen verspaeteten Start (Internet, Speicher) und als Ruhe zwischen den Laeufen.
  */
 export const SLOT_BUFFER_MIN = 15;
 

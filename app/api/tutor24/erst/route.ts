@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 /**
  * Knopf "Erst-Nachrichten jetzt senden" auf /kurse — lokal und online (rechnungen.mathetogo.xyz) gleich:
  * der Befehl kommt in tutor24_command, der Laptop-Bot holt ihn ab und prueft dort Modus, Tageslimit,
- * 8–24 Uhr, 429-Pause und laufende Laeufe (lib/tutor24-bot.ts, /erst). Braucht eine Sitzung (middleware.ts),
+ * 429-Pause und laufende Laeufe (lib/tutor24-bot.ts, /erst). Braucht eine Sitzung (middleware.ts),
  * steht bewusst NICHT in lib/open-routes.ts.
  *
  * POST { anzahl?: 1–20 }  → { ok, id } oder { ok: false, text }

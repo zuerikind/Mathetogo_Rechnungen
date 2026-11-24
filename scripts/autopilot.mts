@@ -6,7 +6,7 @@
  *   npx tsx scripts/autopilot.mts --probe          Probe erzwingen (liest alles, sendet NICHTS)
  *   npx tsx scripts/autopilot.mts --probe --max 3  begrenzter Probelauf (Telegram /run): je höchstens 3, Listen kurz
  *
- * Gesendet wird nur im Modus "an" und nur 8–24 Uhr; Tageslimits zaehlen aus der Datenbank, ein
+ * Gesendet wird nur im Modus "an" (rund um die Uhr, seit 24.11.); Tageslimits zaehlen aus der Datenbank, ein
  * nachgeholter Durchgang sendet also nie doppelt. Nach einem 429 startet 12 h lang kein Durchgang.
  * Regeln und Meldungen: lib/tutor24-autopilot.ts.
  */
@@ -15,7 +15,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 const {
-  RATE_LIMIT_TEXT, activePause, appendPassLog, emptyCounts, errorKey, firstName, fmtZurich, inSendWindow, is429, isBusy, isNetError,
+  RATE_LIMIT_TEXT, activePause, appendPassLog, emptyCounts, errorKey, firstName, fmtZurich, is429, isBusy, isNetError,
   loadAutopilot, nextScheduled, notify, passResult, problemText, antwortText, probeText, passSummary, rateLimitUntil, readPassLog, shortError, stopReason, updateAutopilot,
 } = await import("../lib/tutor24-autopilot");
 const { loadCourses, loadLeadInfo, loadLog, loadSettings, sentToday } = await import("../lib/tutor24-followup-store");
@@ -164,8 +164,8 @@ try {
 
 // ── Freigaben senden (--freigaben, vom Bot): genau die freigegebenen Rueckfragen, Text wie in der Rueckfrage ──
 if (FREIGABEN) {
-  if (modus !== "an" || !inSendWindow()) {
-    log(`Freigaben: nicht gesendet (${modus !== "an" ? "Automatik nicht EIN" : "ausserhalb 8–24 Uhr"}).`);
+  if (modus !== "an") {
+    log("Freigaben: nicht gesendet (Automatik nicht EIN).");
     process.exit(0);
   }
   const limit = Math.max(0, erstLimits(settings, zurichDay(new Date())).tag - (await sentToday(new Date(), "erst")));
@@ -219,12 +219,10 @@ const bytesAtStart = netBytes();
 /** neue Antworten laut Liste "Gesendet" (runFollowup auto) */
 const listReplies: { id: string; name: string; absage: boolean; satz?: string }[] = [];
 
-/** Vor jeder einzelnen Nachricht und direkt vor dem Senden: Zeitfenster und Notbremse (Telegram /stop, /kurse). */
+/** Vor jeder einzelnen Nachricht und direkt vor dem Senden: Notbremse (Telegram /stop, /kurse, Pruef-Agent). */
 const mayContinue = () => {
   if (forcedProbe) return null; // von Hand / Telegram /run: sendet ohnehin nichts
   if (!dryRun && pass.agent.halt) return pass.agent.halt;
-  // Probe sendet nichts: das Fenster gilt nur im echten Betrieb; die Liste vermerkt "würde ab 8:00 gesendet".
-  if (!dryRun && !inSendWindow()) return "ausserhalb 8–24 Uhr";
   const now = loadAutopilot().modus;
   if (now === "aus" || (!dryRun && now !== "an")) return "Automatik wurde ausgeschaltet";
   return null;
@@ -310,8 +308,7 @@ try {
   // 1. Erst-Nachrichten an neue Inserate (begrenzt: nur Mathematik, eine Suchseite)
   const lim = erstLimits(settings, zurichDay(new Date()));
   const erstLimit = Math.min(max ?? erstN ?? lim.durchgang, Math.max(0, lim.tag - (await sentToday(new Date(), "erst"))));
-  if (!inSendWindow() && !dryRun) log((erstNote = "Ausserhalb 8–24 Uhr: keine Erst-Nachrichten."));
-  else if (erstLimit === 0) log((erstNote = `Tageslimit Erst-Nachrichten (${lim.tag}) erreicht.`));
+  if (erstLimit === 0) log((erstNote = `Tageslimit Erst-Nachrichten (${lim.tag}) erreicht.`));
   else {
     log(`Erst-Nachrichten: höchstens ${erstLimit}${dryRun ? " (PROBE, sendet nichts)" : ""} …`);
     erstAuto.limit = erstLimit;
@@ -427,8 +424,7 @@ if (runId) await db("Durchgang abschliessen", () => finishRun(runId, dryRun ? { 
 await db("Lebenszeichen", () => writeLaptop(laptopSignal()));
 
 // Schlussmeldung: bei "alle" und in der Probe immer; bei "wenig" nur, wenn etwas schiefging (Stopp, Abbruch, gestoppt).
-const later = inSendWindow() ? "" : " — würde ab 8:00 gesendet";
-const list = dryRun ? `\nWürde senden:\n${pass.probe.length ? pass.probe.map((x) => `• ${x}${later}`).join("\n") : "niemand"}` : "";
+const list = dryRun ? `\nWürde senden:\n${pass.probe.length ? pass.probe.map((x) => `• ${x}`).join("\n") : "niemand"}` : "";
 const n = dryRun ? pass.erst.wuerde : pass.erst.gesendet;
 const daten = pass.mb !== null ? `\nDaten ≈ ${pass.mb} MB (ganzer Laptop)` : "";
 if (dryRun && !laut) await notify(probeText(pass, runId, busy ? "vorzeitig beendet (gestoppt)" : passResult(pass)));

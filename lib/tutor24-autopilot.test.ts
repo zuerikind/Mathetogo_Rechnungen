@@ -1,15 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { RATE_LIMIT_TEXT, autoEligible, daySummary, emptyCounts, errorKey, firstName, inSendWindow, isBusy, isHardStop, isNetError, passView, stopReason, type PassLog } from "./tutor24-autopilot";
+import { RATE_LIMIT_TEXT, autoEligible, daySummary, emptyCounts, errorKey, firstName, isBusy, isHardStop, isNetError, passView, stopReason, type PassLog } from "./tutor24-autopilot";
 import { mergeSettings, newActivity, type ListEntry } from "./tutor24-followup";
 
 describe("Automatik", () => {
-  it("Sendefenster 8:00–19:59", () => {
-    expect(inSendWindow(new Date(2026, 10, 5, 7, 59))).toBe(false);
-    expect(inSendWindow(new Date(2026, 10, 5, 8, 0))).toBe(true);
-    expect(inSendWindow(new Date(2026, 10, 5, 23, 59))).toBe(true);
-    expect(inSendWindow(new Date(2026, 10, 5, 0, 30))).toBe(false);
-  });
-
   it("Stopp: mehr als 3 Pruef-Fehler, harte Fehler sofort, gleicher Fehler zweimal", () => {
     const none = { pruefungFehler: 0, fehler: null, letzterFehler: null };
     expect(stopReason(none)).toBeNull();

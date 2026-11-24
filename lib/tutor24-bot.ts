@@ -15,7 +15,6 @@ import {
   RATE_LIMIT_TEXT,
   activePause,
   fmtZurich,
-  inSendWindow,
   nextScheduled,
   statusHtml,
   type AutoState,
@@ -92,7 +91,7 @@ export function createBot(deps: BotDeps) {
   };
   const busyNow = () => deps.busy() ?? (deps.now().getTime() - spawnedAt < 90_000 ? "Durchgang wurde eben gestartet" : null);
 
-  /** Knopf "Jetzt starten": wie ein geplanter Durchgang — Modus, Tageslimits, 8–24 Uhr und 429-Pause gelten. */
+  /** Knopf "Jetzt starten": wie ein geplanter Durchgang — Modus, Tageslimits und 429-Pause gelten. */
   async function startNow(): Promise<string> {
     const s = deps.state();
     if (s.modus === "aus") {
@@ -112,10 +111,8 @@ export function createBot(deps: BotDeps) {
     }
     deps.startPass();
     spawnedAt = deps.now().getTime();
-    const h = deps.now().getHours();
     await deps.reply(
       `▶️ <b>Durchgang gestartet</b> (${s.modus === "probe" ? "Probe — sendet nichts" : "EIN — sendet"}).\n` +
-        (s.modus === "an" && !inSendWindow(deps.now()) ? "Ausserhalb 8–24 Uhr: er liest nur und sendet nichts.\n" : "") +
         "Tageslimits gelten. Schritte: 1 neue Inserate · 2 Antworten prüfen · 3 Nachfassen — ich melde mich nach jedem Schritt und am Ende."
     );
     return "start: gestartet";
@@ -239,10 +236,6 @@ export function createBot(deps: BotDeps) {
         return "erst: 429-Pause";
       }
       if (await tooSoon()) return "erst: zu früh";
-      if (s.modus === "an" && !inSendWindow(deps.now())) {
-        await deps.reply("Ausserhalb 8–24 Uhr wird nichts gesendet — nicht gestartet.");
-        return "erst: ausserhalb 8–24 Uhr";
-      }
       const running = busyNow();
       if (running) {
         await deps.reply(`Läuft schon: ${running}. Kein zweiter Lauf gestartet.`);

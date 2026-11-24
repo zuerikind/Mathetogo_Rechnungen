@@ -9,7 +9,15 @@ import { is429, type AutoState, type TgUpdate } from "./tutor24-autopilot";
 describe("Mindestabstand 2 h zwischen tutor24-Laeufen", () => {
   const file = join(mkdtempSync(join(tmpdir(), "t24gap-")), "letzter-lauf.json");
 
-  it("ab Ende des letzten Laufs; ohne Datei frei", () => {
+  it("ab Start des letzten Durchgangs (24.11.): ein langer Lauf verschiebt den nächsten Slot nicht", () => {
+    // Durchgang 13:00–13:37 Zuerich: 15:05 ist erlaubt (ab Ende waere es erst 15:27)
+    const f = join(mkdtempSync(join(tmpdir(), "t24gap-")), "letzter-lauf.json");
+    writeFileSync(f, JSON.stringify({ start: "2026-11-23T12:00:00Z", ende: "2026-11-23T12:37:00Z" }));
+    expect(earliestNext(new Date("2026-11-23T13:49:00Z"), f)?.toISOString()).toBe("2026-11-23T13:50:00.000Z");
+    expect(earliestNext(new Date("2026-11-23T14:05:00Z"), f)).toBeNull();
+  });
+
+  it("alte Datei ohne start: ab Ende; ohne Datei frei", () => {
     expect(earliestNext(new Date(), file)).toBeNull();
     writeFileSync(file, JSON.stringify({ ende: "2026-11-08T08:36:00Z" })); // 9:36 Zuerich
     expect(earliestNext(new Date("2026-11-08T09:00:00Z"), file)?.toISOString()).toBe("2026-11-08T10:26:00.000Z");

@@ -216,7 +216,7 @@ describe("/erst N", () => {
     for (const t of ["/erst 0", "/erst 21", "/erst 5 6", "/erst -3", "/erst 5; del", "/erst abc", "/erst 5.5"]) expect(parseErst(t), t).toBeNull();
   });
 
-  it("Modus, 429-Pause, 8–24 Uhr (nur EIN), ein Lauf zur Zeit", async () => {
+  it("Modus, 429-Pause, nachts erlaubt, ein Lauf zur Zeit", async () => {
     const b = setup(NOW);
     expect(await b.handle(b.msg("/erst 5"))).toBe("erst: aus");
     b.deps.update({ modus: "probe" });
@@ -228,9 +228,7 @@ describe("/erst N", () => {
 
     const night = setup(new Date(2026, 10, 5, 6, 30));
     night.deps.update({ modus: "an" });
-    expect(await night.handle(night.msg("/erst 3"))).toBe("erst: ausserhalb 8–24 Uhr");
-    night.deps.update({ modus: "probe" });
-    expect(await night.handle(night.msg("/erst 3"))).toBe("erst: gestartet"); // Probe: Fenster gilt nicht
+    expect(await night.handle(night.msg("/erst 3"))).toBe("erst: gestartet"); // 24.11.: kein Sendefenster mehr
     expect(night.calls.erst).toEqual([3]);
 
     const hit = pass(new Date(2026, 10, 5, 12, 28), { stopp: "tutor24: 429 Too Many Requests" });

@@ -14,7 +14,7 @@ import { config } from "dotenv";
 
 config({ path: ".env.local" });
 
-const { activePause, answerCallback, getUpdates, inSendWindow, laptopSignal, loadAutopilot, notify, readPassLog, runTimes, updateAutopilot } = await import("../lib/tutor24-autopilot");
+const { activePause, answerCallback, getUpdates, laptopSignal, loadAutopilot, notify, readPassLog, runTimes, updateAutopilot } = await import("../lib/tutor24-autopilot");
 const { commandResult, takeCommands, writeLaptop } = await import("../lib/tutor24-watch-db");
 const { PROBE_MAX, createBot } = await import("../lib/tutor24-bot");
 const { loadSettings, readStatus, requestStop } = await import("../lib/tutor24-followup-store");
@@ -183,8 +183,8 @@ const pflege = async () => {
   // 13.11.: keine eigene Meldung mehr — der Tagesbericht nennt die Zahl
   if (v.length) console.log(`${stamp()} ${v.length} Rückfragen verfallen.`);
 
-  // 2. Freigaben senden: 10 min nach dem letzten Knopf, nur im Modus EIN, 8–24 Uhr, Mindestabstand, kein Lauf
-  if (s.modus === "an" && sendeLaufFaellig(now) && inSendWindow(now) && Date.now() - freigabeVersuchAt > 10 * 60_000) {
+  // 2. Freigaben senden: 10 min nach dem letzten Knopf, nur im Modus EIN, Mindestabstand, kein Lauf
+  if (s.modus === "an" && sendeLaufFaellig(now) &&Date.now() - freigabeVersuchAt > 10 * 60_000) {
     const h = await startHindernis();
     if (h) console.log(`${stamp()} Freigaben warten (${h}).`);
     else {
@@ -196,7 +196,7 @@ const pflege = async () => {
   }
 
   // 3. Verpassten Durchgang nachholen: faellige Zeit + 10 min vorbei, kein Durchgang seither, Modus nicht aus
-  if (s.modus !== "aus" && Date.now() - nachholVersuchAt > 10 * 60_000 && (s.modus === "probe" || inSendWindow(now))) {
+  if (s.modus !== "aus" && Date.now() - nachholVersuchAt > 10 * 60_000) {
     const due = runTimes().map((t) => toMin(t)).filter((m) => m + 10 <= mins).pop();
     if (due !== undefined) {
       const dueAt = zurichTime(today, Math.floor(due / 60), due % 60);
