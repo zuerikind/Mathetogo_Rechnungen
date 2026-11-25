@@ -975,6 +975,23 @@ export async function collectListingLinks(
     pathSegment === "jobs"
       ? "students|requests|jobs|gesuche"
       : "providers|tutors|teachers|nachhilfelehrer|private-teacher";
+  // 24.11. 17:54: die Suchseite navigierte waehrend des Auslesens nochmals (nach "Langsames Laden — fahre fort"
+  // oder einer Weiterleitung) → "Execution context was destroyed", ganzer Durchgang abgebrochen. Einmal neu lesen.
+  for (let versuch = 0; ; versuch++) {
+    try {
+      return await readListingLinks(page, segments);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (versuch > 0 || !msg.includes("Execution context was destroyed")) throw err;
+      pushLog?.(`${ts()} ⚠ Suchseite hat neu geladen (${page.url()}) — lese nochmals`);
+      await page.waitForLoadState("domcontentloaded", { timeout: NAV_TIMEOUT_MS }).catch(() => {});
+      await waitForListingCards(page, pathSegment);
+      await sleep(600);
+    }
+  }
+}
+
+function readListingLinks(page: import("playwright").Page, segments: string): Promise<{ href: string; id: string }[]> {
   return page.evaluate((segPattern: string) => {
     const re = new RegExp(`^\\/(de|en|fr)\\/(${segPattern})\\/(\\d+)`);
     const anchors = Array.from(document.querySelectorAll("a[href]")) as HTMLAnchorElement[];

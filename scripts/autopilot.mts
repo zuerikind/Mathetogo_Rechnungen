@@ -22,7 +22,7 @@ const { loadCourses, loadLeadInfo, loadLog, loadSettings, sentToday } = await im
 const { erstLimits } = await import("../lib/tutor24-followup");
 const { runFollowup } = await import("../lib/tutor24-followup-runner");
 const { runTutor24Messaging, sendBatchErst } = await import("../lib/tutor24");
-const { followupJobState } = await import("../lib/automation-state");
+const { followupJobState, tutor24JobState } = await import("../lib/automation-state");
 const { AUTOPILOT_LOCK_PATH, acquireTutor24Lock, earliestNext, tooSoonText } = await import("../lib/tutor24-lock");
 const { laptopSignal } = await import("../lib/tutor24-autopilot");
 const { finishRun, startRun, takeStops, writeLaptop, writeProgress } = await import("../lib/tutor24-watch-db");
@@ -312,7 +312,11 @@ try {
   else {
     log(`Erst-Nachrichten: höchstens ${erstLimit}${dryRun ? " (PROBE, sendet nichts)" : ""} …`);
     erstAuto.limit = erstLimit;
-    const r = await runTutor24Messaging(true, max ? 1 : 10, max ? ["Mathematik"] : ["Mathematik", "Physik"], erstAuto);
+    // Bricht Schritt 1 ab, sein Protokoll trotzdem ausgeben (24.11.: sonst stand nur die Fehlermeldung da, ohne Ort)
+    const r = await runTutor24Messaging(true, max ? 1 : 10, max ? ["Mathematik"] : ["Mathematik", "Physik"], erstAuto).catch((err) => {
+      for (const l of tutor24JobState.result?.log ?? []) console.log(`  ${l}`);
+      throw err;
+    });
     for (const l of r.log) console.log(`  ${l}`);
     pass.fehler.push(...r.errors);
     erstNote =
