@@ -467,7 +467,7 @@ export default function DashboardPage() {
   };
 
   const selectClass =
-    "rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200";
+    "glass-control rounded-full border px-4 py-2 text-sm font-semibold text-slate-700 outline-none transition focus:ring-2 focus:ring-[#4A7FC1]/30";
 
   return (
     <DashboardShell
@@ -485,21 +485,21 @@ export default function DashboardPage() {
         />
 
         {/* Page header */}
-        <div className="flex min-w-0 items-center gap-2">
-          <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
+        <div className="flex min-w-0 items-center gap-3 pt-1">
+          <h1 className="glass-figure text-3xl sm:text-4xl">Dashboard</h1>
           {refreshing && (
             <span className="h-4 w-4 rounded-full border-2 border-slate-600 border-t-transparent animate-spin" />
           )}
         </div>
 
         {/* Sync bar — has its own independent month + year */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="glass-panel glass-rise p-4 sm:p-5">
           <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Kalender synchronisieren</p>
           <div className="flex flex-wrap items-end gap-3 sm:gap-4">
 
             {/* Sync month */}
             <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Monat</label>
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Monat</label>
               <select
                 value={syncMonth}
                 onChange={(e) => setSyncMonth(Number(e.target.value))}
@@ -513,20 +513,22 @@ export default function DashboardPage() {
 
             {/* Sync year */}
             <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Jahr</label>
-              <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 px-2 py-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Jahr</label>
+              <div className="glass-control flex items-center gap-1 rounded-full border px-1.5 py-1">
                 <button
                   type="button"
                   onClick={() => setSyncYear((y) => y - 1)}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-800"
+                  aria-label="Vorheriges Jahr"
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-white/80 hover:text-slate-900"
                 >
                   ‹
                 </button>
-                <span className="min-w-[3.5rem] text-center text-sm font-semibold text-gray-800">{syncYear}</span>
+                <span className="min-w-[3.5rem] text-center text-sm font-bold tabular-nums text-slate-900">{syncYear}</span>
                 <button
                   type="button"
                   onClick={() => setSyncYear((y) => y + 1)}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-800"
+                  aria-label="Nächstes Jahr"
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-white/80 hover:text-slate-900"
                 >
                   ›
                 </button>
@@ -540,7 +542,7 @@ export default function DashboardPage() {
             </div>
 
             {toast && (
-              <span className="max-w-full self-end break-words rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-800 sm:max-w-[min(100%,28rem)]">{toast}</span>
+              <span className="max-w-full self-end break-words glass-control rounded-full border px-4 py-1.5 text-sm font-medium text-slate-800 sm:max-w-[min(100%,28rem)]">{toast}</span>
             )}
           </div>
         </div>
@@ -553,12 +555,12 @@ export default function DashboardPage() {
         ) : loading ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-24 animate-pulse rounded-xl border border-slate-200 bg-slate-100" />
+              <div key={i} className="glass-panel h-28 animate-pulse" />
             ))}
           </div>
         ) : (
           <>
-            <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <section className="glass-stagger grid grid-cols-2 gap-3 sm:grid-cols-3">
               <div className="min-w-0">
                 <StatCard
                   compact
@@ -628,9 +630,9 @@ export default function DashboardPage() {
             />
 
             {/* Charts — year + month filters together */}
-            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <section className="glass-panel glass-rise p-4 sm:p-6">
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <h2 className="text-sm font-semibold text-slate-800">Jahresübersicht</h2>
+                <h2 className="text-lg font-extrabold tracking-tight text-slate-900">Jahresübersicht</h2>
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   {/* Month filter */}
                   <select
@@ -641,23 +643,19 @@ export default function DashboardPage() {
                     {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                   </select>
 
-                  {/* Divider */}
-                  <span className="text-gray-200">|</span>
-
                   {/* Year buttons */}
-                  {availableYears.map((y) => (
-                    <button
-                      key={y}
-                      onClick={() => setYear(y)}
-                      className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-                        year === y
-                          ? "bg-slate-800 text-white shadow-sm"
-                          : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
-                      }`}
-                    >
-                      {y}
-                    </button>
-                  ))}
+                  <div className="glass-segmented" role="group" aria-label="Jahr">
+                    {availableYears.map((y) => (
+                      <button
+                        key={y}
+                        type="button"
+                        aria-pressed={year === y}
+                        onClick={() => setYear(y)}
+                      >
+                        {y}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -699,9 +697,9 @@ export default function DashboardPage() {
             />
 
             {/* Sessions table — bewusst zuunterst */}
-            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <section className="glass-panel p-4 sm:p-6">
               <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h2 className="min-w-0 text-sm font-semibold text-slate-900">
+                <h2 className="min-w-0 text-lg font-extrabold tracking-tight text-slate-900">
                   Sessions
                   {selectedMonth !== null && (
                     <span className="ml-1.5 font-normal text-slate-600">
@@ -717,7 +715,7 @@ export default function DashboardPage() {
                 {(selectedMonth !== null || selectedStudent) && (
                   <button
                     onClick={() => { setSelectedMonth(null); setSelectedStudent(null); }}
-                    className="shrink-0 self-start rounded-full border border-gray-200 px-3 py-1 text-xs text-gray-400 transition hover:border-gray-300 hover:text-gray-600 sm:self-auto"
+                    className="shrink-0 self-start glass-control rounded-full border px-3 py-1 text-xs font-medium text-slate-600 transition hover:text-slate-900 sm:self-auto"
                   >
                     Filter zurücksetzen ✕
                   </button>
