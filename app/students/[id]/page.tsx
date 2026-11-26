@@ -96,7 +96,7 @@ export default function StudentDetailPage() {
   return (
     <DashboardShell monthIncome={monthIncome} ytdIncome={ytdIncome} incomeLoading={incomeLoading}>
       {loading ? (
-        <div className="h-96 animate-pulse rounded-lg border border-gray-200 bg-white" />
+        <div className="h-96 animate-pulse glass-panel" />
       ) : error || !student ? (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {error || "Student nicht gefunden"}{" "}
@@ -106,7 +106,7 @@ export default function StudentDetailPage() {
         </div>
       ) : (
         <div className="min-w-0 space-y-4">
-          <header className="rounded-lg border border-gray-200 bg-white p-4">
+          <header className="glass-panel p-4">
             <h2 className="break-words text-xl font-semibold text-gray-900">{student.name}</h2>
             <p className="mt-1 break-words text-sm text-gray-600">
               {student.subject} · {student.ratePerMin.toFixed(2)} CHF/min · Total earned all time:{" "}
@@ -114,7 +114,7 @@ export default function StudentDetailPage() {
             </p>
           </header>
 
-          <section className="min-w-0 rounded-lg border border-gray-200 bg-white p-4">
+          <section className="min-w-0 glass-panel p-4">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <span className="text-sm text-gray-600">Year</span>
               <select
@@ -164,7 +164,7 @@ export default function StudentDetailPage() {
             </div>
           </section>
 
-          <section className="rounded-lg border border-gray-200 bg-white p-4">
+          <section className="glass-panel p-4">
             <h3 className="mb-2 text-sm font-medium text-gray-700">Full session history</h3>
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
