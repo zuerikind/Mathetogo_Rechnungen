@@ -3,6 +3,7 @@ import Image from "next/image";
 import { ReactNode } from "react";
 import { signOut } from "@/auth";
 import { NavigationProgress } from "@/components/NavigationProgress";
+import "@fontsource-variable/manrope";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,8 +16,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="de">
       <body>
         <NavigationProgress />
-        <header className="sticky top-0 z-50 border-b border-blue-100 bg-white/80 backdrop-blur-md">
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3">
+        <div className="glass-backdrop" aria-hidden="true" />
+        <div className="glass-header-wrap">
+          <header className="glass-bar mx-auto flex max-w-7xl items-center justify-between gap-2 py-1.5 pl-4 pr-1.5 sm:pl-5">
             <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
               <Image
                 src="/mathetogo-logo-clean.png"
@@ -35,13 +37,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             >
               <button
                 type="submit"
-                className="shrink-0 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition hover:border-red-200 hover:text-red-600 sm:px-4"
+                className="glass-control shrink-0 rounded-full border px-4 py-2 text-xs font-semibold text-slate-700 transition hover:text-red-600"
               >
                 Abmelden
               </button>
             </form>
-          </div>
-        </header>
+          </header>
+        </div>
         {children}
       </body>
     </html>
