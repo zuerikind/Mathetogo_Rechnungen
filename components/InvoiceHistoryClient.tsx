@@ -9,7 +9,7 @@ import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { useMounted } from "@/hooks/use-mounted";
 import { downloadInvoicePdf, saveBlob } from "@/lib/download-invoice-pdf";
 import { formatAmount, formatDate, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice-format";
-import { buildYearCards, FIXED_YEAR_EARNINGS_CHF } from "@/lib/invoice-year-cards";
+import { buildYearCards, FIXED_YEAR_EARNINGS_CHF, pickReferenceYtd } from "@/lib/invoice-year-cards";
 import { formatCHF, getCurrentMonthYear, monthOptions } from "@/lib/ui-format";
 
 type InvoiceRow = {
@@ -144,7 +144,7 @@ const statusBadge: Record<string, string> = {
 
 export function InvoiceHistoryClient() {
   const mounted = useMounted();
-  const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
+  const { monthIncome, ytdIncome, loading: incomeLoading, error: incomeError } = useGlobalIncomeSummary();
   const [rows, setRows] = useState<InvoiceRow[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   /** Set in useEffect so server (UTC) and browser (Zurich) agree on first paint. */
@@ -242,15 +242,14 @@ export function InvoiceHistoryClient() {
 
   const yearCards = useMemo(() => {
     const referenceYear = Number(year) || calendarYear;
-    const currentYtd = incomeLoading ? null : ytdIncome;
-    const referenceYtd =
-      referenceYear === getCurrentMonthYear().year
-        ? currentYtd
-        : otherYearYtd?.year === referenceYear
-          ? otherYearYtd.value
-          : null;
+    const referenceYtd = pickReferenceYtd(
+      referenceYear,
+      getCurrentMonthYear().year,
+      { loading: incomeLoading, error: incomeError, ytdIncome },
+      otherYearYtd
+    );
     return buildYearCards(earningsByYear, referenceYear, referenceYtd);
-  }, [earningsByYear, calendarYear, ytdIncome, incomeLoading, year, otherYearYtd]);
+  }, [earningsByYear, calendarYear, ytdIncome, incomeLoading, incomeError, year, otherYearYtd]);
 
   const hasNarrowFilters = Boolean(month || studentId || status);
 

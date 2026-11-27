@@ -16,6 +16,20 @@ export type YearCard = {
 };
 
 /**
+ * Betrag fuer das Bezugsjahr: laufendes Jahr aus der Kopfzeile, sonst der selbst geladene Wert dieses Jahres.
+ * null = unbekannt. Bei einem Fehler liefert die Kopfzeile 0, das darf nicht als Betrag gelten.
+ */
+export function pickReferenceYtd(
+  referenceYear: number,
+  currentYear: number,
+  header: { loading: boolean; error: string; ytdIncome: number },
+  other: { year: number; value: number } | null
+): number | null {
+  if (referenceYear === currentYear) return header.loading || header.error ? null : header.ytdIncome;
+  return other?.year === referenceYear ? other.value : null;
+}
+
+/**
  * Jahre aus der Tabelle plus feste Archiv-Jahre (nie doppelt). `referenceYtd` ist der Jahresbetrag wie im
  * Dashboard fuer genau `referenceYear`; null = noch nicht geladen, dann wird nichts ueberschrieben oder ergaenzt
  * (sonst stuende kurz 0 oder der Betrag eines anderen Jahres da).
