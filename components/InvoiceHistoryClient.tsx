@@ -9,6 +9,7 @@ import { useGlobalIncomeSummary } from "@/hooks/useGlobalIncomeSummary";
 import { useMounted } from "@/hooks/use-mounted";
 import { downloadInvoicePdf, saveBlob } from "@/lib/download-invoice-pdf";
 import { formatAmount, formatDate, getInvoiceDueDate, getPeriodLabel } from "@/lib/invoice-format";
+import { buildYearCards, FIXED_YEAR_EARNINGS_CHF } from "@/lib/invoice-year-cards";
 import { formatCHF, getCurrentMonthYear, monthOptions } from "@/lib/ui-format";
 
 type InvoiceRow = {
@@ -141,12 +142,6 @@ const statusBadge: Record<string, string> = {
   Storniert: "bg-gray-200 text-gray-600 line-through",
 };
 
-/** Archiv: feste Jahres-Verdienste (nicht aus der Tabelle berechnet). */
-const FIXED_YEAR_EARNINGS_CHF: Readonly<Record<number, number>> = {
-  2024: 16534.25,
-  2025: 55705.5,
-};
-
 export function InvoiceHistoryClient() {
   const mounted = useMounted();
   const { monthIncome, ytdIncome, loading: incomeLoading } = useGlobalIncomeSummary();
@@ -165,7 +160,7 @@ export function InvoiceHistoryClient() {
   const [changeDetails, setChangeDetails] = useState<Record<string, ChangeDetail>>({});
   const [pendingDecision, setPendingDecision] = useState<PendingDecision | null>(null);
   const [decisionBusy, setDecisionBusy] = useState(false);
-  const [selectedYearYtd, setSelectedYearYtd] = useState<number | null>(null);
+  const [otherYearYtd, setOtherYearYtd] = useState<{ year: number; value: number } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const loadInvoices = useCallback(async () => {
@@ -208,21 +203,19 @@ export function InvoiceHistoryClient() {
     void loadInvoices();
   }, [loadInvoices]);
 
+  // Das laufende Jahr liefert schon useGlobalIncomeSummary (Kopfzeile). Selbst geladen wird nur ein anderes
+  // gewaehltes Jahr; Number("") waere 0 und ergaebe beim Laden das laufende Jahr bis Dezember.
   useEffect(() => {
     const selected = Number(year);
-    if (!Number.isFinite(selected)) {
-      setSelectedYearYtd(null);
-      return;
-    }
-    const now = new Date();
-    const throughMonth = selected === now.getFullYear() ? now.getMonth() + 1 : 12;
-    void fetch(`/api/income-summary?year=${selected}&month=${throughMonth}`)
+    if (!year || selected === getCurrentMonthYear().year || FIXED_YEAR_EARNINGS_CHF[selected] !== undefined) return;
+    void fetch(`/api/income-summary?year=${selected}&month=12`)
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
-        const v = body && Number.isFinite(body.ytdIncome) ? Number(body.ytdIncome) : null;
-        setSelectedYearYtd(v);
+        if (body && Number.isFinite(body.ytdIncome)) {
+          setOtherYearYtd({ year: selected, value: Number(body.ytdIncome) });
+        }
       })
-      .catch(() => setSelectedYearYtd(null));
+      .catch(() => {});
   }, [year]);
 
   const calendarYear = mounted ? getCurrentMonthYear().year : Number(year) || 2026;
@@ -247,39 +240,17 @@ export function InvoiceHistoryClient() {
       .sort((a, b) => b.year - a.year);
   }, [rows]);
 
-  /** Dynamische Jahre aus der Tabelle + feste Archiv-Jahre 2024/2025 (keine Doppelzählung). */
   const yearCards = useMemo(() => {
-    const fixedYears = [2025, 2024] as const;
-    const dynamicBase = earningsByYear
-      .filter((e) => FIXED_YEAR_EARNINGS_CHF[e.year] === undefined)
-      .map((e) => ({ ...e, isFixed: false as const, isDashboardAligned: false as const }));
-    const selectedYear = Number(year);
-    const referenceYear = Number.isFinite(selectedYear) ? selectedYear : calendarYear;
-    const referenceYtd = selectedYearYtd ?? ytdIncome;
-    const hasCurrentYear = dynamicBase.some((e) => e.year === referenceYear);
-    const dynamic = dynamicBase.map((e) =>
-      e.year === referenceYear
-        ? { ...e, totalCHF: referenceYtd, isDashboardAligned: true as const }
-        : e
-    );
-    if (!hasCurrentYear) {
-      dynamic.push({
-        year: referenceYear,
-        totalCHF: referenceYtd,
-        count: 0,
-        isFixed: false as const,
-        isDashboardAligned: true as const,
-      });
-    }
-    const fixed = fixedYears.map((y) => ({
-      year: y,
-      totalCHF: FIXED_YEAR_EARNINGS_CHF[y],
-      count: null as number | null,
-      isFixed: true as const,
-      isDashboardAligned: false as const,
-    }));
-    return [...dynamic, ...fixed].sort((a, b) => b.year - a.year);
-  }, [earningsByYear, calendarYear, ytdIncome, year, selectedYearYtd]);
+    const referenceYear = Number(year) || calendarYear;
+    const currentYtd = incomeLoading ? null : ytdIncome;
+    const referenceYtd =
+      referenceYear === getCurrentMonthYear().year
+        ? currentYtd
+        : otherYearYtd?.year === referenceYear
+          ? otherYearYtd.value
+          : null;
+    return buildYearCards(earningsByYear, referenceYear, referenceYtd);
+  }, [earningsByYear, calendarYear, ytdIncome, incomeLoading, year, otherYearYtd]);
 
   const hasNarrowFilters = Boolean(month || studentId || status);
 
